@@ -261,6 +261,97 @@ function GroupRow({
   );
 }
 
+/* ── Mobile card (replaces GroupRow's table markup below `sm`) ── */
+function GroupCard({
+  group, filter, search, open, onToggle, onPreview,
+}: {
+  group:     DocGroup;
+  filter:    DocFilter;
+  search:    string;
+  open:      boolean;
+  onToggle:  () => void;
+  onPreview: (url: string, type: string) => void;
+}) {
+  const q = search.trim().toLowerCase();
+
+  const visibleDocs = group.docs.filter(d => filter === 'all' || d.docStatus === filter);
+  if (visibleDocs.length === 0) return null;
+
+  const approved = group.docs.filter(d => d.docStatus === 'approved').length;
+  const pending  = group.docs.filter(d => d.docStatus === 'pending').length;
+  const rejected = group.docs.filter(d => d.docStatus === 'rejected').length;
+
+  return (
+    <div className="rounded-xl border border-border bg-white overflow-hidden">
+      <div onClick={onToggle} className={`flex items-start gap-3 p-4 cursor-pointer select-none transition-colors ${open ? 'bg-primary/5' : 'hover:bg-muted/30'}`}>
+        <div className={`w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors ${open ? 'text-primary' : 'text-muted-foreground'}`}>
+          {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+        </div>
+        <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${group.isCompleted ? 'bg-purple-100' : 'bg-primary/10'}`}>
+          <Package className={`w-4 h-4 ${group.isCompleted ? 'text-purple-600' : 'text-primary'}`} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="font-bold font-mono text-sm text-foreground"><Hi text={group.assignmentId} q={q} /></span>
+            {group.isCompleted && (
+              <span className="text-[10px] px-1.5 py-0.5 bg-purple-50 text-purple-700 border border-purple-200 rounded-full font-medium leading-none">Done</span>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground mt-0.5 truncate">
+            <Hi text={group.driverName} q={q} /> · <Hi text={group.truckPlate} q={q} /> · {group.deliveryDate || '—'}
+          </p>
+          <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
+            {approved > 0 && (
+              <span className="text-[11px] px-2 py-0.5 bg-green-50 text-green-700 border border-green-200 rounded-full font-medium">{approved} approved</span>
+            )}
+            {pending > 0 && (
+              <span className="text-[11px] px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-full font-medium">{pending} pending</span>
+            )}
+            {rejected > 0 && (
+              <span className="text-[11px] px-2 py-0.5 bg-red-50 text-red-700 border border-red-200 rounded-full font-medium">{rejected} rejected</span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {open && (
+        <div className="border-t border-border bg-muted/10 divide-y divide-border/40">
+          {visibleDocs.map((doc) => {
+            const cfg = STATUS_CFG[doc.docStatus];
+            return (
+              <div key={`${group.assignmentId}-${doc.type}`} className="flex items-center gap-2 px-4 py-2.5">
+                <div className="w-5 h-5 bg-primary/10 rounded flex items-center justify-center flex-shrink-0">
+                  <FileText className="w-3 h-3 text-primary" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm text-foreground font-medium truncate block"><Hi text={doc.type} q={q} /></span>
+                  {doc.docStatus === 'rejected' && doc.rejectReason && (
+                    <div className="flex items-start gap-1 mt-0.5">
+                      <AlertCircle className="w-3 h-3 text-red-500 flex-shrink-0 mt-0.5" />
+                      <span className="text-xs text-red-600 leading-snug">{doc.rejectReason}</span>
+                    </div>
+                  )}
+                </div>
+                <span className={`flex-shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${cfg.badge}`}>
+                  {cfg.icon} {cfg.label}
+                </span>
+                {doc.fileUrl && doc.fileUrl !== '[image-data-stripped]' && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onPreview(doc.fileUrl!, doc.type); }}
+                    className="flex-shrink-0 inline-flex items-center gap-1 px-2.5 py-1 bg-primary/8 hover:bg-primary/15 border border-primary/20 text-primary rounded-lg text-xs font-medium transition-colors"
+                  >
+                    <Eye className="w-3 h-3" /> View
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── Main export ── */
 export default function DocumentArchive({ assignments, completed }: Props) {
   const [filter,  setFilter]  = useState<DocFilter>('all');
@@ -405,7 +496,8 @@ export default function DocumentArchive({ assignments, completed }: Props) {
         </div>
       ) : (
         <div className="bg-white rounded-2xl border border-border shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
+          {/* Desktop/tablet table */}
+          <div className="hidden sm:block overflow-x-auto">
             <table className="w-full text-sm border-collapse">
               <thead>
                 <tr className="bg-muted/40 border-b border-border">
@@ -440,6 +532,21 @@ export default function DocumentArchive({ assignments, completed }: Props) {
                 ))}
               </tbody>
             </table>
+          </div>
+
+          {/* Mobile card list */}
+          <div className="sm:hidden p-3 space-y-3">
+            {visibleGroups.map((group) => (
+              <GroupCard
+                key={group.assignmentId}
+                group={group}
+                filter={filter}
+                search={search}
+                open={openIds.has(group.assignmentId)}
+                onToggle={() => toggle(group.assignmentId)}
+                onPreview={(url, type) => setPreview({ url, type })}
+              />
+            ))}
           </div>
 
           {/* Footer */}

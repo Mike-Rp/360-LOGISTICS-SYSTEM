@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState } from 'react';
 import {
   User, Truck, MapPin, Building2, Calendar, MessageSquare,
   Activity, X, ClipboardList, CheckCircle2,
@@ -9,6 +9,7 @@ import {
   Receipt, ClipboardCheck, ScrollText, FileCheck, PackageCheck,
 } from 'lucide-react';
 import { RegisterDriverModal, RegisterTruckModal } from './RegisterModals';
+import { Popover, PopoverAnchor, PopoverContent } from '../ui/popover';
 
 /* ── Highlight helper ── */
 function Highlight({ text, query }: { text: string; query: string }) {
@@ -79,34 +80,6 @@ const time24ToDate = (base: Date, v: string): Date => {
   return d;
 };
 
-/* Close a popover when the user clicks anywhere outside of it */
-function useClickOutside(onOutside: () => void) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onOutside();
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [onOutside]);
-  return ref;
-}
-
-/* Decide whether a popover of `height` opens below the trigger or flips above it,
-   so it never lands on top of the modal footer buttons. */
-function usePopoverFlip(anchorRef: React.RefObject<HTMLElement>, open: boolean, height: number) {
-  const [flip, setFlip] = useState(false);
-  useEffect(() => {
-    if (!open || !anchorRef.current) return;
-    const rect = anchorRef.current.getBoundingClientRect();
-    const spaceBelow = window.innerHeight - rect.bottom;
-    const spaceAbove = rect.top;
-    /* Only flip when there genuinely is more headroom above */
-    setFlip(spaceBelow < height + 16 && spaceAbove > spaceBelow);
-  }, [open, anchorRef, height]);
-  return flip;
-}
-
 /* Slim, light scrollbars — the browser default renders as heavy dark bars */
 const thinScroll =
   '[scrollbar-width:thin] [scrollbar-color:#d1d5db_transparent] ' +
@@ -122,8 +95,6 @@ function DateField({ value, onChange, hasError, minIso, maxIso }: {
   maxIso?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const ref  = useClickOutside(() => setOpen(false));
-  const flip = usePopoverFlip(ref, open, DATE_POPOVER_H);
 
   /* Which month the calendar is showing — follows the value when there is one */
   const anchor = value ? isoToDate(value) : new Date();
@@ -150,90 +121,90 @@ function DateField({ value, onChange, hasError, minIso, maxIso }: {
   };
 
   return (
-    <div className="relative" ref={ref}>
-      <input
-        type="date" value={value}
-        onChange={(e) => onChange(e.target.value)}
-        min={minIso} max={maxIso}
-        className={`${fieldBase} ${fieldTone(hasError)} pr-10 [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-inner-spin-button]:hidden`}
-      />
-      <button type="button" onClick={openCalendar} aria-label="Open calendar"
-        className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
-        <Calendar className="w-4 h-4" />
-      </button>
-
-      {open && (
-        <div className={`absolute z-40 left-0 w-[calc(100vw-5rem)] max-w-[268px] bg-white border border-border rounded-xl shadow-xl p-3 animate-in fade-in zoom-in-95 duration-150 ${
-          flip ? 'bottom-full mb-1.5' : 'top-full mt-1.5'
-        }`}>
-          {/* Month switcher */}
-          <div className="flex items-center justify-between mb-2">
-            <button type="button" onClick={() => step(-1)}
-              className="p-1.5 rounded-md hover:bg-accent text-muted-foreground transition-colors">
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <span className="text-sm font-semibold text-foreground">{MONTHS_LONG[viewM]} {viewY}</span>
-            <button type="button" onClick={() => step(1)}
-              className="p-1.5 rounded-md hover:bg-accent text-muted-foreground transition-colors">
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-
-          <div className="grid grid-cols-7 gap-0.5 mb-1">
-            {WEEKDAYS.map((w) => (
-              <span key={w} className="text-[10px] font-semibold text-muted-foreground text-center py-1">{w}</span>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-7 gap-0.5">
-            {Array.from({ length: firstWeekday }, (_, i) => <span key={`pad-${i}`} />)}
-            {Array.from({ length: daysInMonth }, (_, i) => {
-              const day      = i + 1;
-              const cell     = new Date(viewY, viewM, day);
-              const iso      = dateToIso(cell);
-              const disabled = (!!min && cell < min) || (!!max && cell > max);
-              const selected = iso === value;
-              const isToday  = iso === todayIso();
-              return (
-                <button key={iso} type="button" disabled={disabled}
-                  onClick={() => { onChange(iso); setOpen(false); }}
-                  className={`h-8 rounded-md text-xs font-medium transition-colors ${
-                    selected ? 'bg-[#1DBF73] text-white'
-                    : disabled ? 'text-muted-foreground/35 cursor-not-allowed'
-                    : isToday ? 'text-[#1DBF73] font-semibold hover:bg-accent'
-                    : 'text-foreground hover:bg-accent'
-                  }`}>
-                  {day}
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="flex items-center justify-between mt-2 pt-2 border-t border-border">
-            <button type="button" onClick={() => { onChange(todayIso()); setOpen(false); }}
-              className="text-xs font-medium text-[#1DBF73] hover:underline">Today</button>
-            <button type="button" onClick={() => { onChange(''); setOpen(false); }}
-              className="text-xs font-medium text-muted-foreground hover:text-foreground">Clear</button>
-          </div>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverAnchor asChild>
+        <div className="relative">
+          <input
+            type="date" value={value}
+            onChange={(e) => onChange(e.target.value)}
+            min={minIso} max={maxIso}
+            className={`${fieldBase} ${fieldTone(hasError)} pr-10 [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-inner-spin-button]:hidden`}
+          />
+          <button type="button" onClick={openCalendar} aria-label="Open calendar"
+            className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+            <Calendar className="w-4 h-4" />
+          </button>
         </div>
-      )}
-    </div>
+      </PopoverAnchor>
+
+      <PopoverContent
+        align="start"
+        sideOffset={6}
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        className="w-[268px] max-w-[calc(100vw-2rem)] bg-white border border-border rounded-xl shadow-xl p-3"
+      >
+        {/* Month switcher */}
+        <div className="flex items-center justify-between mb-2">
+          <button type="button" onClick={() => step(-1)}
+            className="p-1.5 rounded-md hover:bg-accent text-muted-foreground transition-colors">
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <span className="text-sm font-semibold text-foreground">{MONTHS_LONG[viewM]} {viewY}</span>
+          <button type="button" onClick={() => step(1)}
+            className="p-1.5 rounded-md hover:bg-accent text-muted-foreground transition-colors">
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="grid grid-cols-7 gap-0.5 mb-1">
+          {WEEKDAYS.map((w) => (
+            <span key={w} className="text-[10px] font-semibold text-muted-foreground text-center py-1">{w}</span>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-7 gap-0.5">
+          {Array.from({ length: firstWeekday }, (_, i) => <span key={`pad-${i}`} />)}
+          {Array.from({ length: daysInMonth }, (_, i) => {
+            const day      = i + 1;
+            const cell     = new Date(viewY, viewM, day);
+            const iso      = dateToIso(cell);
+            const disabled = (!!min && cell < min) || (!!max && cell > max);
+            const selected = iso === value;
+            const isToday  = iso === todayIso();
+            return (
+              <button key={iso} type="button" disabled={disabled}
+                onClick={() => { onChange(iso); setOpen(false); }}
+                className={`h-8 rounded-md text-xs font-medium transition-colors ${
+                  selected ? 'bg-[#1DBF73] text-white'
+                  : disabled ? 'text-muted-foreground/35 cursor-not-allowed'
+                  : isToday ? 'text-[#1DBF73] font-semibold hover:bg-accent'
+                  : 'text-foreground hover:bg-accent'
+                }`}>
+                {day}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="flex items-center justify-between mt-2 pt-2 border-t border-border">
+          <button type="button" onClick={() => { onChange(todayIso()); setOpen(false); }}
+            className="text-xs font-medium text-[#1DBF73] hover:underline">Today</button>
+          <button type="button" onClick={() => { onChange(''); setOpen(false); }}
+            className="text-xs font-medium text-muted-foreground hover:text-foreground">Clear</button>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
 /* ─── Time field — type into the input, or click the icon for wheels ─── */
 const WHEEL_HOURS = Array.from({ length: 12 }, (_, i) => i + 1);
 const WHEEL_MINS  = Array.from({ length: 60 }, (_, i) => i);
-/* Approximate rendered heights — used only to decide flip direction */
-const TIME_POPOVER_H = 250;
-const DATE_POPOVER_H = 320;
 
 function TimeField({ value, onChange, hasError }: {
   value: string; onChange: (v: string) => void; hasError?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const ref  = useClickOutside(() => setOpen(false));
-  const flip = usePopoverFlip(ref, open, TIME_POPOVER_H);
 
   /* Decompose the 24-hour value into wheel positions; default to 8:00 AM */
   const [h24, min] = value ? value.split(':').map(Number) : [8, 0];
@@ -254,69 +225,74 @@ function TimeField({ value, onChange, hasError }: {
   const colHead = 'text-[10px] font-semibold uppercase tracking-wider text-muted-foreground text-center pb-1.5 mb-1 border-b border-border';
 
   return (
-    <div className="relative" ref={ref}>
-      <input
-        type="time" value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className={`${fieldBase} ${fieldTone(hasError)} pr-10 [&::-webkit-calendar-picker-indicator]:hidden`}
-      />
-      <button type="button" onClick={() => setOpen((v) => !v)} aria-label="Open time picker"
-        className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
-        <Clock className="w-4 h-4" />
-      </button>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverAnchor asChild>
+        <div className="relative">
+          <input
+            type="time" value={value}
+            onChange={(e) => onChange(e.target.value)}
+            className={`${fieldBase} ${fieldTone(hasError)} pr-10 [&::-webkit-calendar-picker-indicator]:hidden`}
+          />
+          <button type="button" onClick={() => setOpen((v) => !v)} aria-label="Open time picker"
+            className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+            <Clock className="w-4 h-4" />
+          </button>
+        </div>
+      </PopoverAnchor>
 
-      {open && (
-        <div className={`absolute z-40 left-0 bg-white border border-border rounded-xl shadow-xl p-2.5 animate-in fade-in zoom-in-95 duration-150 ${
-          flip ? 'bottom-full mb-1.5' : 'top-full mt-1.5'
-        }`}>
-          <div className="flex gap-1.5">
-            {/* Hours */}
-            <div className="w-[52px]">
-              <p className={colHead}>HH</p>
-              <div className={`max-h-40 overflow-y-auto space-y-0.5 pr-1 ${thinScroll}`}>
-                {WHEEL_HOURS.map((h) => (
-                  <button key={h} type="button" onClick={() => commit(h, min, ampm)}
-                    className={colBtn(h === hour12 && !!value)}>
-                    {h}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Minutes */}
-            <div className="w-[52px] border-l border-border pl-1.5">
-              <p className={colHead}>MM</p>
-              <div className={`max-h-40 overflow-y-auto space-y-0.5 pr-1 ${thinScroll}`}>
-                {WHEEL_MINS.map((m) => (
-                  <button key={m} type="button" onClick={() => commit(hour12, m, ampm)}
-                    className={colBtn(m === min && !!value)}>
-                    {String(m).padStart(2, '0')}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* AM / PM */}
-            <div className="w-[52px] border-l border-border pl-1.5">
-              <p className={colHead}>AM/PM</p>
-              <div className="space-y-0.5">
-                {(['AM', 'PM'] as const).map((a) => (
-                  <button key={a} type="button" onClick={() => commit(hour12, min, a)}
-                    className={colBtn(a === ampm && !!value)}>
-                    {a}
-                  </button>
-                ))}
-              </div>
+      <PopoverContent
+        align="start"
+        sideOffset={6}
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        className="w-auto bg-white border border-border rounded-xl shadow-xl p-2.5"
+      >
+        <div className="flex gap-1.5">
+          {/* Hours */}
+          <div className="w-[52px]">
+            <p className={colHead}>HH</p>
+            <div className={`max-h-40 overflow-y-auto space-y-0.5 pr-1 ${thinScroll}`}>
+              {WHEEL_HOURS.map((h) => (
+                <button key={h} type="button" onClick={() => commit(h, min, ampm)}
+                  className={colBtn(h === hour12 && !!value)}>
+                  {h}
+                </button>
+              ))}
             </div>
           </div>
 
-          <div className="flex items-center justify-end mt-2 pt-2 border-t border-border">
-            <button type="button" onClick={() => setOpen(false)}
-              className="text-xs font-medium text-[#1DBF73] hover:underline">Done</button>
+          {/* Minutes */}
+          <div className="w-[52px] border-l border-border pl-1.5">
+            <p className={colHead}>MM</p>
+            <div className={`max-h-40 overflow-y-auto space-y-0.5 pr-1 ${thinScroll}`}>
+              {WHEEL_MINS.map((m) => (
+                <button key={m} type="button" onClick={() => commit(hour12, m, ampm)}
+                  className={colBtn(m === min && !!value)}>
+                  {String(m).padStart(2, '0')}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* AM / PM */}
+          <div className="w-[52px] border-l border-border pl-1.5">
+            <p className={colHead}>AM/PM</p>
+            <div className="space-y-0.5">
+              {(['AM', 'PM'] as const).map((a) => (
+                <button key={a} type="button" onClick={() => commit(hour12, min, a)}
+                  className={colBtn(a === ampm && !!value)}>
+                  {a}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
-      )}
-    </div>
+
+        <div className="flex items-center justify-end mt-2 pt-2 border-t border-border">
+          <button type="button" onClick={() => setOpen(false)}
+            className="text-xs font-medium text-[#1DBF73] hover:underline">Done</button>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -458,19 +434,25 @@ const driverStatusColor = (s: string) =>
   }[s] ?? 'bg-gray-100 text-gray-700 border-gray-200');
 
 /* Colored dot + label (no emoji circles) */
-function StatusBadge({ status, size = 'sm' }: { status: TaskStatus; size?: 'sm' | 'xs' }) {
+/* `acknowledged` only matters while status is 'Assigned' — it shows gray
+   instead of the usual green until the driver's app has actually loaded the
+   task, so admin can tell a fresh assignment hasn't been seen yet. */
+function StatusBadge({ status, size = 'sm', acknowledged = true }: { status: TaskStatus; size?: 'sm' | 'xs'; acknowledged?: boolean }) {
   const cfg = taskStatusConfig[status];
+  const unseen = status === 'Assigned' && !acknowledged;
+  const badge  = unseen ? 'bg-gray-100 text-gray-500 border-gray-200' : cfg.badge;
+  const dot    = unseen ? 'bg-gray-400' : cfg.dot;
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border font-medium ${cfg.badge} ${size === 'xs' ? 'text-xs' : 'text-xs'}`}>
-      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border font-medium ${badge} ${size === 'xs' ? 'text-xs' : 'text-xs'}`}>
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dot}`} />
       {cfg.label}
     </span>
   );
 }
 
 /* ─── Modal Shell ──────────────────────────────────── */
-function ModalShell({ title, onClose, wide = false, noScroll = false, children }: {
-  title: string; onClose: () => void; wide?: boolean; noScroll?: boolean; children: React.ReactNode;
+function ModalShell({ title, onClose, wide = false, children }: {
+  title: string; onClose: () => void; wide?: boolean; children: React.ReactNode;
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4">
@@ -482,9 +464,7 @@ function ModalShell({ title, onClose, wide = false, noScroll = false, children }
             <X className="w-5 h-5" />
           </button>
         </div>
-        {/* noScroll keeps popovers (calendar / time wheels) from being clipped on
-            roomy screens; narrow screens still scroll so nothing gets cut off. */}
-        <div className={`p-5 sm:p-7 flex-1 ${noScroll ? 'overflow-y-auto md:overflow-visible' : 'overflow-y-auto'}`}>{children}</div>
+        <div className="p-5 sm:p-7 flex-1 overflow-y-auto">{children}</div>
       </div>
     </div>
   );
@@ -762,7 +742,7 @@ function ViewDetailsModal({ assignment, driver, onClose, onApproveDoc, onRejectD
           {/* Schedule */}
           <DetailCard title="Schedule">
             <DetailRow icon={<Timer className="w-4 h-4" />}     label="ETA — Estimated Arrival" value={assignment.eta} hero />
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <DetailRow icon={<Clock className="w-4 h-4" />}    label="Pick Up Time"   value={assignment.pickupTime} />
               <DetailRow icon={<Calendar className="w-4 h-4" />} label="Picked Up Date" value={assignment.pickedUpDate} />
               <DetailRow icon={<Calendar className="w-4 h-4" />} label="Delivery Date"  value={assignment.deliveryDate} />
@@ -1356,7 +1336,7 @@ export default function DriversManagement({
                         <Highlight text={a.driverName} query={search} />
                       </p>
                     </div>
-                    <StatusBadge status={a.taskStatus} />
+                    <StatusBadge status={a.taskStatus} acknowledged={!!a.driverAcknowledgedAt} />
                   </div>
 
                   {/* Row 2 — route + labelled delivery date */}
@@ -1468,7 +1448,7 @@ export default function DriversManagement({
       {/* ════ MODALS ════ */}
 
       {showAssignTask && (
-        <ModalShell title="Assign Task" onClose={resetAssignTask} noScroll>
+        <ModalShell title="Assign Task" onClose={resetAssignTask}>
           <StepProgress step={taskStep} />
 
           {/* ══════════ STEP 1 — Assignment ══════════ */}

@@ -222,12 +222,12 @@ function PreviewModal({
   const handlePrint = () => window.print();
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
+      <div className="relative bg-white rounded-xl sm:rounded-2xl shadow-2xl w-full max-w-5xl max-h-[94vh] sm:max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
 
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border flex-shrink-0">
+        <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-border flex-shrink-0">
           <div>
             <h3 className="font-semibold text-foreground">{config.title}</h3>
             <p className="text-xs text-muted-foreground mt-0.5">{config.subtitle}</p>
@@ -238,9 +238,9 @@ function PreviewModal({
         </div>
 
         {/* Summary Stats */}
-        <div className="px-6 py-4 border-b border-border flex-shrink-0">
+        <div className="px-4 sm:px-6 py-4 border-b border-border flex-shrink-0">
           {reportKey === 'weekly' && (
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {[
                 { label:'Total Deliveries', value: weeklySummary.total,   color:'text-blue-600',  bg:'bg-blue-50'   },
                 { label:'On Time / Done',   value: weeklySummary.onTime,  color:'text-green-600', bg:'bg-green-50'  },
@@ -255,7 +255,7 @@ function PreviewModal({
             </div>
           )}
           {reportKey === 'monthly' && (
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {[
                 { label:'Total Deliveries', value: monthlySummary.total,     color:'text-blue-600',  bg:'bg-blue-50'  },
                 { label:'On-Time',          value: monthlySummary.onTime,    color:'text-green-600', bg:'bg-green-50' },
@@ -270,7 +270,7 @@ function PreviewModal({
             </div>
           )}
           {reportKey === 'delay' && (
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {[
                 { label:'Total Incidents', value: delaySummary.total,    color:'text-red-600',   bg:'bg-red-50'    },
                 { label:'Resolved',        value: delaySummary.resolved, color:'text-green-600', bg:'bg-green-50'  },
@@ -476,13 +476,13 @@ function PreviewModal({
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-border flex items-center justify-between flex-shrink-0 bg-muted/10">
+        <div className="px-4 sm:px-6 py-4 border-t border-border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 flex-shrink-0 bg-muted/10">
           <p className="text-xs text-muted-foreground">
             {reportKey === 'weekly'  && `${weeklyRows.length} record${weeklyRows.length !== 1 ? 's' : ''} shown`}
             {reportKey === 'monthly' && `${monthlyRows.length} month${monthlyRows.length !== 1 ? 's' : ''} shown`}
             {reportKey === 'delay'   && `${delayRows.length} incident${delayRows.length !== 1 ? 's' : ''} shown`}
           </p>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <button onClick={onClose}
               className="px-4 py-2 border border-border rounded-lg text-sm hover:bg-accent transition-colors">
               Close

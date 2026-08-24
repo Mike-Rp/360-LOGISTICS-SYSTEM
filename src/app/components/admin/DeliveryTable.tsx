@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { MapPin, Package, CheckCircle2, Truck, Building2, Calendar, Clock, Filter, Search, X } from 'lucide-react';
+import { MapPin, Package, CheckCircle2, Truck, Building2, Calendar, Clock, Filter, Search, X, User } from 'lucide-react';
 import type { Assignment, CompletedTask, TaskStatus } from '../../data/assignmentTypes';
 import { taskStatusConfig } from '../../data/assignmentTypes';
 
@@ -156,14 +156,14 @@ export default function DeliveryTable({
     <div className="bg-white rounded-xl border border-border shadow-sm overflow-hidden">
       {/* Header */}
       <div className="px-6 py-5 border-b border-border">
-        <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold text-foreground">Deliveries</h2>
             <p className="text-sm text-muted-foreground mt-0.5">All assignments fetched from Drivers Management</p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {/* Search */}
-            <div className="flex items-center gap-1.5 border border-border rounded-lg px-2.5 py-1.5 bg-white min-w-[200px]">
+            <div className="flex items-center gap-1.5 border border-border rounded-lg px-2.5 py-1.5 bg-white w-full sm:w-auto sm:min-w-[200px]">
               <Search className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
               <input
                 value={search}
@@ -233,54 +233,96 @@ export default function DeliveryTable({
               </p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/30">
-                  <tr>
-                    {['TRUCK #', 'DRIVER', 'ROUTE', 'CUSTOMER', 'STATUS', 'DATE'].map((col) => (
-                      <th key={col} className="px-5 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap">{col}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {filteredActive.map((a) => (
-                    <tr key={a.id} className={"hover:bg-accent/50 transition-colors" + (q ? " bg-yellow-50/30" : "")}>
-                      <td className="px-5 py-4">
-                        <div className="flex items-center gap-2">
-                          <Truck className="w-4 h-4 text-[#0d9488] flex-shrink-0" />
-                          <span className="font-semibold text-[#0d9488]"><Highlight text={a.truckPlate} query={search} /></span>
-                        </div>
-                        <p className="text-xs text-muted-foreground ml-6"><Highlight text={a.id} query={search} /></p>
-                      </td>
-                      <td className="px-5 py-4 text-foreground"><Highlight text={a.driverName} query={search} /></td>
-                      <td className="px-5 py-4">
-                        <div className="flex items-center gap-1.5">
-                          <MapPin className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
-                          <span className="text-foreground"><Highlight text={a.destination} query={search} /></span>
-                        </div>
-                        {a.remarks && <p className="text-xs text-muted-foreground italic mt-0.5 ml-5">{a.remarks}</p>}
-                      </td>
-                      <td className="px-5 py-4">
-                        <div className="flex items-center gap-1.5">
-                          <Building2 className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
-                          <span className="text-foreground"><Highlight text={a.company} query={search} /></span>
-                        </div>
-                      </td>
-                      <td className="px-5 py-4"><StatusBadge status={a.taskStatus} /></td>
-                      <td className="px-5 py-4 whitespace-nowrap">
-                        <div className="flex items-center gap-1.5 text-foreground">
-                          <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
-                          {a.deliveryDate}
-                        </div>
-                        <div className="flex items-center gap-1 text-xs text-muted-foreground mt-0.5">
-                          <Clock className="w-3 h-3" /> {a.assignedAt}
-                        </div>
-                      </td>
+            <>
+              {/* Desktop/tablet table */}
+              <div className="hidden sm:block overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/30">
+                    <tr>
+                      {['TRUCK #', 'DRIVER', 'ROUTE', 'CUSTOMER', 'STATUS', 'DATE'].map((col) => (
+                        <th key={col} className="px-5 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap">{col}</th>
+                      ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {filteredActive.map((a) => (
+                      <tr key={a.id} className={"hover:bg-accent/50 transition-colors" + (q ? " bg-yellow-50/30" : "")}>
+                        <td className="px-5 py-4">
+                          <div className="flex items-center gap-2">
+                            <Truck className="w-4 h-4 text-[#0d9488] flex-shrink-0" />
+                            <span className="font-semibold text-[#0d9488]"><Highlight text={a.truckPlate} query={search} /></span>
+                          </div>
+                          <p className="text-xs text-muted-foreground ml-6"><Highlight text={a.id} query={search} /></p>
+                        </td>
+                        <td className="px-5 py-4 text-foreground"><Highlight text={a.driverName} query={search} /></td>
+                        <td className="px-5 py-4">
+                          <div className="flex items-center gap-1.5">
+                            <MapPin className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                            <span className="text-foreground"><Highlight text={a.destination} query={search} /></span>
+                          </div>
+                          {a.remarks && <p className="text-xs text-muted-foreground italic mt-0.5 ml-5">{a.remarks}</p>}
+                        </td>
+                        <td className="px-5 py-4">
+                          <div className="flex items-center gap-1.5">
+                            <Building2 className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                            <span className="text-foreground"><Highlight text={a.company} query={search} /></span>
+                          </div>
+                        </td>
+                        <td className="px-5 py-4"><StatusBadge status={a.taskStatus} /></td>
+                        <td className="px-5 py-4 whitespace-nowrap">
+                          <div className="flex items-center gap-1.5 text-foreground">
+                            <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
+                            {a.deliveryDate}
+                          </div>
+                          <div className="flex items-center gap-1 text-xs text-muted-foreground mt-0.5">
+                            <Clock className="w-3 h-3" /> {a.assignedAt}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile card list */}
+              <div className="sm:hidden divide-y divide-border">
+                {filteredActive.map((a) => (
+                  <div key={a.id} className={`p-4 space-y-2.5 ${q ? 'bg-yellow-50/30' : ''}`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Truck className="w-4 h-4 text-[#0d9488] flex-shrink-0" />
+                        <span className="font-semibold text-[#0d9488] truncate"><Highlight text={a.truckPlate} query={search} /></span>
+                      </div>
+                      <StatusBadge status={a.taskStatus} />
+                    </div>
+                    <p className="text-xs text-muted-foreground ml-6"><Highlight text={a.id} query={search} /></p>
+                    <div className="flex items-center gap-1.5 text-sm text-foreground">
+                      <User className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                      <span className="truncate"><Highlight text={a.driverName} query={search} /></span>
+                    </div>
+                    <div className="flex items-start gap-1.5 text-sm">
+                      <MapPin className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0 mt-0.5" />
+                      <div className="min-w-0">
+                        <span className="text-foreground"><Highlight text={a.destination} query={search} /></span>
+                        {a.remarks && <p className="text-xs text-muted-foreground italic mt-0.5">{a.remarks}</p>}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-sm text-foreground">
+                      <Building2 className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                      <span className="truncate"><Highlight text={a.company} query={search} /></span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs text-muted-foreground pt-1.5 border-t border-border/60">
+                      <div className="flex items-center gap-1.5">
+                        <Calendar className="w-3.5 h-3.5" /> {a.deliveryDate}
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Clock className="w-3 h-3" /> {a.assignedAt}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </>
       )}
@@ -308,38 +350,73 @@ export default function DeliveryTable({
               </p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/30">
-                  <tr>
-                    {['TRUCK #', 'DRIVER', 'ROUTE', 'CUSTOMER', 'DELIVERY DATE', 'COMPLETED AT'].map((col) => (
-                      <th key={col} className="px-5 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap">{col}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {filteredDone.map((c) => (
-                    <tr key={c.id} className={"hover:bg-accent/50 transition-colors" + (q ? " bg-yellow-50/30" : "")}>
-                      <td className="px-5 py-4">
-                        <div className="flex items-center gap-2">
-                          <Truck className="w-4 h-4 text-[#0d9488]" />
-                          <span className="font-semibold text-[#0d9488]"><Highlight text={c.truckPlate} query={search} /></span>
-                        </div>
-                      </td>
-                      <td className="px-5 py-4 text-foreground"><Highlight text={c.driverName} query={search} /></td>
-                      <td className="px-5 py-4 text-foreground"><Highlight text={c.destination} query={search} /></td>
-                      <td className="px-5 py-4 text-foreground"><Highlight text={c.company} query={search} /></td>
-                      <td className="px-5 py-4 text-foreground whitespace-nowrap">{c.deliveryDate}</td>
-                      <td className="px-5 py-4">
-                        <span className="text-xs px-2.5 py-1 bg-green-100 text-green-700 rounded-full border border-green-200 font-medium">
-                          {c.completedAt}
-                        </span>
-                      </td>
+            <>
+              {/* Desktop/tablet table */}
+              <div className="hidden sm:block overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/30">
+                    <tr>
+                      {['TRUCK #', 'DRIVER', 'ROUTE', 'CUSTOMER', 'DELIVERY DATE', 'COMPLETED AT'].map((col) => (
+                        <th key={col} className="px-5 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap">{col}</th>
+                      ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {filteredDone.map((c) => (
+                      <tr key={c.id} className={"hover:bg-accent/50 transition-colors" + (q ? " bg-yellow-50/30" : "")}>
+                        <td className="px-5 py-4">
+                          <div className="flex items-center gap-2">
+                            <Truck className="w-4 h-4 text-[#0d9488]" />
+                            <span className="font-semibold text-[#0d9488]"><Highlight text={c.truckPlate} query={search} /></span>
+                          </div>
+                        </td>
+                        <td className="px-5 py-4 text-foreground"><Highlight text={c.driverName} query={search} /></td>
+                        <td className="px-5 py-4 text-foreground"><Highlight text={c.destination} query={search} /></td>
+                        <td className="px-5 py-4 text-foreground"><Highlight text={c.company} query={search} /></td>
+                        <td className="px-5 py-4 text-foreground whitespace-nowrap">{c.deliveryDate}</td>
+                        <td className="px-5 py-4">
+                          <span className="text-xs px-2.5 py-1 bg-green-100 text-green-700 rounded-full border border-green-200 font-medium">
+                            {c.completedAt}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile card list */}
+              <div className="sm:hidden divide-y divide-border">
+                {filteredDone.map((c) => (
+                  <div key={c.id} className={`p-4 space-y-2.5 ${q ? 'bg-yellow-50/30' : ''}`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Truck className="w-4 h-4 text-[#0d9488] flex-shrink-0" />
+                        <span className="font-semibold text-[#0d9488] truncate"><Highlight text={c.truckPlate} query={search} /></span>
+                      </div>
+                      <span className="text-xs px-2.5 py-1 bg-green-100 text-green-700 rounded-full border border-green-200 font-medium flex-shrink-0">
+                        {c.completedAt}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-sm text-foreground">
+                      <User className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                      <span className="truncate"><Highlight text={c.driverName} query={search} /></span>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-sm text-foreground">
+                      <MapPin className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                      <span className="truncate"><Highlight text={c.destination} query={search} /></span>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-sm text-foreground">
+                      <Building2 className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                      <span className="truncate"><Highlight text={c.company} query={search} /></span>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground pt-1.5 border-t border-border/60">
+                      <Calendar className="w-3.5 h-3.5" /> {c.deliveryDate}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </>
       )}

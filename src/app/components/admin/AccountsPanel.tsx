@@ -110,7 +110,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
           <h2 className="text-2xl font-semibold text-foreground">Accounts</h2>
           <p className="text-sm text-muted-foreground mt-1">Register drivers with PINs and manage truck fleet</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center flex-wrap gap-3">
           {/* Reset All Data — only for non-viewer */}
           {!isViewOnly && onResetAll && (
             <button
@@ -232,7 +232,8 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
             </div>
           ) : (
             <div className="bg-white rounded-2xl border border-border shadow-sm overflow-hidden">
-              <div className="overflow-x-auto">
+              {/* Desktop/tablet table */}
+              <div className="hidden sm:block overflow-x-auto">
               {/* Table head */}
               <div className="grid grid-cols-[minmax(160px,2fr)_minmax(130px,1.5fr)_120px_115px_auto] gap-3 px-5 py-3 bg-muted/30 border-b border-border text-xs font-semibold text-muted-foreground uppercase tracking-wide min-w-[600px]">
                 <span>Driver</span>
@@ -263,9 +264,9 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                       <div className="min-w-0">
                         {d.phone && d.phone !== '—' ? (
                           <a href={`tel:${d.phone}`}
-                            className="inline-flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 hover:underline transition-colors font-medium truncate"
+                            className="inline-flex items-center gap-2 text-sm text-primary hover:text-primary/80 hover:underline transition-colors font-medium truncate"
                             title={`Call ${d.name}`}>
-                            <Phone className="w-3 h-3 flex-shrink-0" />
+                            <Phone className="w-4 h-4 flex-shrink-0" />
                             <span className="truncate">{d.phone}</span>
                           </a>
                         ) : (
@@ -310,6 +311,70 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                 })}
               </div>
               </div>{/* end overflow-x-auto */}
+
+              {/* Mobile card list */}
+              <div className="sm:hidden divide-y divide-border">
+                {drivers.map((d) => {
+                  const avail = isAvailable(d.status);
+                  return (
+                    <div key={d.id} className="p-3.5">
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 bg-[#0d9488]/15 rounded-full flex items-center justify-center flex-shrink-0 border border-[#0d9488]/20">
+                          <Users className="w-4 h-4 text-[#0d9488]" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-foreground truncate">{d.name}</p>
+                          <p className="text-xs text-muted-foreground">{d.id}</p>
+                        </div>
+                        <span className={`flex-shrink-0 inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-medium ${
+                          avail
+                            ? 'bg-green-100 text-green-700 border-green-200'
+                            : 'bg-red-100 text-red-600 border-red-200'
+                        }`}>
+                          <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${avail ? 'bg-green-500' : 'bg-red-400'}`} />
+                          {avail ? 'Available' : 'Unavailable'}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3 mt-2.5 pt-2.5 border-t border-border/60 text-xs">
+                        <div>
+                          <p className="text-muted-foreground mb-1">Contact</p>
+                          {d.phone && d.phone !== '—' ? (
+                            <a href={`tel:${d.phone}`}
+                              className="inline-flex items-center gap-1.5 text-primary font-medium truncate">
+                              <Phone className="w-3 h-3 flex-shrink-0" />
+                              <span className="truncate">{d.phone}</span>
+                            </a>
+                          ) : (
+                            <span className="text-muted-foreground italic">No number</span>
+                          )}
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground mb-1">PIN</p>
+                          <PinCell pin={d.pin} />
+                        </div>
+                      </div>
+
+                      {!isViewOnly && (
+                        <div className="flex gap-2 mt-2.5">
+                          <button
+                            onClick={() => handleRegeneratePinFor(d.id)}
+                            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 border border-border rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                          >
+                            <RefreshCw className="w-3.5 h-3.5" /> New PIN
+                          </button>
+                          <button
+                            onClick={() => setDeleteTarget({ id: d.id, name: d.name })}
+                            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 border border-red-200 rounded-lg text-xs text-red-500 hover:bg-red-50 hover:text-red-600 hover:border-red-300 transition-colors"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" /> Delete
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
 
@@ -358,7 +423,8 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
             </div>
           ) : (
             <div className="bg-white rounded-2xl border border-border shadow-sm overflow-hidden">
-              <div className="overflow-x-auto">
+              {/* Desktop/tablet table */}
+              <div className="hidden sm:block overflow-x-auto">
               <div className="grid grid-cols-[minmax(140px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px] gap-4 px-5 py-3 bg-muted/30 border-b border-border text-xs font-semibold text-muted-foreground uppercase tracking-wide min-w-[560px]">
                 <span>Plate Number</span>
                 <span className="flex items-center gap-1"><Package className="w-3.5 h-3.5" /> Classification</span>
@@ -406,6 +472,47 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                 ))}
               </div>
               </div>{/* end overflow-x-auto */}
+
+              {/* Mobile card list */}
+              <div className="sm:hidden divide-y divide-border">
+                {trucks.map((t) => (
+                  <div key={t.id} className="p-3.5">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 bg-[#0d9488]/15 rounded-full flex items-center justify-center flex-shrink-0 border border-[#0d9488]/20">
+                        <Truck className="w-4 h-4 text-[#0d9488]" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="font-mono font-semibold text-foreground tracking-wider truncate">{t.plateNumber}</p>
+                        <p className="text-xs text-muted-foreground">{t.id}</p>
+                      </div>
+                      <span className={`flex-shrink-0 inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-medium ${t.status === 'Available' ? 'bg-green-100 text-green-700 border-green-200' : 'bg-red-100 text-red-600 border-red-200'}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${t.status === 'Available' ? 'bg-green-500' : 'bg-red-400'}`} />
+                        {t.status === 'Available' ? 'Available' : 'Unavailable'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 mt-2.5 pt-2.5 border-t border-border/60 text-xs">
+                      <div>
+                        <p className="text-muted-foreground mb-1 flex items-center gap-1"><Package className="w-3 h-3" /> Classification</p>
+                        {t.classification ? (
+                          <span className="text-foreground font-medium">{t.classification}</span>
+                        ) : (
+                          <span className="text-muted-foreground italic">—</span>
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground mb-1 flex items-center gap-1"><Weight className="w-3 h-3" /> Capacity</p>
+                        {t.capacity ? (
+                          <span className="inline-flex items-center gap-1.5 font-medium px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-full">
+                            {t.capacity}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground italic">—</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
