@@ -1,41 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import {
-  X, User, KeyRound, Bell, BellOff, ClipboardList, Eye, EyeOff,
-  CheckCircle2, LogIn, CheckCircle, XCircle, FileCheck, FileX,
-  Search, UserX, Clock, Camera, Pencil,
+  X, User, KeyRound, Bell, BellOff, Eye, EyeOff,
+  CheckCircle2, Camera, Pencil,
 } from 'lucide-react';
-import type { AdminActivityEntry, AdminActivityType } from '../../data/assignmentTypes';
-
-/* ── Activity log helpers (mirrors ActivityLog.tsx subset) ── */
-const ACT_CONFIG: Record<AdminActivityType, { label: string; icon: React.ElementType; color: string }> = {
-  login:          { label: 'Admin Login',       icon: LogIn,        color: 'text-blue-500'   },
-  task_assigned:  { label: 'Task Assigned',     icon: ClipboardList, color: 'text-purple-500' },
-  task_completed: { label: 'Task Completed',    icon: CheckCircle,  color: 'text-green-500'  },
-  task_cancelled: { label: 'Task Cancelled',    icon: XCircle,      color: 'text-gray-500'   },
-  doc_approved:   { label: 'Doc Approved',      icon: FileCheck,    color: 'text-teal-500'   },
-  doc_rejected:   { label: 'Doc Rejected',      icon: FileX,        color: 'text-red-500'    },
-  driver_deleted: { label: 'Driver Removed',    icon: UserX,        color: 'text-orange-500' },
-};
-
-function fmtTs(ts: string): string {
-  try {
-    const d = new Date(ts);
-    if (isNaN(d.getTime())) return ts;
-    return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  } catch { return ts; }
-}
-
-function getDesc(e: AdminActivityEntry): string {
-  switch (e.type) {
-    case 'login':          return `${e.adminEmail ?? 'Admin'} signed in`;
-    case 'task_assigned':  return `Assigned to ${e.driverName ?? '—'} · ${e.destination ?? ''}`;
-    case 'task_completed': return `Completed by ${e.driverName ?? '—'} · ${e.destination ?? ''}`;
-    case 'task_cancelled': return `Cancelled — ${e.driverName ?? '—'}`;
-    case 'doc_approved':   return `Approved "${e.docType ?? 'document'}" for ${e.driverName ?? '—'}`;
-    case 'doc_rejected':   return `Rejected "${e.docType ?? 'document'}" for ${e.driverName ?? '—'}`;
-    case 'driver_deleted': return `Removed driver "${e.driverName ?? '—'}"`;
-  }
-}
 
 /* ── Section separator ── */
 const Divider = ({ label }: { label: string }) => (
@@ -59,12 +26,11 @@ const inputCls = (err?: boolean) =>
 interface Props {
   open: boolean;
   onClose: () => void;
-  activityLog: AdminActivityEntry[];
   notifEnabled: boolean;
   setNotifEnabled: (v: boolean) => void;
 }
 
-export default function SettingsPanel({ open, onClose, activityLog, notifEnabled, setNotifEnabled }: Props) {
+export default function SettingsPanel({ open, onClose, notifEnabled, setNotifEnabled }: Props) {
   /* ── Persist notifications preference ── */
   useEffect(() => {
     localStorage.setItem('360_notif_enabled', String(notifEnabled));
@@ -89,9 +55,6 @@ export default function SettingsPanel({ open, onClose, activityLog, notifEnabled
   const [showConf,    setShowConf]    = useState(false);
   const [passError,   setPassError]   = useState('');
   const [passSaved,   setPassSaved]   = useState(false);
-
-  /* ── Activity log search ── */
-  const [logSearch,   setLogSearch]   = useState('');
 
   /* ── Close on Esc ── */
   useEffect(() => {
@@ -138,14 +101,6 @@ export default function SettingsPanel({ open, onClose, activityLog, notifEnabled
     setPassSaved(true);
     setTimeout(() => setPassSaved(false), 3000);
   };
-
-  const filteredLog = logSearch.trim()
-    ? activityLog.filter((e) =>
-        getDesc(e).toLowerCase().includes(logSearch.toLowerCase()) ||
-        (e.adminEmail ?? '').toLowerCase().includes(logSearch.toLowerCase()) ||
-        (e.truckPlate ?? '').toLowerCase().includes(logSearch.toLowerCase())
-      )
-    : activityLog;
 
   /* Initials avatar */
   const initials = displayName.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2);
@@ -356,70 +311,12 @@ export default function SettingsPanel({ open, onClose, activityLog, notifEnabled
             </div>
           </section>
 
-          {/* ── Activity Log ── */}
-          <section>
-            <Divider label="Activity Log" />
-
-            {/* Search */}
-            <div className="relative mb-3">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-              <input
-                type="text"
-                value={logSearch}
-                onChange={(e) => setLogSearch(e.target.value)}
-                placeholder="Search actions, drivers, emails…"
-                className="w-full pl-9 pr-8 py-2 bg-[#f9fafb] border border-border rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-primary/30"
-              />
-              {logSearch && (
-                <button onClick={() => setLogSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-                  <X className="w-3 h-3" />
-                </button>
-              )}
-            </div>
-
-            {/* Log entries */}
-            {filteredLog.length === 0 ? (
-              <div className="py-10 text-center">
-                <ClipboardList className="w-8 h-8 text-muted-foreground/25 mx-auto mb-2" />
-                <p className="text-sm text-muted-foreground">
-                  {activityLog.length === 0 ? 'No activity recorded yet' : 'No matching activities'}
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-1">
-                {filteredLog.map((entry) => {
-                  const cfg  = ACT_CONFIG[entry.type];
-                  const Icon = cfg.icon;
-                  return (
-                    <div key={entry.id} className="flex items-start gap-3 py-2.5 px-3 rounded-xl hover:bg-accent/40 transition-colors">
-                      <Icon className={`w-4 h-4 flex-shrink-0 mt-0.5 ${cfg.color}`} />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium text-foreground leading-tight">{cfg.label}</p>
-                        <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug truncate">{getDesc(entry)}</p>
-                        {entry.adminEmail && (
-                          <p className="text-[10px] text-muted-foreground/70 mt-0.5 truncate">{entry.adminEmail}</p>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1 text-[10px] text-muted-foreground flex-shrink-0 whitespace-nowrap">
-                        <Clock className="w-3 h-3" />
-                        {fmtTs(entry.timestamp)}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            <p className="text-[11px] text-muted-foreground text-center pt-3 border-t border-border/60 mt-3">
-              {filteredLog.length} of {activityLog.length} entries
-            </p>
-          </section>
-
         </div>
 
         {/* ── Footer ── */}
         <div className="px-6 py-4 border-t border-border bg-muted/20 flex-shrink-0">
           <p className="text-[11px] text-muted-foreground text-center">
-            Settings are saved locally. Activity log reflects all admin/CSR actions.
+            Settings are saved locally.
           </p>
         </div>
       </div>

@@ -331,27 +331,31 @@ const TOPICS: Topic[] = [
     icon: Shield,
     iconColor: 'text-green-600',
     iconBg: 'bg-green-100',
-    tags: ['security', 'roles', 'access', 'admin', 'viewer', 'demo', 'permissions'],
+    tags: ['security', 'roles', 'access', 'admin', 'operation manager', 'csr', 'viewer', 'permissions'],
     steps: [
       {
-        title: 'Three admin roles',
-        body: 'The system has three access levels: Admin (full access — can create, edit, approve, delete), Demo (read/create access — can view and assign tasks), and Viewer (read-only — can browse all data but cannot make changes).',
+        title: 'Account roles',
+        body: 'Admin (full access, reserved for system administration), Operation Manager (manages the team via Workspace Settings — invites CSR and Viewer accounts), CSR (full read/write — can create, edit, and assign tasks), and Viewer (read-only — can browse all data but cannot make changes).',
       },
       {
         title: 'Admin role',
-        body: 'Admins have full control: register drivers and trucks, assign tasks, approve/reject documents, delete accounts, and reset data. Use this role for dispatchers and fleet managers.',
+        body: 'Admins have full control: register drivers and trucks, assign tasks, approve/reject documents, delete accounts, and reset data.',
       },
       {
-        title: 'Demo / CSR role',
-        body: 'Demo accounts can assign tasks and view all data, but cannot delete accounts or reset the system. Suitable for customer service representatives.',
+        title: 'Operation Manager role',
+        body: 'The Operation Manager has the same read-only access as a Viewer over deliveries, plus exclusive access to Workspace Settings, where they invite CSR and Viewer team members and review the company activity log.',
+      },
+      {
+        title: 'CSR role',
+        body: 'CSR accounts are invited individually by the Operation Manager in Workspace Settings. They have full read/write access — assigning tasks, approving documents — attributed to their own real login.',
       },
       {
         title: 'Viewer role',
-        body: 'Viewers can see all pages but cannot make any changes. Suitable for supervisors, auditors, or stakeholders who need read-only visibility.',
+        body: 'Viewers can see all pages but cannot make any changes. Invited by the Operation Manager for supervisors, auditors, or stakeholders who need read-only visibility.',
       },
       {
         title: 'Keeping accounts separate',
-        body: 'Each CSR or admin should use their own account credentials. Shared logins make it impossible to attribute actions in the Activity Log. Contact your system administrator to set up individual accounts.',
+        body: 'Each CSR should use their own individual login, invited by the Operation Manager. Shared logins make it impossible to attribute actions in the Activity Log.',
         warning: 'Never share login credentials between staff. All actions are logged against the account that performed them.',
       },
     ],

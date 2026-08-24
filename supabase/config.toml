@@ -1,0 +1,7 @@
+project_id = "veuehobbfkwppsirapdp"
+
+# The live function's slug is "make-server-ee4d169c" (matching the Hono router's
+# internal path prefix), NOT "server" (the local directory name) — this section
+# name is what actually determines the deploy target/URL.
+[functions.make-server-ee4d169c]
+entrypoint = "./functions/server/index.tsx"

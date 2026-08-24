@@ -11,6 +11,7 @@ import Reports from './Reports';
 import AccountsPanel from './AccountsPanel';
 import SettingsPanel from './SettingsPanel';
 import HelpPanel from './HelpPanel';
+import WorkspaceSettingsPanel from './WorkspaceSettingsPanel';
 import type { Assignment, CompletedTask, LocalDriver, LocalTruck, AppNotification, AdminRole, AdminActivityEntry, AdminActivityInput } from '../../data/assignmentTypes';
 
 type NavItem = 'Dashboard' | 'Monitor' | 'Deliveries' | 'Documents' | 'Reports' | 'Accounts';
@@ -37,6 +38,8 @@ interface Props {
   adminRole: AdminRole | null;
   savingToDb: boolean;
   onResetAll: () => void;
+  isOperationManager: boolean;
+  adminEmail: string | null;
 }
 
 export default function AdminDashboard({
@@ -47,12 +50,17 @@ export default function AdminDashboard({
   activityLog, onLogActivity,
   activeNav, setActiveNav,
   onLogout, isViewOnly, adminRole, savingToDb,
-  onResetAll,
+  onResetAll, isOperationManager, adminEmail,
 }: Props) {
 
   /* ── Floating panel state ── */
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [helpOpen,     setHelpOpen]     = useState(false);
+  const [settingsOpen,  setSettingsOpen]  = useState(false);
+  const [helpOpen,      setHelpOpen]      = useState(false);
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
+
+  /* Display name is stored the same way SettingsPanel's profile section already
+     persists it — read once at mount, this component remounts on login/logout. */
+  const adminName = localStorage.getItem('360_display_name') ?? undefined;
 
   /* ── Notifications preference (persisted in localStorage) ── */
   const [notifEnabled, setNotifEnabled] = useState(
@@ -128,6 +136,10 @@ export default function AdminDashboard({
           onOpenSettings={() => setSettingsOpen(true)}
           onOpenHelp={() => setHelpOpen(true)}
           notifEnabled={notifEnabled}
+          isOperationManager={isOperationManager}
+          adminEmail={adminEmail}
+          adminName={adminName}
+          onOpenWorkspaceSettings={() => setWorkspaceOpen(true)}
         />
         <main className="flex-1 overflow-y-auto p-4 sm:p-6">
           <div className="max-w-[1600px] mx-auto space-y-4 sm:space-y-6">{renderContent()}</div>
@@ -138,7 +150,6 @@ export default function AdminDashboard({
       <SettingsPanel
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
-        activityLog={activityLog}
         notifEnabled={notifEnabled}
         setNotifEnabled={setNotifEnabled}
       />
@@ -146,6 +157,15 @@ export default function AdminDashboard({
         open={helpOpen}
         onClose={() => setHelpOpen(false)}
       />
+      {isOperationManager && (
+        <WorkspaceSettingsPanel
+          open={workspaceOpen}
+          onClose={() => setWorkspaceOpen(false)}
+          activityLog={activityLog}
+          onLogActivity={onLogActivity}
+          adminEmail={adminEmail}
+        />
+      )}
     </div>
   );
 }

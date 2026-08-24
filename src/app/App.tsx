@@ -6,25 +6,18 @@ import AdminDashboard from './components/admin/AdminDashboard';
 import DriverInterface from './components/driver/DriverInterface';
 import LoginScreen from './components/auth/LoginScreen';
 import type { Assignment, CompletedTask, LocalDriver, LocalTruck, AppNotification, AdminRole, AdminActivityEntry, AdminActivityInput } from './data/assignmentTypes';
+import { OM_EMAIL } from './data/assignmentTypes';
 
 type AppView = 'login' | 'admin' | 'driver';
 type NavItem = 'Dashboard' | 'Monitor' | 'Deliveries' | 'Documents' | 'Reports' | 'Accounts';
 
-const ADMIN_SECTIONS: { label: string; nav: NavItem; color: string; active: string }[] = [
-  { label: 'Monitor',    nav: 'Monitor',    color: 'bg-gray-100 text-gray-600 hover:bg-gray-200', active: 'bg-[#0d9488] text-white' },
-  { label: 'Deliveries', nav: 'Deliveries', color: 'bg-gray-100 text-gray-600 hover:bg-gray-200', active: 'bg-[#0d9488] text-white' },
-  { label: 'Documents',  nav: 'Documents',  color: 'bg-gray-100 text-gray-600 hover:bg-gray-200', active: 'bg-[#0d9488] text-white' },
-  { label: 'Reports',    nav: 'Reports',    color: 'bg-gray-100 text-gray-600 hover:bg-gray-200', active: 'bg-[#0d9488] text-white' },
-  { label: 'Accounts',   nav: 'Accounts',   color: 'bg-gray-100 text-gray-600 hover:bg-gray-200', active: 'bg-[#0d9488] text-white' },
-];
-
 export default function App() {
   const [view,      setView]      = useState<AppView>('login');  // ← back to login
   const [activeNav, setActiveNav] = useState<NavItem>('Dashboard');
-  const [demoOpen,  setDemoOpen]  = useState(false);
 
   /* Auth state */
   const [adminRole,    setAdminRole]    = useState<AdminRole | null>(null);
+  const [adminEmail,   setAdminEmail]   = useState<string | null>(null);
   const [accessToken,  setAccessToken]  = useState<string | null>(null);
   const [dataLoading,  setDataLoading]  = useState(false);
   const [savingToDb,   setSavingToDb]   = useState(false);
@@ -101,16 +94,25 @@ export default function App() {
     }
   }, [adminGetHeaders]);
 
-  const applySession = useCallback(async (token: string, role: AdminRole, fresh = false) => {
+  const applySession = useCallback(async (token: string, role: AdminRole, fresh = false, name?: string) => {
     isPollUpdate.current = true; // block auto-save until loadData finishes
+    const email = atob(token).split(':')[0];
     setAdminRole(role);
+    setAdminEmail(email);
     setAccessToken(token);
+    if (fresh) {
+      /* Reset the device-local display name on every fresh login so a previous
+         account's name (especially a real team member's) never leaks onto the
+         next session — member logins repopulate it with their real name, static
+         account logins fall back to Header's 'Admin User' default. */
+      if (name) localStorage.setItem('360_display_name', name);
+      else localStorage.removeItem('360_display_name');
+    }
     await loadData(token);
     setView('admin');
     setActiveNav('Dashboard');
     if (fresh) {
       setLoginSuccess('Login Successful! Welcome to the Admin Portal.');
-      const email = atob(token).split(':')[0];
       onLogActivity({ type: 'login', adminEmail: email, adminRole: role });
     }
   }, [loadData, onLogActivity]);
@@ -120,13 +122,8 @@ export default function App() {
     const token = localStorage.getItem('360_admin_token');
     const role  = localStorage.getItem('360_admin_role') as AdminRole | null;
     if (token && role) {
-      if (window.innerWidth < 768) {
-        localStorage.removeItem('360_admin_token');
-        localStorage.removeItem('360_admin_role');
-      } else {
-        applySession(token, role);
-        return;
-      }
+      applySession(token, role);
+      return;
     }
     /* Also restore driver session */
     const dId   = localStorage.getItem('360_driver_id');
@@ -234,19 +231,13 @@ export default function App() {
     return () => clearInterval(id);
   }, [accessToken, adminRole]);
 
-  /* ── Navigation helpers ── */
-  const goToAdmin = (nav: NavItem = 'Dashboard') => {
-    setActiveNav(nav);
-    setView('admin');
-    setDemoOpen(false);
-  };
-
   const handleLogout = async () => {
     localStorage.removeItem('360_admin_token');
     localStorage.removeItem('360_admin_role');
     localStorage.removeItem('360_driver_id');
     localStorage.removeItem('360_driver_name');
     setAdminRole(null);
+    setAdminEmail(null);
     setAccessToken(null);
     setDriverInfo(null);
     setView('login');
@@ -290,10 +281,8 @@ export default function App() {
     setTimeout(() => { isPollUpdate.current = false; }, 200);
   }, []);
 
-  const isDriverView = view === 'driver';
   const isViewOnly   = adminRole === 'viewer';
-  const showFullDemo = adminRole === 'demo';      // only for demo account — NOT on login screen
-  const showMiniNav  = adminRole === 'viewer';
+  const isOperationManager = adminEmail === OM_EMAIL;
 
   /* ── Loading screen ── */
   if (dataLoading) {
@@ -329,7 +318,7 @@ export default function App() {
           drivers={drivers}
           trucks={trucks}
           assignments={assignments}
-          onAdminLogin={async (token, role) => { await applySession(token, role, true); }}
+          onAdminLogin={async (token, role, name) => { await applySession(token, role, true, name); }}
           onDriverLogin={(info) => {
             localStorage.setItem('360_driver_id',   info.id);
             localStorage.setItem('360_driver_name', info.name);
@@ -356,6 +345,8 @@ export default function App() {
           isViewOnly={isViewOnly}
           adminRole={adminRole}
           savingToDb={savingToDb}
+          isOperationManager={isOperationManager}
+          adminEmail={adminEmail}
         />
       )}
 
@@ -370,85 +361,6 @@ export default function App() {
             setView('login');
           }}
         />
-      )}
-
-      {/* ── DEMO panel — demo role & unauthenticated ── */}
-      {showFullDemo && (
-        isDriverView ? (
-          <div className="fixed bottom-5 right-4 z-50 flex flex-col items-end gap-2">
-            {demoOpen && (
-              <div className="bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-border p-3 flex flex-col gap-1.5 w-52 animate-in slide-in-from-bottom-2 fade-in duration-200">
-                <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-widest px-1 pb-0.5 border-b border-border mb-0.5">Demo Navigation</p>
-                <button onClick={() => { setView('login'); setDemoOpen(false); }}
-                  className="w-full text-left px-3 py-2 rounded-xl text-xs font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors">
-                  🔐 Login Screen
-                </button>
-                <button onClick={() => goToAdmin('Dashboard')}
-                  className="w-full text-left px-3 py-2 rounded-xl text-xs font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors">
-                  🖥 Admin — Dashboard
-                </button>
-                <div className="border-t border-border my-0.5" />
-                {ADMIN_SECTIONS.map(({ label, nav }) => (
-                  <button key={nav} onClick={() => goToAdmin(nav)}
-                    className="w-full text-left px-3 py-2 rounded-xl text-xs font-medium bg-gray-50 text-gray-700 hover:bg-gray-100 transition-colors">
-                    → {label}
-                  </button>
-                ))}
-              </div>
-            )}
-            <button onClick={() => setDemoOpen((v) => !v)}
-              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full shadow-lg border text-xs font-semibold transition-all active:scale-95 ${
-                demoOpen ? 'bg-gray-800 text-white border-gray-700' : 'bg-white/90 backdrop-blur-md text-gray-600 border-border hover:bg-white'
-              }`}>
-              <span className="text-[11px]">{demoOpen ? '✕ Close' : '⚙ Demo'}</span>
-            </button>
-          </div>
-        ) : (
-          <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50">
-            <div className="bg-white/90 backdrop-blur-md rounded-2xl shadow-xl border border-border px-4 py-2.5 flex items-center gap-1.5 flex-wrap justify-center max-w-[90vw]">
-              <span className="text-xs text-muted-foreground font-medium pr-1.5 border-r border-border mr-1">Demo</span>
-              <button onClick={() => setView('login')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${view === 'login' ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
-                Login
-              </button>
-              <button onClick={() => goToAdmin('Dashboard')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${view === 'admin' && activeNav === 'Dashboard' ? 'bg-primary text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
-                Admin View
-              </button>
-              <span className="w-px h-4 bg-border mx-0.5" />
-              {ADMIN_SECTIONS.map(({ label, nav, active, color }) => (
-                <button key={nav} onClick={() => goToAdmin(nav)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${view === 'admin' && activeNav === nav ? active : color}`}>
-                  {label}
-                </button>
-              ))}
-              <span className="w-px h-4 bg-border mx-0.5" />
-              <button onClick={() => setView('driver')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${view === 'driver' ? 'bg-secondary text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
-                Driver View
-              </button>
-            </div>
-          </div>
-        )
-      )}
-
-      {/* ── MINI nav panel — viewer role only ── */}
-      {showMiniNav && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50">
-          <div className="bg-white/90 backdrop-blur-md rounded-2xl shadow-xl border border-border px-4 py-2.5 flex items-center gap-2 max-w-[90vw]">
-            <span className="text-xs text-muted-foreground font-medium pr-1.5 border-r border-border mr-1">
-              👁 View Only
-            </span>
-            <button onClick={() => goToAdmin('Dashboard')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${view === 'admin' ? 'bg-primary text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
-              Admin View
-            </button>
-            <button onClick={() => setView('driver')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${view === 'driver' ? 'bg-secondary text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
-              Driver View
-            </button>
-          </div>
-        </div>
       )}
 
     </div>

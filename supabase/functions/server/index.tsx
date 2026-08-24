@@ -37,17 +37,25 @@ const BUCKET_NAME = 'make-ee4d169c-media';
 
 /* ── Admin accounts (must match LoginScreen.tsx) ────── */
 const ADMIN_ACCOUNTS = [
-  { email: '360logistics@email.ph',       role: 'admin'  },
-  { email: 'admin360logistics@gmail.ph',  role: 'demo'   },
-  { email: 'admin360logistics@email.com', role: 'viewer' },
+  { email: '360logistics@email.ph',            role: 'admin'  },
+  { email: 'operationmanager@360logistics.ph', role: 'viewer' },
 ];
+
+/* Operation Manager — the one hardcoded 'viewer' account, distinct from any
+   Viewer-role team member invited later (both share role: 'viewer'). */
+const OM_EMAIL = ADMIN_ACCOUNTS.find((a) => a.role === 'viewer')!.email;
 
 /* ── Initial seed data ───────────────────────────────── */
 const INITIAL_DRIVERS: unknown[] = [];
 const INITIAL_TRUCKS:  unknown[] = [];
 
-/* ── Token: btoa(email:role:timestamp) — read from X-Admin-Token header ─── */
-function getAuthUser(request: Request): { email: string; role: string } | null {
+/* ── Token: btoa(email:role:timestamp) — read from X-Admin-Token header ───
+   Checks the 3 static accounts first, then falls back to the dynamic
+   team-members list (KV-backed). For a team member, the CURRENT role in KV
+   wins over whatever role was baked into the token at login time — this
+   makes role changes and removals take effect on the member's next request
+   instead of waiting out the 30-day token expiry. ─────────────────────── */
+async function getAuthUser(request: Request): Promise<{ email: string; role: string } | null> {
   try {
     const token = request.headers.get('X-Admin-Token');
     if (!token) return null;
@@ -58,9 +66,15 @@ function getAuthUser(request: Request): { email: string; role: string } | null {
     const role  = parts[1];
     const ts    = parseInt(parts[2]);
     if (isNaN(ts) || Date.now() - ts > 30 * 24 * 60 * 60 * 1000) return null;
-    const account = ADMIN_ACCOUNTS.find((a) => a.email === email && a.role === role);
-    if (!account) return null;
-    return { email, role };
+
+    const staticAccount = ADMIN_ACCOUNTS.find((a) => a.email === email && a.role === role);
+    if (staticAccount) return { email, role };
+
+    const members = ((await kv.get(K.teamMembers)) ?? []) as any[];
+    const member  = members.find((m) => m.email === email);
+    if (member && member.status === 'active') return { email, role: member.role };
+
+    return null;
   } catch {
     return null;
   }
@@ -75,6 +89,7 @@ const K = {
   cancelled:     'app_cancelled_v1',
   notifications: 'app_notifications_v1',
   activityLog:   'app_activity_log_v1',
+  teamMembers:   'app_team_members_v1',
 };
 
 /* ── Strip base64 data-URLs from any object (keeps storage URLs, drops raw image bytes) ── */
@@ -163,9 +178,147 @@ app.post("/make-server-ee4d169c/driver-login", async (c) => {
   return c.json({ success: true, driverId: driver.id, driverName: driver.name });
 });
 
+/* ── Team members (CSR / Viewer accounts invited by the Operation Manager) ──
+   Own KV key, own routes — deliberately NOT folded into GET/PUT /app-data:
+   (1) the only existing write-gate is role === 'viewer', which can't express
+   "only THIS ONE viewer (the OM) may write this", since invited Viewer
+   members also have role 'viewer'; (2) these records carry a plaintext
+   password and must never ride in a payload every logged-in session receives.
+   All routes below except /member-login require the caller to BE the OM. ── */
+async function requireOM(c: any): Promise<{ email: string; role: string } | null> {
+  const user = await getAuthUser(c.req.raw);
+  if (!user || user.email !== OM_EMAIL) return null;
+  return user;
+}
+
+/* ── GET /team-members — OM only ─────────────────────── */
+app.get("/make-server-ee4d169c/team-members", async (c) => {
+  if (!(await requireOM(c))) return c.json({ error: "Unauthorized" }, 403);
+  try {
+    const members = (await kv.get(K.teamMembers)) ?? [];
+    return c.json({ members });
+  } catch (err) {
+    console.log('[GET /team-members] error:', err);
+    return c.json({ error: `${err}` }, 500);
+  }
+});
+
+/* ── POST /team-members — OM invites a CSR or Viewer ─── */
+app.post("/make-server-ee4d169c/team-members", async (c) => {
+  const om = await requireOM(c);
+  if (!om) return c.json({ error: "Unauthorized" }, 403);
+
+  let body: { name?: string; email?: string; password?: string; role?: string };
+  try { body = await c.req.json(); } catch { return c.json({ error: "bad_request" }, 400); }
+
+  const name  = (body.name ?? '').trim();
+  const email = (body.email ?? '').trim().toLowerCase();
+  const password = (body.password ?? '').trim();
+  const role  = body.role;
+
+  if (!name || !email || !password) return c.json({ error: "name, email, and password are required" }, 400);
+  if (role !== 'csr' && role !== 'viewer') return c.json({ error: "role must be 'csr' or 'viewer'" }, 400);
+
+  try {
+    const isStaticEmail = ADMIN_ACCOUNTS.some((a) => a.email.toLowerCase() === email);
+    const members = ((await kv.get(K.teamMembers)) ?? []) as any[];
+    const isDupe  = members.some((m) => (m.email ?? '').toLowerCase() === email);
+    if (isStaticEmail || isDupe) return c.json({ error: "A member with that email already exists" }, 409);
+
+    const newMember = {
+      id: `TM${String(Date.now()).slice(-6)}`,
+      name, email, password, role,
+      status: 'active' as const,
+      invitedAt: new Date().toISOString(),
+    };
+    members.push(newMember);
+    await kv.set(K.teamMembers, members);
+
+    console.log(`[POST /team-members] ${om.email} invited ${email} as ${role}`);
+    return c.json({ success: true, member: newMember });
+  } catch (err) {
+    console.log('[POST /team-members] error:', err);
+    return c.json({ error: `${err}` }, 500);
+  }
+});
+
+/* ── PATCH /team-members/:id — OM changes role/status ── */
+app.patch("/make-server-ee4d169c/team-members/:id", async (c) => {
+  if (!(await requireOM(c))) return c.json({ error: "Unauthorized" }, 403);
+
+  const id = c.req.param('id');
+  let body: { role?: string; status?: string };
+  try { body = await c.req.json(); } catch { return c.json({ error: "bad_request" }, 400); }
+
+  if (body.role !== undefined && body.role !== 'csr' && body.role !== 'viewer') {
+    return c.json({ error: "role must be 'csr' or 'viewer'" }, 400);
+  }
+
+  try {
+    const members = ((await kv.get(K.teamMembers)) ?? []) as any[];
+    const idx = members.findIndex((m) => m.id === id);
+    if (idx === -1) return c.json({ error: "Member not found" }, 404);
+
+    members[idx] = { ...members[idx], ...(body.role ? { role: body.role } : {}), ...(body.status ? { status: body.status } : {}) };
+    await kv.set(K.teamMembers, members);
+
+    return c.json({ success: true, member: members[idx] });
+  } catch (err) {
+    console.log('[PATCH /team-members/:id] error:', err);
+    return c.json({ error: `${err}` }, 500);
+  }
+});
+
+/* ── DELETE /team-members/:id — OM removes a member ──── */
+app.delete("/make-server-ee4d169c/team-members/:id", async (c) => {
+  if (!(await requireOM(c))) return c.json({ error: "Unauthorized" }, 403);
+
+  const id = c.req.param('id');
+  try {
+    const members = ((await kv.get(K.teamMembers)) ?? []) as any[];
+    const filtered = members.filter((m) => m.id !== id);
+    await kv.set(K.teamMembers, filtered);
+    return c.json({ success: true });
+  } catch (err) {
+    console.log('[DELETE /team-members/:id] error:', err);
+    return c.json({ error: `${err}` }, 500);
+  }
+});
+
+/* ── POST /member-login (no auth required) — CSR/Viewer team-member login ── */
+app.post("/make-server-ee4d169c/member-login", async (c) => {
+  let body: { email?: string; password?: string };
+  try { body = await c.req.json(); } catch { return c.json({ error: "bad_request" }, 400); }
+
+  const email    = (body.email ?? '').trim().toLowerCase();
+  const password = (body.password ?? '').trim();
+  if (!email || !password) return c.json({ error: "invalid_credentials", msg: "Enter your email and password." }, 400);
+
+  try {
+    const members = ((await kv.get(K.teamMembers)) ?? []) as any[];
+    const idx = members.findIndex((m) => (m.email ?? '').toLowerCase() === email);
+    if (idx === -1 || members[idx].status !== 'active') {
+      return c.json({ error: "invalid_credentials", msg: "Invalid email or password." }, 401);
+    }
+    if (members[idx].password !== password) {
+      return c.json({ error: "invalid_credentials", msg: "Invalid email or password." }, 401);
+    }
+
+    members[idx] = { ...members[idx], lastActive: new Date().toISOString() };
+    await kv.set(K.teamMembers, members);
+
+    const token = btoa(`${members[idx].email}:${members[idx].role}:${Date.now()}`);
+    console.log(`[member-login] success: ${members[idx].email} (${members[idx].role})`);
+    return c.json({ success: true, token, role: members[idx].role, name: members[idx].name });
+  } catch (err) {
+    console.log('[POST /member-login] error:', err);
+    return c.json({ error: `${err}` }, 500);
+  }
+});
+
 /* ── GET /app-data ───────────────────────────────────── */
 app.get("/make-server-ee4d169c/app-data", async (c) => {
-  const user = getAuthUser(c.req.raw);
+  const user = await getAuthUser(c.req.raw);
   if (!user) return c.json({ error: "Unauthorized" }, 401);
 
   try {
@@ -197,7 +350,7 @@ app.get("/make-server-ee4d169c/app-data", async (c) => {
 
 /* ── PUT /app-data ───────────────────────────────────── */
 app.put("/make-server-ee4d169c/app-data", async (c) => {
-  const user = getAuthUser(c.req.raw);
+  const user = await getAuthUser(c.req.raw);
   if (!user) {
     console.log('[PUT /app-data] Unauthorized — bad/missing token');
     return c.json({ error: "Unauthorized" }, 401);
@@ -226,7 +379,7 @@ app.put("/make-server-ee4d169c/app-data", async (c) => {
 
 /* ── POST /reset-data — wipe all app data, keep admin accounts ── */
 app.post("/make-server-ee4d169c/reset-data", async (c) => {
-  const user = getAuthUser(c.req.raw);
+  const user = await getAuthUser(c.req.raw);
   if (!user) return c.json({ error: "Unauthorized" }, 401);
   if (user.role === 'viewer') return c.json({ error: "Read-only access" }, 403);
 

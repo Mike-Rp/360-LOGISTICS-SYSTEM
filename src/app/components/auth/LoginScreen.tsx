@@ -1,14 +1,13 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef } from 'react';
 import imgLogo from 'figma:asset/5e73e3c08e898d68c86717993c6e7442d03e9ac4.png';
-import { Eye, EyeOff, AlertCircle, Phone, KeySquare, Loader2, Monitor } from 'lucide-react';
+import { Eye, EyeOff, AlertCircle, Phone, KeySquare, Loader2 } from 'lucide-react';
 import type { LocalDriver, LocalTruck, Assignment, AdminRole } from '../../data/assignmentTypes';
 import { SERVER } from '../../lib/supabaseClient';
 import { publicAnonKey } from '/utils/supabase/info';
 
 const ADMIN_ACCOUNTS = [
-  { email: '360logistics@email.ph',       password: '360Admin2026!', role: 'admin'  as AdminRole },
-  { email: 'admin360logistics@gmail.ph',  password: '360Demo2026!',  role: 'demo'   as AdminRole },
-  { email: 'admin360logistics@email.com', password: '360View2026!',  role: 'viewer' as AdminRole },
+  { email: '360logistics@email.ph',             password: '360Admin2026!', role: 'admin'  as AdminRole },
+  { email: 'operationmanager@360logistics.ph',  password: '360logistics',  role: 'viewer' as AdminRole },
 ];
 
 function normaliseMobile(raw: string): string {
@@ -21,7 +20,7 @@ interface Props {
   drivers:      LocalDriver[];
   trucks:       LocalTruck[];
   assignments:  Assignment[];
-  onAdminLogin:  (token: string, role: AdminRole) => void;
+  onAdminLogin:  (token: string, role: AdminRole, name?: string) => void;
   onDriverLogin: (info: { id: string; name: string }) => void;
 }
 
@@ -39,13 +38,6 @@ const ErrorBanner = ({ icon: Icon, title, sub }: { icon: React.ElementType; titl
 
 export default function LoginScreen({ drivers, trucks, assignments, onAdminLogin, onDriverLogin }: Props) {
   const [view, setView] = useState<'driver' | 'admin'>('driver');
-
-  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
-  useEffect(() => {
-    const handler = () => setIsMobile(window.innerWidth < 768);
-    window.addEventListener('resize', handler);
-    return () => window.removeEventListener('resize', handler);
-  }, []);
 
   /* ── Driver form ── */
   const [mobile,        setMobile]        = useState('');
@@ -154,18 +146,43 @@ export default function LoginScreen({ drivers, trucks, assignments, onAdminLogin
     setDriverLoading(false);
   };
 
-  const handleAdminLogin = () => {
-    if (isMobile) { setAdminError('Admin access is only available on desktop or laptop computers.'); return; }
+  const handleAdminLogin = async () => {
     setAdminError('');
     const inputEmail = email.trim().toLowerCase();
     const inputPass  = password.trim();
     if (!inputEmail || !inputPass) { setAdminError('Please enter your email and password.'); return; }
+
     const account = ADMIN_ACCOUNTS.find((a) => a.email.toLowerCase() === inputEmail && a.password === inputPass);
-    if (!account) { setAdminError('Invalid email or password.'); return; }
-    const token = btoa(`${account.email}:${account.role}:${Date.now()}`);
-    localStorage.setItem('360_admin_token', token);
-    localStorage.setItem('360_admin_role',  account.role);
-    onAdminLogin(token, account.role);
+    if (account) {
+      const token = btoa(`${account.email}:${account.role}:${Date.now()}`);
+      localStorage.setItem('360_admin_token', token);
+      localStorage.setItem('360_admin_role',  account.role);
+      onAdminLogin(token, account.role);
+      return;
+    }
+
+    /* Not one of the 3 hardcoded accounts — try a real team-member (CSR/Viewer) login */
+    setAdminLoading(true);
+    try {
+      const res = await fetch(`${SERVER}/member-login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${publicAnonKey}` },
+        body: JSON.stringify({ email: inputEmail, password: inputPass }),
+        signal: AbortSignal.timeout(5000),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        localStorage.setItem('360_admin_token', data.token);
+        localStorage.setItem('360_admin_role',  data.role);
+        onAdminLogin(data.token, data.role, data.name);
+        return;
+      }
+      setAdminError(data.msg ?? 'Invalid email or password.');
+    } catch {
+      setAdminError('Invalid email or password.');
+    } finally {
+      setAdminLoading(false);
+    }
   };
 
   return (
@@ -319,19 +336,12 @@ export default function LoginScreen({ drivers, trucks, assignments, onAdminLogin
           {/* Footer toggle */}
           <div className="border-t border-[#e5e7eb] px-7 sm:px-9 py-5">
             {view === 'driver' ? (
-              isMobile ? (
-                <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground py-1">
-                  <Monitor className="w-4 h-4 flex-shrink-0" />
-                  <span>Admin access requires a desktop computer</span>
-                </div>
-              ) : (
-                <button
-                  onClick={() => { setView('admin'); setAdminError(''); setEmail(''); setPassword(''); }}
-                  className="w-full py-3 bg-[#2290fa] text-white rounded-2xl hover:bg-blue-600 transition-colors shadow-md font-semibold text-base"
-                >
-                  Admin Login
-                </button>
-              )
+              <button
+                onClick={() => { setView('admin'); setAdminError(''); setEmail(''); setPassword(''); }}
+                className="w-full py-3 bg-[#2290fa] text-white rounded-2xl hover:bg-blue-600 transition-colors shadow-md font-semibold text-base"
+              >
+                Admin Login
+              </button>
             ) : (
               <button
                 onClick={() => { setView('driver'); setDriverError(null); }}

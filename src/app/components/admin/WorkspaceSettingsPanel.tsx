@@ -1,0 +1,509 @@
+import { useState, useEffect } from 'react';
+import {
+  X, Users, UserPlus, Trash2, Clock, ClipboardList, Search,
+  LogIn, CheckCircle, XCircle, FileCheck, FileX, UserX, UserMinus,
+  RefreshCw, Shield, Eye, EyeOff, AlertTriangle, Mail,
+} from 'lucide-react';
+import { SERVER } from '../../lib/supabaseClient';
+import { publicAnonKey } from '/utils/supabase/info';
+import type { AdminActivityEntry, AdminActivityType, AdminActivityInput, TeamMember } from '../../data/assignmentTypes';
+
+/* ── Activity log helpers — moved here from SettingsPanel.tsx, extended for member events ── */
+const ACT_CONFIG: Record<AdminActivityType, { label: string; icon: React.ElementType; color: string }> = {
+  login:               { label: 'Admin Login',    icon: LogIn,        color: 'text-blue-500'   },
+  task_assigned:       { label: 'Task Assigned',  icon: ClipboardList, color: 'text-purple-500' },
+  task_completed:      { label: 'Task Completed', icon: CheckCircle,  color: 'text-green-500'  },
+  task_cancelled:      { label: 'Task Cancelled', icon: XCircle,      color: 'text-gray-500'   },
+  doc_approved:        { label: 'Doc Approved',   icon: FileCheck,    color: 'text-teal-500'   },
+  doc_rejected:        { label: 'Doc Rejected',   icon: FileX,        color: 'text-red-500'    },
+  driver_deleted:      { label: 'Driver Removed', icon: UserX,        color: 'text-orange-500' },
+  member_added:        { label: 'Member Added',   icon: UserPlus,     color: 'text-blue-500'   },
+  member_removed:      { label: 'Member Removed', icon: UserMinus,    color: 'text-red-500'    },
+};
+
+function fmtTs(ts: string): string {
+  try {
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return ts;
+    return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  } catch { return ts; }
+}
+
+function getDesc(e: AdminActivityEntry): string {
+  switch (e.type) {
+    case 'login':                return `${e.adminEmail ?? 'Admin'} signed in`;
+    case 'task_assigned':        return `Assigned to ${e.driverName ?? '—'} · ${e.destination ?? ''}`;
+    case 'task_completed':       return `Completed by ${e.driverName ?? '—'} · ${e.destination ?? ''}`;
+    case 'task_cancelled':       return `Cancelled — ${e.driverName ?? '—'}`;
+    case 'doc_approved':         return `Approved "${e.docType ?? 'document'}" for ${e.driverName ?? '—'}`;
+    case 'doc_rejected':         return `Rejected "${e.docType ?? 'document'}" for ${e.driverName ?? '—'}`;
+    case 'driver_deleted':       return `Removed driver "${e.driverName ?? '—'}"`;
+    case 'member_added':         return `Added ${e.memberName ?? e.memberEmail ?? 'a member'} as ${e.adminRole ?? 'a team member'}`;
+    case 'member_removed':       return `Removed ${e.memberName ?? e.memberEmail ?? 'a member'}`;
+  }
+}
+
+const generatePassword = () => {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  let out = '';
+  for (let i = 0; i < 10; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  return out;
+};
+
+function authHeaders(): HeadersInit {
+  const token = localStorage.getItem('360_admin_token') ?? '';
+  return { 'Authorization': `Bearer ${publicAnonKey}`, 'X-Admin-Token': token, 'Content-Type': 'application/json' };
+}
+
+/* ── Modal shell (mirrors RegisterModals.tsx's local ModalShell) ── */
+function ModalShell({ title, onClose, children, footer }: {
+  title: string; onClose: () => void; children: React.ReactNode; footer?: React.ReactNode;
+}) {
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border flex-shrink-0">
+          <h3 className="text-lg font-semibold text-foreground">{title}</h3>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-accent transition-colors text-muted-foreground">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="p-6 overflow-y-auto flex-1">{children}</div>
+        {footer && <div className="px-6 pb-5 pt-3 border-t border-border flex-shrink-0">{footer}</div>}
+      </div>
+    </div>
+  );
+}
+
+/* ── Add Member Modal ── */
+function AddMemberModal({ onClose, onAdded }: {
+  onClose: () => void;
+  onAdded: (member: TeamMember) => void;
+}) {
+  const [name,       setName]       = useState('');
+  const [email,      setEmail]      = useState('');
+  const [role,       setRole]       = useState<'csr' | 'viewer'>('csr');
+  const [password,   setPassword]   = useState('');
+  const [showPass,   setShowPass]   = useState(false);
+  const [error,      setError]      = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [created,    setCreated]    = useState<TeamMember | null>(null);
+
+  const handleAdd = async () => {
+    setError('');
+    if (!name.trim()) { setError('Name is required.'); return; }
+    if (!/^\S+@\S+\.\S+$/.test(email.trim())) { setError('Enter a valid email address.'); return; }
+    if (password.length < 6) { setError('Password must be at least 6 characters.'); return; }
+
+    setSubmitting(true);
+    try {
+      const res = await fetch(`${SERVER}/team-members`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ name: name.trim(), email: email.trim(), password, role }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error ?? 'Could not add this member.'); setSubmitting(false); return; }
+      setCreated(data.member);
+      onAdded(data.member);
+    } catch {
+      setError('Network error — please try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <ModalShell title="Add Team Member" onClose={onClose}>
+      {!created ? (
+        <div className="space-y-5">
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-1.5">Name <span className="text-red-500">*</span></label>
+            <input
+              type="text" value={name}
+              onChange={(e) => { setName(e.target.value); setError(''); }}
+              placeholder="e.g. Sofia Petrov"
+              className="w-full px-4 py-3 rounded-xl border border-border bg-white text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-1.5">
+              <span className="flex items-center gap-1.5"><Mail className="w-4 h-4 text-primary/70" /> Email <span className="text-red-500">*</span></span>
+            </label>
+            <input
+              type="email" value={email}
+              onChange={(e) => { setEmail(e.target.value); setError(''); }}
+              placeholder="name@company.com"
+              className="w-full px-4 py-3 rounded-xl border border-border bg-white text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-2">Role <span className="text-red-500">*</span></label>
+            <div className="grid grid-cols-2 gap-2">
+              {(['csr', 'viewer'] as const).map((r) => (
+                <button
+                  key={r}
+                  onClick={() => setRole(r)}
+                  className={`px-3 py-3 rounded-xl border text-left transition-all ${
+                    role === r ? 'border-primary bg-blue-50 ring-2 ring-primary/20' : 'border-border bg-white hover:bg-accent'
+                  }`}
+                >
+                  <p className="text-sm font-semibold text-foreground">{r === 'csr' ? 'CSR' : 'Viewer'}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{r === 'csr' ? 'Full read/write access' : 'Read-only, no editing'}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-1.5">
+              Password <span className="text-xs text-muted-foreground">(set your own, or use a suggestion)</span>
+            </label>
+            <div className="flex items-center gap-3">
+              <div className="flex-1 relative">
+                <Shield className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+                <input
+                  type={showPass ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => { setPassword(e.target.value); setError(''); }}
+                  placeholder="Enter a password"
+                  className="w-full pl-10 pr-10 py-3 rounded-xl border border-border bg-white text-sm font-mono tracking-wide focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPass((v) => !v)}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+              <button
+                onClick={() => { setPassword(generatePassword()); setShowPass(true); }}
+                className="flex items-center gap-2 px-4 py-3 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors text-sm font-medium whitespace-nowrap"
+              >
+                <RefreshCw className="w-4 h-4" /> Suggest
+              </button>
+            </div>
+          </div>
+
+          {error && <p className="text-xs text-red-500">{error}</p>}
+
+          <div className="flex gap-3 pt-1">
+            <button onClick={onClose} className="flex-1 px-4 py-2.5 border border-border rounded-xl hover:bg-accent transition-colors text-sm">
+              Cancel
+            </button>
+            <button
+              onClick={handleAdd}
+              disabled={submitting}
+              className="flex-1 px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              <UserPlus className="w-4 h-4" /> {submitting ? 'Adding…' : 'Add Member'}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="text-center py-4 space-y-4">
+          <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto">
+            <CheckCircle className="w-8 h-8 text-green-500" />
+          </div>
+          <div>
+            <h4 className="font-semibold text-foreground text-lg">{created.name} added!</h4>
+            <p className="text-sm text-muted-foreground mt-1">Share these credentials with them privately.</p>
+          </div>
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-left space-y-1">
+            <p className="text-xs font-semibold text-amber-700 flex items-center gap-1.5 mb-2">
+              <Shield className="w-3.5 h-3.5" /> Login Credentials
+            </p>
+            <p className="text-xs text-amber-600">Email: <strong>{created.email}</strong></p>
+            <p className="text-xs text-amber-600">Password: <strong className="font-mono tracking-wide">{created.password}</strong></p>
+            <p className="text-xs text-amber-600">Role: <strong>{created.role === 'csr' ? 'CSR' : 'Viewer'}</strong></p>
+          </div>
+          <button onClick={onClose} className="w-full px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors text-sm font-medium">
+            Done
+          </button>
+        </div>
+      )}
+    </ModalShell>
+  );
+}
+
+/* ── Remove confirmation ── */
+function RemoveConfirmModal({ member, onCancel, onConfirm, removing }: {
+  member: TeamMember; onCancel: () => void; onConfirm: () => void; removing: boolean;
+}) {
+  return (
+    <ModalShell title="Remove Member" onClose={onCancel}>
+      <div className="text-center space-y-4">
+        <div className="w-14 h-14 bg-red-100 rounded-full flex items-center justify-center mx-auto">
+          <AlertTriangle className="w-7 h-7 text-red-500" />
+        </div>
+        <p className="text-sm text-foreground">
+          Remove <strong>{member.name}</strong> ({member.email})? Their login will stop working immediately.
+        </p>
+        <div className="flex gap-3">
+          <button onClick={onCancel} className="flex-1 px-4 py-2.5 border border-border rounded-xl hover:bg-accent transition-colors text-sm">
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={removing}
+            className="flex-1 px-4 py-2.5 bg-red-500 text-white rounded-xl hover:bg-red-600 transition-colors text-sm font-medium disabled:opacity-50"
+          >
+            {removing ? 'Removing…' : 'Yes, Remove'}
+          </button>
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
+/* ── Main panel ── */
+interface Props {
+  open: boolean;
+  onClose: () => void;
+  activityLog: AdminActivityEntry[];
+  onLogActivity: (entry: AdminActivityInput) => void;
+  adminEmail: string | null;
+}
+
+export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onLogActivity, adminEmail }: Props) {
+  const [members,     setMembers]     = useState<TeamMember[]>([]);
+  const [loading,     setLoading]     = useState(false);
+  const [loadError,   setLoadError]   = useState('');
+  const [showAddMember,  setShowAddMember]  = useState(false);
+  const [removeTarget, setRemoveTarget] = useState<TeamMember | null>(null);
+  const [removing,    setRemoving]    = useState(false);
+  const [logSearch,   setLogSearch]   = useState('');
+
+  const fetchMembers = async () => {
+    setLoading(true);
+    setLoadError('');
+    try {
+      const res = await fetch(`${SERVER}/team-members`, { headers: authHeaders() });
+      const data = await res.json();
+      if (!res.ok) { setLoadError(data.error ?? 'Could not load team members.'); return; }
+      setMembers(data.members ?? []);
+    } catch {
+      setLoadError('Network error — could not load team members.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { if (open) fetchMembers(); }, [open]);
+
+  /* ── Close on Esc ── */
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape' && !showAddMember && !removeTarget) onClose(); };
+    if (open) document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [open, onClose, showAddMember, removeTarget]);
+
+  /* ── Body scroll lock ── */
+  useEffect(() => {
+    document.body.style.overflow = open ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [open]);
+
+  const handleRemove = async () => {
+    if (!removeTarget) return;
+    setRemoving(true);
+    try {
+      const res = await fetch(`${SERVER}/team-members/${removeTarget.id}`, { method: 'DELETE', headers: authHeaders() });
+      if (res.ok) {
+        setMembers((p) => p.filter((m) => m.id !== removeTarget.id));
+        onLogActivity({ type: 'member_removed', adminEmail: adminEmail ?? undefined, memberName: removeTarget.name, memberEmail: removeTarget.email });
+      }
+    } finally {
+      setRemoving(false);
+      setRemoveTarget(null);
+    }
+  };
+
+  const handleMemberAdded = (member: TeamMember) => {
+    setMembers((p) => [...p, member]);
+    onLogActivity({ type: 'member_added', adminEmail: adminEmail ?? undefined, memberName: member.name, memberEmail: member.email, adminRole: member.role });
+  };
+
+  const filteredLog = logSearch.trim()
+    ? activityLog.filter((e) =>
+        getDesc(e).toLowerCase().includes(logSearch.toLowerCase()) ||
+        (e.adminEmail ?? '').toLowerCase().includes(logSearch.toLowerCase()) ||
+        (e.memberEmail ?? '').toLowerCase().includes(logSearch.toLowerCase())
+      )
+    : activityLog;
+
+  if (!open) return null;
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-black/40 backdrop-blur-[2px]" onClick={onClose} />
+
+      <div className="fixed top-0 right-0 h-full z-50 w-full sm:w-[560px] bg-white shadow-2xl flex flex-col animate-in slide-in-from-right duration-250">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-gradient-to-r from-[#0d9488]/8 to-transparent flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-[#0d9488]/15 flex items-center justify-center">
+              <Users className="w-4 h-4 text-[#0d9488]" />
+            </div>
+            <div>
+              <h2 className="text-base font-semibold text-foreground leading-tight">Workspace Settings</h2>
+              <p className="text-xs text-muted-foreground">Manage team members and activity</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground transition-colors">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-7">
+
+          {/* ── Members ── */}
+          <section>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-widest whitespace-nowrap">Members</span>
+                <div className="flex-1 h-px bg-border" />
+              </div>
+            </div>
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs text-muted-foreground">{members.length} member{members.length === 1 ? '' : 's'}</p>
+              <button
+                onClick={() => setShowAddMember(true)}
+                className="flex items-center gap-1.5 px-3 py-2 bg-primary text-white text-xs font-medium rounded-xl hover:bg-primary/90 transition-colors"
+              >
+                <UserPlus className="w-3.5 h-3.5" /> Add Team Member
+              </button>
+            </div>
+
+            {loading ? (
+              <p className="text-sm text-muted-foreground text-center py-6">Loading…</p>
+            ) : loadError ? (
+              <p className="text-sm text-red-500 text-center py-6">{loadError}</p>
+            ) : members.length === 0 ? (
+              <div className="py-8 text-center">
+                <Users className="w-8 h-8 text-muted-foreground/25 mx-auto mb-2" />
+                <p className="text-sm text-muted-foreground">No team members yet</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {members.map((m) => (
+                  <div key={m.id} className="flex items-center gap-3 px-3 py-2.5 rounded-xl border border-border">
+                    <div className="w-8 h-8 bg-black rounded-full flex items-center justify-center flex-shrink-0 text-white text-xs font-semibold">
+                      {m.name.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-foreground truncate">{m.name}</p>
+                      <p className="text-xs text-muted-foreground truncate">{m.email}</p>
+                    </div>
+                    <span className={`flex-shrink-0 text-xs font-medium px-2.5 py-1 rounded-lg border ${
+                      m.role === 'csr'
+                        ? 'bg-blue-50 text-blue-700 border-blue-200'
+                        : 'bg-gray-100 text-gray-600 border-gray-200'
+                    }`}>
+                      {m.role === 'csr' ? 'CSR' : 'Viewer'}
+                    </span>
+                    <div className="text-right flex-shrink-0 hidden sm:block">
+                      <p className="text-[10px] text-muted-foreground">
+                        {m.lastActive ? fmtTs(m.lastActive) : 'Never logged in'}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setRemoveTarget(m)}
+                      className="p-1.5 rounded-lg text-muted-foreground hover:bg-red-50 hover:text-red-500 transition-colors flex-shrink-0"
+                      title="Remove member"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          {/* ── Activity Log ── */}
+          <section>
+            <div className="flex items-center gap-3 mb-4">
+              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-widest whitespace-nowrap">Activity Log</span>
+              <div className="flex-1 h-px bg-border" />
+            </div>
+
+            <div className="relative mb-3">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <input
+                type="text"
+                value={logSearch}
+                onChange={(e) => setLogSearch(e.target.value)}
+                placeholder="Search actions, members, emails…"
+                className="w-full pl-9 pr-8 py-2 bg-[#f9fafb] border border-border rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-primary/30"
+              />
+              {logSearch && (
+                <button onClick={() => setLogSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+
+            {filteredLog.length === 0 ? (
+              <div className="py-10 text-center">
+                <ClipboardList className="w-8 h-8 text-muted-foreground/25 mx-auto mb-2" />
+                <p className="text-sm text-muted-foreground">
+                  {activityLog.length === 0 ? 'No activity recorded yet' : 'No matching activities'}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {filteredLog.map((entry) => {
+                  const cfg  = ACT_CONFIG[entry.type];
+                  const Icon = cfg.icon;
+                  return (
+                    <div key={entry.id} className="flex items-start gap-3 py-2.5 px-3 rounded-xl hover:bg-accent/40 transition-colors">
+                      <Icon className={`w-4 h-4 flex-shrink-0 mt-0.5 ${cfg.color}`} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-foreground leading-tight">{cfg.label}</p>
+                        <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug truncate">{getDesc(entry)}</p>
+                        {entry.adminEmail && (
+                          <p className="text-[10px] text-muted-foreground/70 mt-0.5 truncate">{entry.adminEmail}</p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1 text-[10px] text-muted-foreground flex-shrink-0 whitespace-nowrap">
+                        <Clock className="w-3 h-3" />
+                        {fmtTs(entry.timestamp)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <p className="text-[11px] text-muted-foreground text-center pt-3 border-t border-border/60 mt-3">
+              {filteredLog.length} of {activityLog.length} entries
+            </p>
+          </section>
+        </div>
+
+        <div className="px-6 py-4 border-t border-border bg-muted/20 flex-shrink-0">
+          <p className="text-[11px] text-muted-foreground text-center">
+            Team members get real individual logins. Removing one revokes access immediately.
+          </p>
+        </div>
+      </div>
+
+      {showAddMember && (
+        <AddMemberModal
+          onClose={() => setShowAddMember(false)}
+          onAdded={handleMemberAdded}
+        />
+      )}
+      {removeTarget && (
+        <RemoveConfirmModal
+          member={removeTarget}
+          onCancel={() => setRemoveTarget(null)}
+          onConfirm={handleRemove}
+          removing={removing}
+        />
+      )}
+    </>
+  );
+}

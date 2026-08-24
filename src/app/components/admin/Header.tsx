@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import {
   User, ChevronDown, Bell, BellOff, Settings, HelpCircle, LogOut,
-  Truck, CheckCheck, Trash2, X,
+  Truck, CheckCheck, Trash2, X, Users,
   FileText, AlertTriangle, AlertCircle,
 } from 'lucide-react';
 import type { AppNotification } from '../../data/assignmentTypes';
@@ -14,6 +14,10 @@ interface Props {
   onOpenSettings: () => void;
   onOpenHelp: () => void;
   notifEnabled: boolean;
+  isOperationManager: boolean;
+  adminEmail?: string | null;
+  adminName?: string;
+  onOpenWorkspaceSettings?: () => void;
 }
 
 const NOTIF_ICON: Record<AppNotification['type'], React.ElementType> = {
@@ -40,7 +44,10 @@ function fmtTimestamp(ts: string): string {
   } catch { return ts; }
 }
 
-export default function Header({ notifications, setNotifications, onNavigate, onLogout, onOpenSettings, onOpenHelp, notifEnabled }: Props) {
+export default function Header({
+  notifications, setNotifications, onNavigate, onLogout, onOpenSettings, onOpenHelp, notifEnabled,
+  isOperationManager, adminEmail, adminName, onOpenWorkspaceSettings,
+}: Props) {
   const [bellOpen,    setBellOpen]    = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
 
@@ -206,7 +213,7 @@ export default function Header({ notifications, setNotifications, onNavigate, on
             <div className="w-7 h-7 bg-black rounded-full flex items-center justify-center flex-shrink-0">
               <User className="w-4 h-4 text-white" />
             </div>
-            <span className="text-sm font-medium text-foreground">Admin User</span>
+            <span className="text-sm font-medium text-foreground">{adminName ?? 'Admin User'}</span>
             <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform duration-150 ${accountOpen ? 'rotate-180' : ''}`} />
           </button>
 
@@ -219,8 +226,8 @@ export default function Header({ notifications, setNotifications, onNavigate, on
                   <User className="w-5 h-5 text-white" />
                 </div>
                 <div className="min-w-0">
-                  <p className="text-sm font-semibold text-foreground leading-tight">Admin User</p>
-                  <p className="text-xs text-muted-foreground mt-0.5 truncate">admin@360logistics.com</p>
+                  <p className="text-sm font-semibold text-foreground leading-tight">{adminName ?? 'Admin User'}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5 truncate">{adminEmail ?? '—'}</p>
                 </div>
               </div>
 
@@ -228,6 +235,16 @@ export default function Header({ notifications, setNotifications, onNavigate, on
 
               {/* Menu rows */}
               <div className="py-1.5">
+                {isOperationManager && onOpenWorkspaceSettings && (
+                  <button
+                    onClick={() => { onOpenWorkspaceSettings(); setAccountOpen(false); }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-accent/50 transition-colors text-left"
+                  >
+                    <Users className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                    <span className="text-sm text-foreground">Workspace Settings</span>
+                  </button>
+                )}
+
                 <button
                   onClick={() => { onOpenSettings(); setAccountOpen(false); }}
                   className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-accent/50 transition-colors text-left"

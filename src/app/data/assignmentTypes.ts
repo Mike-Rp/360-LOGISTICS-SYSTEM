@@ -55,6 +55,9 @@ export interface Assignment {
   statusPhotos?: Record<string, StatusPhoto>;
   issueReason?: string;
   delayReports?: DelayReport[];
+  /* Set the moment the driver's app first displays this assignment — lets
+     admin see whether a driver has actually seen a freshly assigned task. */
+  driverAcknowledgedAt?: string;
 }
 
 export interface CompletedTask extends Assignment {
@@ -81,6 +84,21 @@ export interface LocalTruck {
   classification?: string;
   capacity?: string;
 }
+
+export interface TeamMember {
+  id: string;
+  name: string;
+  email: string;
+  password: string;
+  role: 'csr' | 'viewer';
+  status: 'active' | 'removed';
+  invitedAt: string;
+  lastActive?: string;
+}
+
+/* The one hardcoded Operation Manager account — mirrors supabase/functions/server/index.tsx's
+   derived OM_EMAIL. Distinct from any Viewer-role team member (both share role: 'viewer'). */
+export const OM_EMAIL = 'operationmanager@360logistics.ph';
 
 /* dot = small colored circle (used inline, no emoji circles) */
 export const taskStatusConfig: Record<TaskStatus, { badge: string; dot: string; label: string }> = {
@@ -112,7 +130,7 @@ export interface AppNotification {
   navigateTo?: string;
 }
 
-export type AdminRole = 'admin' | 'demo' | 'viewer';
+export type AdminRole = 'admin' | 'viewer' | 'csr';
 
 export type AdminActivityType =
   | 'login'
@@ -121,7 +139,9 @@ export type AdminActivityType =
   | 'task_cancelled'
   | 'doc_approved'
   | 'doc_rejected'
-  | 'driver_deleted';
+  | 'driver_deleted'
+  | 'member_added'
+  | 'member_removed';
 
 export interface AdminActivityEntry {
   id: string;
@@ -136,6 +156,8 @@ export interface AdminActivityEntry {
   rejectReason?: string;
   destination?: string;
   company?: string;
+  memberName?: string;
+  memberEmail?: string;
 }
 
 export type AdminActivityInput = Omit<AdminActivityEntry, 'id' | 'timestamp'>;
