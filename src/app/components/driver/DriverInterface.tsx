@@ -666,6 +666,15 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
     finally { setUpdating(false); }
   };
 
+  /* ── Auto-acknowledge: mark the moment this assignment first appears on the
+     driver's dashboard, so admin can tell a driver actually saw the task. ── */
+  useEffect(() => {
+    const a = data?.assignment;
+    if (!a || a.driverAcknowledgedAt) return;
+    pushUpdate({ driverAcknowledgedAt: new Date().toISOString() });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.assignment?.id, data?.assignment?.driverAcknowledgedAt]);
+
   /* ── Handlers ── */
   const handlePhotoConfirmed = async (photo: StatusPhoto) => {
     if (!photoTarget || !data?.assignment) return;
@@ -764,7 +773,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
       if (doc.uploaded && doc.docStatus === 'approved') {
         notifs.push({
           id: `approve-${doc.type}`, type: 'approval',
-          title: `${doc.type} approved ✓`,
+          title: `${doc.type} approved`,
           body: 'Your document has been reviewed and accepted.',
         });
       }
@@ -855,7 +864,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
   const LogoutPill = (
     <button
       onClick={() => setLogoutDlg(true)}
-      className="flex items-center gap-2 px-4 py-2.5 bg-gray-100 rounded-full border border-gray-200 text-sm font-bold text-gray-700 flex-shrink-0 active:bg-gray-200 transition-colors"
+      className="flex items-center gap-2 px-4 py-2.5 bg-red-50 rounded-full border border-red-200 text-sm font-bold text-red-600 flex-shrink-0 active:bg-red-100 transition-colors"
     >
       <LogOut className="w-4 h-4" />
       <span>Log out</span>
