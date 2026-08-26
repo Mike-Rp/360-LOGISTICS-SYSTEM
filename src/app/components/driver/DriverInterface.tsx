@@ -636,8 +636,13 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
       const json = await res.json();
       setData(json); setOnline(true); setLastSync(new Date());
     } catch {
+      /* Do NOT auto-fill fake demo data here — leave `data` untouched so a
+         first-load failure correctly falls through to the "No Connection"
+         screen (which offers demo data only as an explicit, labeled choice),
+         and a later poll failure correctly keeps showing the driver's real
+         last-fetched assignment with the "Offline" banner instead of
+         silently swapping in a fabricated one. */
       setOnline(false);
-      setData((prev) => prev ?? MOCK_DATA);
     } finally { setSyncing(false); }
   }, [driverId]);
 
