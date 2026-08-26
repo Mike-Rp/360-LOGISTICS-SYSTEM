@@ -2,8 +2,18 @@ import { useState } from 'react';
 import {
   Activity, FileText, Truck, AlertTriangle, AlertCircle, CheckCircle, Clock,
 } from 'lucide-react';
-import { weeklyDeliveryData } from '../../data/mockData';
 import type { Assignment, CompletedTask, AppNotification } from '../../data/assignmentTypes';
+
+/* Placeholder Mon–Sun breakdown — not yet computed from real assignment data. */
+const weeklyDeliveryData = [
+  { day: 'Mon', delivered: 45, inTransit: 18, pending: 8,  delayed: 4,  cancelled: 3 },
+  { day: 'Tue', delivered: 52, inTransit: 14, pending: 11, delayed: 6,  cancelled: 2 },
+  { day: 'Wed', delivered: 48, inTransit: 21, pending: 7,  delayed: 9,  cancelled: 5 },
+  { day: 'Thu', delivered: 58, inTransit: 16, pending: 13, delayed: 3,  cancelled: 1 },
+  { day: 'Fri', delivered: 38, inTransit: 22, pending: 9,  delayed: 7,  cancelled: 4 },
+  { day: 'Sat', delivered: 25, inTransit: 9,  pending: 5,  delayed: 5,  cancelled: 2 },
+  { day: 'Sun', delivered: 15, inTransit: 5,  pending: 3,  delayed: 2,  cancelled: 1 },
+];
 
 interface Props {
   assignments?: Assignment[];
