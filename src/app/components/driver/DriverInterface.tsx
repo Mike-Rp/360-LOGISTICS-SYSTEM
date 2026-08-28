@@ -40,6 +40,14 @@ const REQUIRED_DOCS = [
   'Waybill / Delivery Receipt',
 ];
 
+/* `destination` is stored as "From → To" (see DriversManagement.tsx's Assign
+   Task form) — this pulls just the To side for the "Deliver to" summary, so
+   it shows an actual place instead of the client/company name. */
+const deliveryToLocation = (destination: string) => {
+  const parts = destination?.split(' → ');
+  return parts?.length === 2 ? parts[1] : destination;
+};
+
 const PICKUP_DELAY_REASONS   = ['Heavy traffic','Vehicle breakdown','Waiting for cargo','Weather conditions','Driver health issue','Other...'];
 const DELIVERY_DELAY_REASONS = ['Heavy traffic','Wrong address / rerouting','Customer unavailable','Vehicle breakdown','Weather conditions','Other...'];
 const ISSUE_REASONS          = ['Cargo damaged in transit','Wrong delivery address','Customer refused delivery','Vehicle breakdown','Cargo lost or missing','Accident / road incident','Other...'];
@@ -75,6 +83,51 @@ function compressImage(dataUrl: string, maxPx = 600, quality = 0.65): Promise<st
       resolve(canvas.toDataURL('image/jpeg', quality));
     };
     img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+/* Blurry-photo check: downsamples to grayscale, runs a 3x3 Laplacian edge
+   filter, and measures the variance of the result. A sharp, in-focus photo
+   has lots of high-contrast edges (high variance); a blurry one is smooth
+   throughout (low variance). This is a heuristic, not exact science — the
+   threshold may need tuning after testing against real phone-camera photos.
+   Fails open (never blocks upload) if anything goes wrong reading the image. */
+function isBlurryImage(dataUrl: string, threshold = 45): Promise<boolean> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const maxPx = 300;
+        const ratio = Math.min(maxPx / img.width, maxPx / img.height, 1);
+        const w = Math.max(1, Math.round(img.width * ratio));
+        const h = Math.max(1, Math.round(img.height * ratio));
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) { resolve(false); return; }
+        ctx.drawImage(img, 0, 0, w, h);
+        const { data } = ctx.getImageData(0, 0, w, h);
+
+        const gray = new Float32Array(w * h);
+        for (let i = 0; i < w * h; i++) {
+          gray[i] = 0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2];
+        }
+
+        let sum = 0, sumSq = 0, n = 0;
+        for (let y = 1; y < h - 1; y++) {
+          for (let x = 1; x < w - 1; x++) {
+            const i = y * w + x;
+            const lap = gray[i - w] + gray[i + w] + gray[i - 1] + gray[i + 1] - 4 * gray[i];
+            sum += lap; sumSq += lap * lap; n++;
+          }
+        }
+        if (n === 0) { resolve(false); return; }
+        const mean = sum / n;
+        resolve((sumSq / n - mean * mean) < threshold);
+      } catch { resolve(false); }
+    };
+    img.onerror = () => resolve(false);
     img.src = dataUrl;
   });
 }
@@ -489,8 +542,8 @@ function DeliveredSheet({ onConfirm, onCancel }: { onConfirm: () => void; onCanc
 /* ════════════════════════════════════════════════════════════
    DOCUMENT ROW (redesigned)
    ════════════════════════════════════════════════════════════ */
-function DocRow({ doc, onUpload, isDelivered }: {
-  doc: NormDoc; onUpload: (type: string, file: File) => void; isDelivered: boolean;
+function DocRow({ doc, onUpload, isDelivered, isBlurry }: {
+  doc: NormDoc; onUpload: (type: string, file: File) => void; isDelivered: boolean; isBlurry?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const isApproved  = doc.uploaded && doc.docStatus === 'approved';
@@ -549,6 +602,17 @@ function DocRow({ doc, onUpload, isDelivered }: {
         </div>
       )}
 
+      {/* Blurry-photo warning — shown after a rejected auto-check, before any upload happens */}
+      {isBlurry && (
+        <div className="bg-red-100 rounded-xl px-4 py-3 flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-red-700 leading-snug">
+            <span className="font-bold">Too blurry — </span>
+            that photo wasn't uploaded. Hold the phone steady and try again.
+          </p>
+        </div>
+      )}
+
       {/* Upload button */}
       {canUpload && (
         <>
@@ -559,11 +623,11 @@ function DocRow({ doc, onUpload, isDelivered }: {
           <button
             onClick={() => inputRef.current?.click()}
             className={`w-full py-4 rounded-2xl font-bold text-base flex items-center justify-center gap-2 ${
-              isRejected ? 'bg-red-600 text-white active:bg-red-700' : 'bg-green-700 text-white active:bg-green-800'
+              isRejected || isBlurry ? 'bg-red-600 text-white active:bg-red-700' : 'bg-green-700 text-white active:bg-green-800'
             }`}
           >
             <Camera className="w-5 h-5" />
-            {isRejected ? 'Retake and re-upload' : 'Take photo to upload'}
+            {isBlurry ? 'Retake photo' : isRejected ? 'Retake and re-upload' : 'Take photo to upload'}
           </button>
         </>
       )}
@@ -611,7 +675,16 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
   const [updating, setUpdating] = useState(false);
 
   /* ── Screen state: 'dashboard' or 'task' ── */
-  const [screen, setScreen] = useState<'dashboard' | 'task'>('dashboard');
+  /* Persisted the same way admin's activeNav is — otherwise a refresh while
+     viewing the task screen silently drops the driver back to Dashboard. */
+  const [screen, setScreen] = useState<'dashboard' | 'task'>(() => {
+    const saved = localStorage.getItem('360_driver_screen');
+    return saved === 'task' ? 'task' : 'dashboard';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('360_driver_screen', screen);
+  }, [screen]);
 
   /* ── Overlay sheet state ── */
   const [photoTarget,  setPhotoTarget]  = useState<TaskStatus | null>(null);
@@ -619,6 +692,10 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
   const [delaySheet,   setDelaySheet]   = useState<'pickup' | 'delivery' | null>(null);
   const [issueSheet,   setIssueSheet]   = useState(false);
   const [logoutDlg,    setLogoutDlg]    = useState(false);
+
+  /* Per-document "please retake, this looks blurry" message — keyed by doc
+     type since more than one document row can exist at once. */
+  const [docBlurErrors, setDocBlurErrors] = useState<Record<string, boolean>>({});
 
   /* ── Delay gate local flags ── */
   const [pickupDelayDone,   setPickupDelayDone]   = useState(false);
@@ -725,7 +802,17 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
     if (!data?.assignment) return;
     const reader = new FileReader();
     reader.onload = async () => {
-      const compressed = await compressImage(reader.result as string);
+      const raw = reader.result as string;
+
+      /* Only photos can be blurry — PDFs (documents also accept those) skip
+         the check entirely. */
+      if (file.type.startsWith('image/') && await isBlurryImage(raw)) {
+        setDocBlurErrors((p) => ({ ...p, [docType]: true }));
+        return;
+      }
+      setDocBlurErrors((p) => { const { [docType]: _drop, ...rest } = p; return rest; });
+
+      const compressed = await compressImage(raw);
       let fileUrl = compressed;
       if (online) {
         const path = `docs/${data.assignment!.id}/${encodeURIComponent(docType.replace(/\s+/g, '_'))}_${Date.now()}.jpg`;
@@ -787,30 +874,31 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
   }, [normalizedDocs]);
 
   /* Delay gates */
+  /* Parses a "Mon D, YYYY" display date + "H:MM AM/PM" display time into one
+     real Date so lateness is judged against the actual scheduled moment —
+     not just today's clock, which would flag every task as late once its
+     time-of-day passes, regardless of which day it's actually scheduled for. */
+  const isPastScheduled = (dateStr?: string, timeStr?: string) => {
+    if (!dateStr || !timeStr) return false;
+    const m = timeStr.match(/^(\d+):(\d+)\s*(AM|PM)$/i);
+    if (!m) return false;
+    const scheduled = new Date(dateStr);
+    if (isNaN(scheduled.getTime())) return false;
+    let h = parseInt(m[1]);
+    if (m[3].toUpperCase() === 'PM' && h !== 12) h += 12;
+    if (m[3].toUpperCase() === 'AM' && h === 12) h = 0;
+    scheduled.setHours(h, parseInt(m[2]), 0, 0);
+    return scheduled < new Date();
+  };
+
   const isPickupLate = (() => {
     if (!a || a.taskStatus !== 'Assigned' || isFailed) return false;
-    try {
-      const m = a.pickupTime?.match(/^(\d+):(\d+)\s*(AM|PM)$/i);
-      if (!m) return false;
-      let h = parseInt(m[1]);
-      if (m[3].toUpperCase() === 'PM' && h !== 12) h += 12;
-      if (m[3].toUpperCase() === 'AM' && h === 12) h = 0;
-      const t = new Date(); t.setHours(h, parseInt(m[2]), 0, 0);
-      return t < new Date();
-    } catch { return false; }
+    try { return isPastScheduled(a.pickedUpDate, a.pickupTime); } catch { return false; }
   })();
 
   const isDeliveryLate = (() => {
     if (!a || a.taskStatus !== 'In Transit' || isFailed) return false;
-    try {
-      const m = a.ata?.match(/^(\d+):(\d+)\s*(AM|PM)$/i);
-      if (!m) return false;
-      let h = parseInt(m[1]);
-      if (m[3].toUpperCase() === 'PM' && h !== 12) h += 12;
-      if (m[3].toUpperCase() === 'AM' && h === 12) h = 0;
-      const t = new Date(); t.setHours(h, parseInt(m[2]), 0, 0);
-      return t < new Date();
-    } catch { return false; }
+    try { return isPastScheduled(a.deliveryDate, a.ata); } catch { return false; }
   })();
 
   const hasPickupReport   = (a?.delayReports ?? []).some((r) => r.type === 'pickup');
@@ -920,7 +1008,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
                   </div>
                   <div>
                     <p className="text-sm font-bold text-gray-400 uppercase tracking-wide">Deliver to</p>
-                    <p className="text-lg font-bold text-green-700 mt-1 leading-snug">{a.company}</p>
+                    <p className="text-lg font-bold text-green-700 mt-1 leading-snug">{deliveryToLocation(a.destination)}</p>
                   </div>
                 </div>
                 {/* View task button */}
@@ -1101,7 +1189,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
               </div>
               <div>
                 <p className="text-sm font-bold text-gray-400 uppercase tracking-wide">Deliver to</p>
-                <p className="text-xl font-bold text-green-700 mt-1 leading-snug">{a.company}</p>
+                <p className="text-xl font-bold text-green-700 mt-1 leading-snug">{deliveryToLocation(a.destination)}</p>
               </div>
             </div>
 
@@ -1184,11 +1272,13 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
               <h3 className="text-base font-bold text-foreground py-3 border-b border-gray-100 mb-1">Delivery Details</h3>
               <DetailRow label="Task ID"        value={a.id} />
               <DetailRow label="Truck"           value={a.truckPlate} />
+              <DetailRow label="Pickup Location" value={a.pickupLocation} />
               <DetailRow label="Cargo"           value={a.destination} />
-              <DetailRow label="Pickup Date"     value={a.deliveryDate} />
+              <DetailRow label="Client"          value={a.company} />
+              <DetailRow label="Pickup Date"     value={a.pickedUpDate} />
               <DetailRow label="Pickup Time"     value={a.pickupTime} />
+              <DetailRow label="Delivery Date"   value={a.deliveryDate} />
               <DetailRow label="Delivery Due"    value={a.ata ?? a.eta} />
-              {a.pickedUpDate && <DetailRow label="Picked Up"    value={a.pickedUpDate} />}
               <DetailRow label="Instructions"   value={a.remarks} />
             </div>
 
@@ -1225,7 +1315,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
                 </div>
               )}
               {normalizedDocs.map((doc) => (
-                <DocRow key={doc.type} doc={doc} onUpload={handleDocUpload} isDelivered={isDelivered} />
+                <DocRow key={doc.type} doc={doc} onUpload={handleDocUpload} isDelivered={isDelivered} isBlurry={!!docBlurErrors[doc.type]} />
               ))}
             </div>
 
