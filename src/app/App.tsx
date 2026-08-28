@@ -10,10 +10,20 @@ import { OM_EMAIL } from './data/assignmentTypes';
 
 type AppView = 'login' | 'admin' | 'driver';
 type NavItem = 'Dashboard' | 'Monitor' | 'Deliveries' | 'Documents' | 'Reports' | 'Accounts';
+const NAV_ITEMS: NavItem[] = ['Dashboard', 'Monitor', 'Deliveries', 'Documents', 'Reports', 'Accounts'];
 
 export default function App() {
   const [view,      setView]      = useState<AppView>('login');  // ← back to login
-  const [activeNav, setActiveNav] = useState<NavItem>('Dashboard');
+  /* Restore last-visited admin page so a refresh doesn't dump the user back
+     to Dashboard — same pattern as 360_display_name below. */
+  const [activeNav, setActiveNav] = useState<NavItem>(() => {
+    const saved = localStorage.getItem('360_active_nav');
+    return (NAV_ITEMS as string[]).includes(saved ?? '') ? (saved as NavItem) : 'Dashboard';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('360_active_nav', activeNav);
+  }, [activeNav]);
 
   /* Auth state */
   const [adminRole,    setAdminRole]    = useState<AdminRole | null>(null);
@@ -110,8 +120,11 @@ export default function App() {
     }
     await loadData(token);
     setView('admin');
-    setActiveNav('Dashboard');
     if (fresh) {
+      /* Only a genuinely new login should land on Dashboard — restoring an
+         existing session (e.g. on refresh) should keep whatever page the
+         localStorage-persisted activeNav state above already resolved to. */
+      setActiveNav('Dashboard');
       setLoginSuccess('Login Successful! Welcome to the Admin Portal.');
       onLogActivity({ type: 'login', adminEmail: email, adminRole: role });
     }
@@ -206,6 +219,11 @@ export default function App() {
   useEffect(() => {
     if (!accessToken || adminRole === 'viewer') return;
     const id = setInterval(async () => {
+      /* A local edit is mid-flight (debounced save pending, or the PUT itself
+         still in the air) — local state is already more current than
+         whatever this poll would fetch, so skip this cycle entirely rather
+         than momentarily stomping a just-made change back to its old value. */
+      if (saveTimerRef.current || savingToDb) return;
       try {
         const res = await fetch(`${SERVER}/app-data`, {
           headers: {
@@ -236,6 +254,8 @@ export default function App() {
     localStorage.removeItem('360_admin_role');
     localStorage.removeItem('360_driver_id');
     localStorage.removeItem('360_driver_name');
+    localStorage.removeItem('360_driver_screen');
+    localStorage.removeItem('360_active_nav');
     setAdminRole(null);
     setAdminEmail(null);
     setAccessToken(null);
@@ -357,6 +377,7 @@ export default function App() {
           onLogout={() => {
             localStorage.removeItem('360_driver_id');
             localStorage.removeItem('360_driver_name');
+            localStorage.removeItem('360_driver_screen');
             setDriverInfo(null);
             setView('login');
           }}
