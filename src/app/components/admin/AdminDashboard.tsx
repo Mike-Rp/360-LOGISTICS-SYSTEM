@@ -97,6 +97,7 @@ export default function AdminDashboard({
             setCancelled={setCancelled}
             isViewOnly={isViewOnly}
             onLogActivity={onLogActivity}
+            adminEmail={adminEmail}
           />
         );
       case 'Deliveries':

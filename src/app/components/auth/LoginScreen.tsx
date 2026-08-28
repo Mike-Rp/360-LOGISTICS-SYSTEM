@@ -8,6 +8,9 @@ import { publicAnonKey } from '/utils/supabase/info';
 const ADMIN_ACCOUNTS = [
   { email: '360logistics@email.ph',             password: '360Admin2026!', role: 'admin'  as AdminRole },
   { email: 'operationmanager@360logistics.ph',  password: '360logistics',  role: 'viewer' as AdminRole },
+  /* Presentation-only "admin abuse" account — unlocks demo-only overrides
+     (e.g. simulating a late driver) not available to the real admin. */
+  { email: 'adminabuse@360logistics.ph',        password: 'admin',        role: 'admin'  as AdminRole },
 ];
 
 function normaliseMobile(raw: string): string {

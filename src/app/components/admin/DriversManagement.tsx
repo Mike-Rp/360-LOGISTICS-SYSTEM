@@ -27,7 +27,7 @@ function Highlight({ text, query }: { text: string; query: string }) {
   );
 }
 import {
-  DOCUMENT_TYPES, taskStatusConfig,
+  DOCUMENT_TYPES, taskStatusConfig, DEMO_ADMIN_EMAIL,
   type Assignment, type CompletedTask, type LocalDriver, type LocalTruck,
   type TaskStatus, type DocStatus, type AdminActivityInput, type AssignmentDoc,
 } from '../../data/assignmentTypes';
@@ -665,15 +665,18 @@ function DocChip({ doc }: { doc: AssignmentDoc }) {
 }
 
 /* ─── View Details Modal ───────────────────────────── */
-function ViewDetailsModal({ assignment, driver, onClose, onApproveDoc, onRejectDoc, onComplete, onCancel, isViewOnly = false }: {
+function ViewDetailsModal({ assignment, driver, onClose, onApproveDoc, onRejectDoc, onComplete, onCancel, onSimulateLate, isViewOnly = false, adminEmail }: {
   assignment: Assignment | null; driver: LocalDriver | null;
   onClose: () => void;
   onApproveDoc:   (id: string, docType: string) => void;
   onRejectDoc:    (id: string, docType: string, reason: string) => void;
   onComplete:     (id: string) => void;
   onCancel:       (id: string) => void;
+  onSimulateLate: (id: string) => void;
   isViewOnly?:    boolean;
+  adminEmail?:    string | null;
 }) {
+  const isDemoAdmin = adminEmail === DEMO_ADMIN_EMAIL;
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [previewDoc,    setPreviewDoc]    = useState<{ url: string; type: string } | null>(null);
   const [rejectingDoc,  setRejectingDoc]  = useState<string | null>(null);
@@ -730,6 +733,24 @@ function ViewDetailsModal({ assignment, driver, onClose, onApproveDoc, onRejectD
             </div>
             <DeliveryStepper status={assignment.taskStatus} />
           </div>
+
+          {/* Demo-only: simulate a late driver — "adminabuse" account only */}
+          {isDemoAdmin && (assignment.taskStatus === 'Assigned' || assignment.taskStatus === 'In Transit') && (
+            <div className="flex items-center justify-between gap-3 p-3 bg-purple-50 border border-dashed border-purple-300 rounded-xl">
+              <div className="flex items-center gap-2 min-w-0">
+                <AlertTriangle className="w-4 h-4 text-purple-600 flex-shrink-0" />
+                <p className="text-xs text-purple-700">
+                  Demo: force this driver's {assignment.taskStatus === 'Assigned' ? 'pickup' : 'delivery'} time late
+                </p>
+              </div>
+              <button
+                onClick={() => onSimulateLate(assignment.id)}
+                className="flex-shrink-0 px-3 py-1.5 bg-purple-600 text-white text-xs font-medium rounded-lg hover:bg-purple-700 transition-colors"
+              >
+                Simulate Late
+              </button>
+            </div>
+          )}
 
           {/* Route & Client */}
           <DetailCard title="Route & Client">
@@ -1012,13 +1033,14 @@ interface Props {
   setCancelled: React.Dispatch<React.SetStateAction<Assignment[]>>;
   isViewOnly?: boolean;
   onLogActivity?: (entry: AdminActivityInput) => void;
+  adminEmail?: string | null;
 }
 
 /* ─── Main Component ───────────────────────────────── */
 export default function DriversManagement({
   drivers, setDrivers, trucks, setTrucks,
   assignments, setAssignments, completed, setCompleted, setCancelled,
-  isViewOnly = false, onLogActivity,
+  isViewOnly = false, onLogActivity, adminEmail,
 }: Props) {
 
 
@@ -1193,6 +1215,32 @@ export default function DriversManagement({
       docType,
       rejectReason: reason.trim(),
     });
+  };
+
+  /* ── Demo-only: "adminabuse" account can force a driver's pickup/delivery
+     time a couple minutes into the past, so the driver's app immediately
+     shows the real late-delay prompt without waiting on the clock or
+     fighting the Assign Task form's future-only date/time validation. ── */
+  const handleSimulateLate = (id: string) => {
+    const pastTime = (minutesAgo: number) => {
+      const d = new Date(Date.now() - minutesAgo * 60000);
+      const h24 = d.getHours();
+      const ampm = h24 >= 12 ? 'PM' : 'AM';
+      const h12 = h24 % 12 || 12;
+      return `${h12}:${String(d.getMinutes()).padStart(2, '0')} ${ampm}`;
+    };
+    /* The driver app judges lateness against the scheduled DATE + time
+       together (not just time-of-day) — so forcing only the time into the
+       past isn't enough once that scheduled date is still weeks out; the
+       date has to move to today too, or the combined moment is still in
+       the future and the driver never sees the late prompt. */
+    const today = isoToDisplay(todayIso());
+    setAssignments((p) => p.map((x) => {
+      if (x.id !== id) return x;
+      if (x.taskStatus === 'Assigned')  return { ...x, pickedUpDate: today, pickupTime: pastTime(2) };
+      if (x.taskStatus === 'In Transit') return { ...x, deliveryDate: today, ata: pastTime(2) };
+      return x;
+    }));
   };
 
   const handleComplete = (id: string) => {
@@ -1669,7 +1717,9 @@ export default function DriversManagement({
           onRejectDoc={handleRejectDoc}
           onComplete={handleComplete}
           onCancel={handleCancel}
+          onSimulateLate={handleSimulateLate}
           isViewOnly={isViewOnly}
+          adminEmail={adminEmail}
         />
       )}
     </div>

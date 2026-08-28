@@ -100,6 +100,11 @@ export interface TeamMember {
    derived OM_EMAIL. Distinct from any Viewer-role team member (both share role: 'viewer'). */
 export const OM_EMAIL = 'operationmanager@360logistics.ph';
 
+/* Presentation-only "admin abuse" account — mirrors index.tsx. Unlocks
+   demo-only overrides (e.g. simulating a late driver) in the admin UI,
+   never available to the real admin/OM/CSR/Viewer accounts. */
+export const DEMO_ADMIN_EMAIL = 'adminabuse@360logistics.ph';
+
 /* dot = small colored circle (used inline, no emoji circles) */
 export const taskStatusConfig: Record<TaskStatus, { badge: string; dot: string; label: string }> = {
   'Assigned':       { badge: 'bg-green-100 text-green-700 border-green-200',   dot: 'bg-green-500',   label: 'Assigned' },

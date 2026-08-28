@@ -39,6 +39,7 @@ const BUCKET_NAME = 'make-ee4d169c-media';
 const ADMIN_ACCOUNTS = [
   { email: '360logistics@email.ph',            role: 'admin'  },
   { email: 'operationmanager@360logistics.ph', role: 'viewer' },
+  { email: 'adminabuse@360logistics.ph',       role: 'admin'  },
 ];
 
 /* Operation Manager — the one hardcoded 'viewer' account, distinct from any
