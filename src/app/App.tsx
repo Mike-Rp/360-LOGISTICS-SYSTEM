@@ -33,7 +33,7 @@ export default function App() {
   const [savingToDb,   setSavingToDb]   = useState(false);
 
   /* Driver session (separate from admin) */
-  const [driverInfo, setDriverInfo] = useState<{ id: string; name: string } | null>(null);
+  const [driverInfo, setDriverInfo] = useState<{ id: string; name: string; token?: string } | null>(null);
 
   /* Shared app state */
   const [drivers,       setDrivers]       = useState<LocalDriver[]>([]);
@@ -139,10 +139,11 @@ export default function App() {
       return;
     }
     /* Also restore driver session */
-    const dId   = localStorage.getItem('360_driver_id');
-    const dName = localStorage.getItem('360_driver_name');
+    const dId    = localStorage.getItem('360_driver_id');
+    const dName  = localStorage.getItem('360_driver_name');
+    const dToken = localStorage.getItem('360_driver_token') ?? undefined;
     if (dId && dName) {
-      setDriverInfo({ id: dId, name: dName });
+      setDriverInfo({ id: dId, name: dName, token: dToken });
       setView('driver');
     }
   }, [applySession]);
@@ -254,6 +255,7 @@ export default function App() {
     localStorage.removeItem('360_admin_role');
     localStorage.removeItem('360_driver_id');
     localStorage.removeItem('360_driver_name');
+    localStorage.removeItem('360_driver_token');
     localStorage.removeItem('360_driver_screen');
     localStorage.removeItem('360_active_nav');
     setAdminRole(null);
@@ -342,6 +344,8 @@ export default function App() {
           onDriverLogin={(info) => {
             localStorage.setItem('360_driver_id',   info.id);
             localStorage.setItem('360_driver_name', info.name);
+            if (info.token) localStorage.setItem('360_driver_token', info.token);
+            else localStorage.removeItem('360_driver_token');
             setDriverInfo(info);
             setView('driver');
             setLoginSuccess(`Login Successful! Welcome, ${info.name}.`);
@@ -374,9 +378,11 @@ export default function App() {
         <DriverInterface
           driverId={driverInfo?.id ?? ''}
           driverName={driverInfo?.name ?? ''}
+          driverToken={driverInfo?.token ?? ''}
           onLogout={() => {
             localStorage.removeItem('360_driver_id');
             localStorage.removeItem('360_driver_name');
+            localStorage.removeItem('360_driver_token');
             localStorage.removeItem('360_driver_screen');
             setDriverInfo(null);
             setView('login');

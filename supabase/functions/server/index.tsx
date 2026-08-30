@@ -8,7 +8,7 @@ const app = new Hono();
 app.use('*', logger(console.log));
 app.use("/*", cors({
   origin: "*",
-  allowHeaders: ["Content-Type", "Authorization", "X-Admin-Token"],
+  allowHeaders: ["Content-Type", "Authorization", "X-Admin-Token", "X-Driver-Token"],
   allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   exposeHeaders: ["Content-Length"],
   maxAge: 600,
@@ -35,11 +35,14 @@ const BUCKET_NAME = 'make-ee4d169c-media';
   }
 })();
 
-/* ── Admin accounts (must match LoginScreen.tsx) ────── */
+/* ── Admin accounts — the ONLY copy that includes passwords now. Login is
+   checked here, server-side, via POST /admin-login; the frontend never sees
+   these passwords (previously they sat in plain text in the shipped JS
+   bundle, readable by anyone who opened dev tools on the live site). ────── */
 const ADMIN_ACCOUNTS = [
-  { email: '360logistics@email.ph',            role: 'admin'  },
-  { email: 'operationmanager@360logistics.ph', role: 'viewer' },
-  { email: 'adminabuse@360logistics.ph',       role: 'admin'  },
+  { email: '360logistics@email.ph',            password: '360Admin2026!', role: 'admin'  },
+  { email: 'operationmanager@360logistics.ph', password: '360logistics',  role: 'viewer' },
+  { email: 'adminabuse@360logistics.ph',       password: 'admin',         role: 'admin'  },
 ];
 
 /* Operation Manager — the one hardcoded 'viewer' account, distinct from any
@@ -81,6 +84,31 @@ async function getAuthUser(request: Request): Promise<{ email: string; role: str
   }
 }
 
+/* ── Driver token: btoa(driverId:timestamp) — read from X-Driver-Token
+   header. Issued at /driver-login, required on /driver-data, /driver-update,
+   and /upload-image, so those three can no longer be called by anyone who
+   simply knows or guesses a driver ID. Mirrors getAuthUser's admin-token
+   pattern, just scoped to a single driver instead of a role. ────────────── */
+async function getDriverAuth(request: Request): Promise<string | null> {
+  try {
+    const token = request.headers.get('X-Driver-Token');
+    if (!token) return null;
+    const decoded = atob(token);
+    const parts   = decoded.split(':');
+    if (parts.length < 2) return null;
+    const driverId = parts[0];
+    const ts        = parseInt(parts[1]);
+    if (isNaN(ts) || Date.now() - ts > 30 * 24 * 60 * 60 * 1000) return null;
+
+    const drivers = ((await kv.get(K.drivers)) ?? INITIAL_DRIVERS) as any[];
+    if (!drivers.some((d) => d.id === driverId)) return null;
+
+    return driverId;
+  } catch {
+    return null;
+  }
+}
+
 /* ── KV keys ─────────────────────────────────────────── */
 const K = {
   drivers:       'app_drivers_v1',
@@ -112,11 +140,16 @@ app.get("/make-server-ee4d169c/health", (c) => c.json({ status: "ok", ts: Date.n
 
 /* ── POST /upload-image — store image in Supabase Storage, return signed URL ── */
 app.post("/make-server-ee4d169c/upload-image", async (c) => {
-  let body: { data?: string; path?: string };
+  let body: { data?: string; path?: string; driverId?: string };
   try { body = await c.req.json(); } catch { return c.json({ error: "bad_request" }, 400); }
 
-  const { data: b64, path } = body;
+  const { data: b64, path, driverId } = body;
   if (!b64 || !path) return c.json({ error: "data and path are required" }, 400);
+
+  const authedDriverId = await getDriverAuth(c.req.raw);
+  if (!authedDriverId || authedDriverId !== driverId) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
 
   try {
     const base64Data  = b64.includes(',') ? b64.split(',')[1] : b64;
@@ -176,7 +209,8 @@ app.post("/make-server-ee4d169c/driver-login", async (c) => {
   }
 
   console.log(`[driver-login] success: ${driver.name} / ${mobile}`);
-  return c.json({ success: true, driverId: driver.id, driverName: driver.name });
+  const token = btoa(`${driver.id}:${Date.now()}`);
+  return c.json({ success: true, driverId: driver.id, driverName: driver.name, token });
 });
 
 /* ── Team members (CSR / Viewer accounts invited by the Operation Manager) ──
@@ -284,6 +318,25 @@ app.delete("/make-server-ee4d169c/team-members/:id", async (c) => {
     console.log('[DELETE /team-members/:id] error:', err);
     return c.json({ error: `${err}` }, 500);
   }
+});
+
+/* ── POST /admin-login (no auth required) — the 3 static admin/OM/demo
+   accounts. Password check happens entirely here; the client only ever
+   sends what the user typed and gets back a token or a rejection. ── */
+app.post("/make-server-ee4d169c/admin-login", async (c) => {
+  let body: { email?: string; password?: string };
+  try { body = await c.req.json(); } catch { return c.json({ error: "bad_request" }, 400); }
+
+  const email    = (body.email ?? '').trim().toLowerCase();
+  const password = (body.password ?? '').trim();
+  if (!email || !password) return c.json({ error: "invalid_credentials", msg: "Enter your email and password." }, 400);
+
+  const account = ADMIN_ACCOUNTS.find((a) => a.email.toLowerCase() === email && a.password === password);
+  if (!account) return c.json({ error: "invalid_credentials", msg: "Invalid email or password." }, 401);
+
+  const token = btoa(`${account.email}:${account.role}:${Date.now()}`);
+  console.log(`[admin-login] success: ${account.email} (${account.role})`);
+  return c.json({ success: true, token, role: account.role });
 });
 
 /* ── POST /member-login (no auth required) — CSR/Viewer team-member login ── */
@@ -408,6 +461,11 @@ app.get("/make-server-ee4d169c/driver-data", async (c) => {
   const driverId = c.req.query('driverId');
   if (!driverId) return c.json({ error: "driverId required" }, 400);
 
+  const authedDriverId = await getDriverAuth(c.req.raw);
+  if (!authedDriverId || authedDriverId !== driverId) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
+
   try {
     const [rawDrivers, rawTrucks, rawAssignments, rawCompleted] = await Promise.all([
       kv.get(K.drivers),
@@ -472,6 +530,11 @@ app.put("/make-server-ee4d169c/driver-update", async (c) => {
 
   const { driverId, assignmentId, updates, notif } = body;
   if (!driverId || !assignmentId || !updates) return c.json({ error: "missing fields" }, 400);
+
+  const authedDriverId = await getDriverAuth(c.req.raw);
+  if (!authedDriverId || authedDriverId !== driverId) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
 
   try {
     const rawDrivers = await kv.get(K.drivers);

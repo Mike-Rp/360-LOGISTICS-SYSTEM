@@ -132,12 +132,12 @@ function isBlurryImage(dataUrl: string, threshold = 45): Promise<boolean> {
   });
 }
 
-async function uploadToStorage(dataUrl: string, path: string): Promise<string> {
+async function uploadToStorage(dataUrl: string, path: string, driverId: string, driverToken: string): Promise<string> {
   try {
     const res = await fetch(`${SERVER}/upload-image`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${publicAnonKey}` },
-      body: JSON.stringify({ data: dataUrl, path }),
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${publicAnonKey}`, 'X-Driver-Token': driverToken },
+      body: JSON.stringify({ data: dataUrl, path, driverId }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const { url } = await res.json();
@@ -664,9 +664,9 @@ function DetailRow({ label, value }: { label: string; value?: string | null }) {
 /* ════════════════════════════════════════════════════════════
    MAIN COMPONENT
    ════════════════════════════════════════════════════════════ */
-interface Props { driverId: string; driverName: string; onLogout: () => void; }
+interface Props { driverId: string; driverName: string; driverToken: string; onLogout: () => void; }
 
-export default function DriverInterface({ driverId, driverName, onLogout }: Props) {
+export default function DriverInterface({ driverId, driverName, driverToken, onLogout }: Props) {
   /* ── Server state ── */
   const [data,     setData]     = useState<DriverData | null>(null);
   const [online,   setOnline]   = useState(true);
@@ -707,7 +707,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
     if (!quiet) setSyncing(true);
     try {
       const res = await fetch(`${SERVER}/driver-data?driverId=${encodeURIComponent(driverId)}`, {
-        headers: { 'Authorization': `Bearer ${publicAnonKey}` },
+        headers: { 'Authorization': `Bearer ${publicAnonKey}`, 'X-Driver-Token': driverToken },
       });
       if (!res.ok) throw new Error(`${res.status}`);
       const json = await res.json();
@@ -721,7 +721,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
          silently swapping in a fabricated one. */
       setOnline(false);
     } finally { setSyncing(false); }
-  }, [driverId]);
+  }, [driverId, driverToken]);
 
   useEffect(() => {
     fetchData();
@@ -739,7 +739,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
     try {
       const res = await fetch(`${SERVER}/driver-update`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${publicAnonKey}` },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${publicAnonKey}`, 'X-Driver-Token': driverToken },
         body: JSON.stringify({ driverId, assignmentId: a.id, updates, notif }),
       });
       if (!res.ok) throw new Error(`${res.status}`);
@@ -762,7 +762,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
     if (!photoTarget || !data?.assignment) return;
     const status = photoTarget; setPhotoTarget(null);
     const path      = `photos/${data.assignment.id}/${status.replace(/[\s/]+/g, '_')}_${Date.now()}.jpg`;
-    const storedUrl = await uploadToStorage(photo.url, path);
+    const storedUrl = await uploadToStorage(photo.url, path, driverId, driverToken);
     await pushUpdate(
       { taskStatus: status, statusPhotos: { ...(data.assignment.statusPhotos ?? {}), [status]: { ...photo, url: storedUrl } } },
       { type: 'status_update', message: `[${data.assignment.truckPlate}] Marked as ${taskStatusConfig[status].label}`, assignmentId: data.assignment.id, truckPlate: data.assignment.truckPlate, statusUpdate: status, photoUrl: storedUrl, navigateTo: 'Monitor' }
@@ -816,7 +816,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
       let fileUrl = compressed;
       if (online) {
         const path = `docs/${data.assignment!.id}/${encodeURIComponent(docType.replace(/\s+/g, '_'))}_${Date.now()}.jpg`;
-        fileUrl = await uploadToStorage(compressed, path);
+        fileUrl = await uploadToStorage(compressed, path, driverId, driverToken);
       }
       await pushUpdate(
         { documents: data.assignment!.documents.map((d) => d.type === docType ? { ...d, uploaded: true, docStatus: 'pending' as DocStatus, fileUrl } : d) },

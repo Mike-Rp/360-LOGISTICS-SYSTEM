@@ -5,14 +5,6 @@ import type { LocalDriver, LocalTruck, Assignment, AdminRole } from '../../data/
 import { SERVER } from '../../lib/supabaseClient';
 import { publicAnonKey } from '/utils/supabase/info';
 
-const ADMIN_ACCOUNTS = [
-  { email: '360logistics@email.ph',             password: '360Admin2026!', role: 'admin'  as AdminRole },
-  { email: 'operationmanager@360logistics.ph',  password: '360logistics',  role: 'viewer' as AdminRole },
-  /* Presentation-only "admin abuse" account — unlocks demo-only overrides
-     (e.g. simulating a late driver) not available to the real admin. */
-  { email: 'adminabuse@360logistics.ph',        password: 'admin',        role: 'admin'  as AdminRole },
-];
-
 function normaliseMobile(raw: string): string {
   const digits = raw.replace(/\D/g, '');
   if (digits.startsWith('63') && digits.length === 12) return '0' + digits.slice(2);
@@ -24,7 +16,7 @@ interface Props {
   trucks:       LocalTruck[];
   assignments:  Assignment[];
   onAdminLogin:  (token: string, role: AdminRole, name?: string) => void;
-  onDriverLogin: (info: { id: string; name: string }) => void;
+  onDriverLogin: (info: { id: string; name: string; token?: string }) => void;
 }
 
 const ErrorBanner = ({ icon: Icon, title, sub }: { icon: React.ElementType; title: string; sub: string }) => (
@@ -130,7 +122,7 @@ export default function LoginScreen({ drivers, trucks, assignments, onAdminLogin
         signal: AbortSignal.timeout(5000),
       });
       const data = await res.json();
-      if (res.ok) { onDriverLogin({ id: data.driverId, name: data.driverName }); setDriverLoading(false); return; }
+      if (res.ok) { onDriverLogin({ id: data.driverId, name: data.driverName, token: data.token }); setDriverLoading(false); return; }
       const err = data.error ?? '';
       if      (err === 'driver_not_found') setDriverError({ type: 'mobile', msg: data.msg });
       else if (err === 'wrong_pin')        setDriverError({ type: 'pin',    msg: data.msg });
@@ -155,18 +147,25 @@ export default function LoginScreen({ drivers, trucks, assignments, onAdminLogin
     const inputPass  = password.trim();
     if (!inputEmail || !inputPass) { setAdminError('Please enter your email and password.'); return; }
 
-    const account = ADMIN_ACCOUNTS.find((a) => a.email.toLowerCase() === inputEmail && a.password === inputPass);
-    if (account) {
-      const token = btoa(`${account.email}:${account.role}:${Date.now()}`);
-      localStorage.setItem('360_admin_token', token);
-      localStorage.setItem('360_admin_role',  account.role);
-      onAdminLogin(token, account.role);
-      return;
-    }
-
-    /* Not one of the 3 hardcoded accounts — try a real team-member (CSR/Viewer) login */
     setAdminLoading(true);
     try {
+      /* Try the 3 static admin/OM/demo accounts first — checked entirely
+         server-side now, so no password ever ships in the client bundle. */
+      const adminRes = await fetch(`${SERVER}/admin-login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${publicAnonKey}` },
+        body: JSON.stringify({ email: inputEmail, password: inputPass }),
+        signal: AbortSignal.timeout(5000),
+      });
+      const adminData = await adminRes.json();
+      if (adminRes.ok && adminData.success) {
+        localStorage.setItem('360_admin_token', adminData.token);
+        localStorage.setItem('360_admin_role',  adminData.role);
+        onAdminLogin(adminData.token, adminData.role);
+        return;
+      }
+
+      /* Not one of the 3 static accounts — try a real team-member (CSR/Viewer) login */
       const res = await fetch(`${SERVER}/member-login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${publicAnonKey}` },
@@ -182,7 +181,7 @@ export default function LoginScreen({ drivers, trucks, assignments, onAdminLogin
       }
       setAdminError(data.msg ?? 'Invalid email or password.');
     } catch {
-      setAdminError('Invalid email or password.');
+      setAdminError('Unable to reach the server. Check your internet connection.');
     } finally {
       setAdminLoading(false);
     }
