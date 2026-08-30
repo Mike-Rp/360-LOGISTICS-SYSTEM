@@ -5,6 +5,7 @@ import {
   FileText, AlertTriangle, AlertCircle,
 } from 'lucide-react';
 import type { AppNotification } from '../../data/assignmentTypes';
+import { Popover, PopoverTrigger, PopoverContent } from '../ui/popover';
 
 interface Props {
   notifications: AppNotification[];
@@ -51,14 +52,14 @@ export default function Header({
   const [bellOpen,    setBellOpen]    = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
 
-  const bellRef    = useRef<HTMLDivElement>(null);
   const accountRef = useRef<HTMLDivElement>(null);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
+  /* Bell panel's open/outside-click/positioning is handled by Popover itself
+     now (see below) — only the account menu still needs a manual listener. */
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (bellRef.current    && !bellRef.current.contains(e.target as Node))    setBellOpen(false);
       if (accountRef.current && !accountRef.current.contains(e.target as Node)) setAccountOpen(false);
     };
     document.addEventListener('mousedown', handler);
@@ -75,26 +76,31 @@ export default function Header({
       <div className="flex items-center justify-end gap-3 pl-10 lg:pl-0">
 
         {/* ── Bell button ── */}
-        <div className="relative" ref={bellRef}>
-          <button
-            onClick={() => { setBellOpen((v) => !v); setAccountOpen(false); }}
-            title={notifEnabled ? 'Notifications' : 'Notifications muted'}
-            className="relative w-9 h-9 flex items-center justify-center rounded-full hover:bg-accent transition-colors"
+        <Popover open={bellOpen} onOpenChange={setBellOpen}>
+          <PopoverTrigger asChild>
+            <button
+              onClick={() => setAccountOpen(false)}
+              title={notifEnabled ? 'Notifications' : 'Notifications muted'}
+              className="relative w-9 h-9 flex items-center justify-center rounded-full hover:bg-accent transition-colors"
+            >
+              {notifEnabled
+                ? <Bell className="w-5 h-5 text-muted-foreground" />
+                : <BellOff className="w-5 h-5 text-muted-foreground/50" />
+              }
+              {notifEnabled && unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-green-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1 leading-none">
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              )}
+            </button>
+          </PopoverTrigger>
+
+          <PopoverContent
+            align="end"
+            sideOffset={8}
+            collisionPadding={8}
+            className="w-[min(400px,calc(100vw-1rem))] bg-white border border-border rounded-2xl shadow-xl p-0 overflow-hidden"
           >
-            {notifEnabled
-              ? <Bell className="w-5 h-5 text-muted-foreground" />
-              : <BellOff className="w-5 h-5 text-muted-foreground/50" />
-            }
-            {notifEnabled && unreadCount > 0 && (
-              <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-green-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1 leading-none">
-                {unreadCount > 99 ? '99+' : unreadCount}
-              </span>
-            )}
-          </button>
-
-          {bellOpen && (
-            <div className="absolute right-0 top-full mt-2 w-[min(400px,calc(100vw-1rem))] bg-white border border-border rounded-2xl shadow-xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-
               {/* Panel header */}
               <div className="flex items-center justify-between px-4 py-3 border-b border-border">
                 <div className="flex items-center gap-2">
@@ -200,9 +206,8 @@ export default function Header({
                   </button>
                 )}
               </div>
-            </div>
-          )}
-        </div>
+          </PopoverContent>
+        </Popover>
 
         {/* ── Admin User pill ── */}
         <div className="relative" ref={accountRef}>
