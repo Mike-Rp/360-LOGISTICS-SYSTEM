@@ -1,22 +1,12 @@
 import { useState, useRef } from 'react';
 import imgLogo from 'figma:asset/5e73e3c08e898d68c86717993c6e7442d03e9ac4.png';
 import { Eye, EyeOff, AlertCircle, Phone, KeySquare, Loader2 } from 'lucide-react';
-import type { LocalDriver, LocalTruck, Assignment, AdminRole } from '../../data/assignmentTypes';
-import { SERVER } from '../../lib/supabaseClient';
-import { publicAnonKey } from '/utils/supabase/info';
-
-function normaliseMobile(raw: string): string {
-  const digits = raw.replace(/\D/g, '');
-  if (digits.startsWith('63') && digits.length === 12) return '0' + digits.slice(2);
-  return digits;
-}
+import { signInStaff, signInDriver, LoginError } from '../../lib/db';
+import type { StaffSession } from '../../lib/db';
 
 interface Props {
-  drivers:      LocalDriver[];
-  trucks:       LocalTruck[];
-  assignments:  Assignment[];
-  onAdminLogin:  (token: string, role: AdminRole, name?: string) => void;
-  onDriverLogin: (info: { id: string; name: string; token?: string }) => void;
+  onAdminLogin:  (session: StaffSession) => void | Promise<void>;
+  onDriverLogin: (info: { id: string; name: string }) => void;
 }
 
 const ErrorBanner = ({ icon: Icon, title, sub }: { icon: React.ElementType; title: string; sub: string }) => (
@@ -31,7 +21,7 @@ const ErrorBanner = ({ icon: Icon, title, sub }: { icon: React.ElementType; titl
   </div>
 );
 
-export default function LoginScreen({ drivers, trucks, assignments, onAdminLogin, onDriverLogin }: Props) {
+export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
   const [view, setView] = useState<'driver' | 'admin'>('driver');
 
   /* ── Driver form ── */
@@ -82,13 +72,6 @@ export default function LoginScreen({ drivers, trucks, assignments, onAdminLogin
     }
   };
 
-  const validateDriverLocally = (normMobile: string, fullPin: string) => {
-    const driver = drivers.find((d) => normaliseMobile(d.phone ?? '') === normMobile);
-    if (!driver) return { ok: false as const, type: 'mobile' as const, msg: 'No driver account found with that mobile number. Contact your admin.' };
-    if (driver.pin && driver.pin !== fullPin) return { ok: false as const, type: 'pin' as const, msg: 'Incorrect PIN. Please try again.' };
-    return { ok: true as const, id: driver.id, name: driver.name };
-  };
-
   const handleDriverLogin = async () => {
     const fullPin = pin.join('');
 
@@ -106,39 +89,23 @@ export default function LoginScreen({ drivers, trucks, assignments, onAdminLogin
       return;
     }
 
-    // For local lookup: prepend 0 → "09XXXXXXXXX" which matches how stored phones normalize
-    const normMobile = normaliseMobile('0' + mobile);
-    // Full E.164 number to send to server
-    const fullMobile = '+63' + mobile;
-
     setDriverLoading(true);
     setDriverError(null);
 
+    /* Supabase Auth checks the mobile + PIN and answers only "valid" or "invalid" — it never says
+       which of the two was wrong (so nobody can probe which mobile numbers are registered).
+       There is no offline fallback any more: driver data is private until you are signed in. */
     try {
-      const res = await fetch(`${SERVER}/driver-login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${publicAnonKey}` },
-        body: JSON.stringify({ mobile: fullMobile, pin: fullPin }),
-        signal: AbortSignal.timeout(5000),
-      });
-      const data = await res.json();
-      if (res.ok) { onDriverLogin({ id: data.driverId, name: data.driverName, token: data.token }); setDriverLoading(false); return; }
-      const err = data.error ?? '';
-      if      (err === 'driver_not_found') setDriverError({ type: 'mobile', msg: data.msg });
-      else if (err === 'wrong_pin')        setDriverError({ type: 'pin',    msg: data.msg });
-      else                                 setDriverError({ type: 'general', msg: data.msg ?? 'Login failed. Please try again.' });
+      const driver = await signInDriver(mobile, fullPin);
+      onDriverLogin(driver);
+    } catch (e) {
+      const code = e instanceof LoginError ? e.code : 'network';
+      if (code === 'invalid_credentials') setDriverError({ type: 'general', msg: 'Incorrect mobile number or PIN. Contact your admin if you forgot your PIN.' });
+      else if (code === 'no_access')      setDriverError({ type: 'general', msg: 'This is not a driver account. Use Admin Login instead.' });
+      else                                setDriverError({ type: 'general', msg: 'Unable to reach the server. Check your internet connection.' });
+    } finally {
       setDriverLoading(false);
-      return;
-    } catch { /* server unreachable — fall through to local validation */ }
-
-    if (drivers.length === 0) {
-      setDriverError({ type: 'general', msg: 'Server is offline and no accounts are loaded. Check your internet connection.' });
-      setDriverLoading(false); return;
     }
-    const result = validateDriverLocally(normMobile, fullPin);
-    if (!result.ok) setDriverError({ type: result.type, msg: result.msg });
-    else            onDriverLogin({ id: result.id, name: result.name });
-    setDriverLoading(false);
   };
 
   const handleAdminLogin = async () => {
@@ -149,39 +116,15 @@ export default function LoginScreen({ drivers, trucks, assignments, onAdminLogin
 
     setAdminLoading(true);
     try {
-      /* Try the 3 static admin/OM/demo accounts first — checked entirely
-         server-side now, so no password ever ships in the client bundle. */
-      const adminRes = await fetch(`${SERVER}/admin-login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${publicAnonKey}` },
-        body: JSON.stringify({ email: inputEmail, password: inputPass }),
-        signal: AbortSignal.timeout(5000),
-      });
-      const adminData = await adminRes.json();
-      if (adminRes.ok && adminData.success) {
-        localStorage.setItem('360_admin_token', adminData.token);
-        localStorage.setItem('360_admin_role',  adminData.role);
-        onAdminLogin(adminData.token, adminData.role);
-        return;
-      }
-
-      /* Not one of the 3 static accounts — try a real team-member (CSR/Viewer) login */
-      const res = await fetch(`${SERVER}/member-login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${publicAnonKey}` },
-        body: JSON.stringify({ email: inputEmail, password: inputPass }),
-        signal: AbortSignal.timeout(5000),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        localStorage.setItem('360_admin_token', data.token);
-        localStorage.setItem('360_admin_role',  data.role);
-        onAdminLogin(data.token, data.role, data.name);
-        return;
-      }
-      setAdminError(data.msg ?? 'Invalid email or password.');
-    } catch {
-      setAdminError('Unable to reach the server. Check your internet connection.');
+      /* Admin, Operation Manager, CSR and Viewer are all Supabase Auth users now — one call.
+         Which role you get comes from your row in the `profiles` table, not from this code. */
+      const session = await signInStaff(inputEmail, inputPass);
+      await onAdminLogin(session);
+    } catch (e) {
+      const code = e instanceof LoginError ? e.code : 'network';
+      if (code === 'invalid_credentials') setAdminError('Invalid email or password.');
+      else if (code === 'no_access')      setAdminError('This account does not have access to the admin portal. Contact the Operation Manager.');
+      else                                setAdminError('Unable to reach the server. Check your internet connection.');
     } finally {
       setAdminLoading(false);
     }

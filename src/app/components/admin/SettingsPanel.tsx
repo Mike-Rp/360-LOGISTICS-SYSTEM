@@ -3,6 +3,7 @@ import {
   X, User, KeyRound, Bell, BellOff, Eye, EyeOff,
   CheckCircle2, Camera, Pencil,
 } from 'lucide-react';
+import { changeOwnPassword, PasswordError } from '../../lib/db';
 
 /* ── Section separator ── */
 const Divider = ({ label }: { label: string }) => (
@@ -55,6 +56,7 @@ export default function SettingsPanel({ open, onClose, notifEnabled, setNotifEna
   const [showConf,    setShowConf]    = useState(false);
   const [passError,   setPassError]   = useState('');
   const [passSaved,   setPassSaved]   = useState(false);
+  const [passBusy,    setPassBusy]    = useState(false);
 
   /* ── Close on Esc ── */
   useEffect(() => {
@@ -91,15 +93,33 @@ export default function SettingsPanel({ open, onClose, notifEnabled, setNotifEna
     reader.readAsDataURL(file);
   };
 
-  const handleSavePassword = () => {
+  const handleSavePassword = async () => {
     setPassError('');
+    if (passBusy) return;
     if (!curPass) { setPassError('Enter your current password.'); return; }
     if (newPass.length < 8) { setPassError('New password must be at least 8 characters.'); return; }
     if (newPass !== confPass) { setPassError('New passwords do not match.'); return; }
-    /* Password change is UI-only (accounts are hardcoded) */
-    setCurPass(''); setNewPass(''); setConfPass('');
-    setPassSaved(true);
-    setTimeout(() => setPassSaved(false), 3000);
+
+    /* Real change: the account is a Supabase Auth login, so this updates the actual password
+       (the old one stops working at the login screen straight away). */
+    setPassBusy(true);
+    try {
+      await changeOwnPassword(curPass, newPass);
+      setCurPass(''); setNewPass(''); setConfPass('');
+      setPassSaved(true);
+      setTimeout(() => setPassSaved(false), 3000);
+    } catch (e) {
+      const code = e instanceof PasswordError ? e.code : 'network';
+      setPassError(
+        code === 'wrong_current'  ? 'Your current password is incorrect.' :
+        code === 'same_password'  ? 'The new password must be different from your current one.' :
+        code === 'weak_password'  ? 'That password is too weak. Try a longer or less common one.' :
+        code === 'not_signed_in'  ? 'Your session has expired. Please sign in again.' :
+                                    'Could not update the password. Check your connection and try again.'
+      );
+    } finally {
+      setPassBusy(false);
+    }
   };
 
   /* Initials avatar */
@@ -275,9 +295,10 @@ export default function SettingsPanel({ open, onClose, notifEnabled, setNotifEna
               )}
               <button
                 onClick={handleSavePassword}
-                className="flex items-center gap-2 px-4 py-2.5 bg-primary text-white text-sm font-medium rounded-xl hover:bg-primary/90 transition-colors"
+                disabled={passBusy}
+                className="flex items-center gap-2 px-4 py-2.5 bg-primary text-white text-sm font-medium rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                <KeyRound className="w-4 h-4" /> Update Password
+                <KeyRound className="w-4 h-4" /> {passBusy ? 'Updating…' : 'Update Password'}
               </button>
             </div>
           </section>

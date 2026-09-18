@@ -4,8 +4,7 @@ import {
   LogIn, CheckCircle, XCircle, FileCheck, FileX, UserX, UserMinus,
   RefreshCw, Shield, Eye, EyeOff, AlertTriangle, Mail,
 } from 'lucide-react';
-import { SERVER } from '../../lib/supabaseClient';
-import { publicAnonKey } from '/utils/supabase/info';
+import { listTeamMembers, createTeamMember, removeTeamMember } from '../../lib/db';
 import type { AdminActivityEntry, AdminActivityType, AdminActivityInput, TeamMember } from '../../data/assignmentTypes';
 
 /* ── Activity log helpers — moved here from SettingsPanel.tsx, extended for member events ── */
@@ -50,11 +49,6 @@ const generatePassword = () => {
   return out;
 };
 
-function authHeaders(): HeadersInit {
-  const token = localStorage.getItem('360_admin_token') ?? '';
-  return { 'Authorization': `Bearer ${publicAnonKey}`, 'X-Admin-Token': token, 'Content-Type': 'application/json' };
-}
-
 /* ── Modal shell (mirrors RegisterModals.tsx's local ModalShell) ── */
 function ModalShell({ title, onClose, children, footer }: {
   title: string; onClose: () => void; children: React.ReactNode; footer?: React.ReactNode;
@@ -98,17 +92,14 @@ function AddMemberModal({ onClose, onAdded }: {
 
     setSubmitting(true);
     try {
-      const res = await fetch(`${SERVER}/team-members`, {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({ name: name.trim(), email: email.trim(), password, role }),
-      });
-      const data = await res.json();
-      if (!res.ok) { setError(data.error ?? 'Could not add this member.'); setSubmitting(false); return; }
-      setCreated(data.member);
-      onAdded(data.member);
-    } catch {
-      setError('Network error — please try again.');
+      /* Creates the Supabase Auth login + the profile row in one database call (only the Operation
+         Manager is allowed — the function checks). The password is shown ONCE below because Auth
+         stores only a hash; nobody, including this app, can read it back later. */
+      const member = await createTeamMember({ name: name.trim(), email: email.trim(), password, role });
+      setCreated(member);
+      onAdded(member);
+    } catch (e) {
+      setError(e instanceof Error && e.message ? e.message : 'Could not add this member.');
     } finally {
       setSubmitting(false);
     }
@@ -282,12 +273,9 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
     setLoading(true);
     setLoadError('');
     try {
-      const res = await fetch(`${SERVER}/team-members`, { headers: authHeaders() });
-      const data = await res.json();
-      if (!res.ok) { setLoadError(data.error ?? 'Could not load team members.'); return; }
-      setMembers(data.members ?? []);
+      setMembers(await listTeamMembers());
     } catch {
-      setLoadError('Network error — could not load team members.');
+      setLoadError('Could not load team members.');
     } finally {
       setLoading(false);
     }
@@ -312,11 +300,11 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
     if (!removeTarget) return;
     setRemoving(true);
     try {
-      const res = await fetch(`${SERVER}/team-members/${removeTarget.id}`, { method: 'DELETE', headers: authHeaders() });
-      if (res.ok) {
-        setMembers((p) => p.filter((m) => m.id !== removeTarget.id));
-        onLogActivity({ type: 'member_removed', adminEmail: adminEmail ?? undefined, memberName: removeTarget.name, memberEmail: removeTarget.email });
-      }
+      await removeTeamMember(removeTarget.id);   // deletes their login; their access ends immediately
+      setMembers((p) => p.filter((m) => m.id !== removeTarget.id));
+      onLogActivity({ type: 'member_removed', adminEmail: adminEmail ?? undefined, memberName: removeTarget.name, memberEmail: removeTarget.email });
+    } catch (e) {
+      console.error('[removeTeamMember] error:', e);
     } finally {
       setRemoving(false);
       setRemoveTarget(null);

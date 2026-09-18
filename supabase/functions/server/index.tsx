@@ -1,3 +1,7 @@
+// @ts-nocheck — this file runs on Deno (npm: imports, the Deno global), which VS Code's
+// TypeScript checker doesn't understand; without this it shows false errors. Legacy edge
+// function: deleted once the app talks to Supabase directly. Remove this line if you
+// install the Deno extension and enable it for supabase/functions.
 import { Hono } from "npm:hono@4";
 import { cors } from "npm:hono/cors";
 import { logger } from "npm:hono/logger";

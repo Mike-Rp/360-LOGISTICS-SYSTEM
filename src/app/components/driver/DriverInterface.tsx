@@ -7,8 +7,7 @@ import {
 } from 'lucide-react';
 import type { Assignment, TaskStatus, StatusPhoto, DocStatus } from '../../data/assignmentTypes';
 import { taskStatusConfig } from '../../data/assignmentTypes';
-import { SERVER } from '../../lib/supabaseClient';
-import { publicAnonKey } from '/utils/supabase/info';
+import { loadDriverData, driverUpdate, uploadImage } from '../../lib/db';
 
 /* ── Types ── */
 interface CompletedHistoryItem {
@@ -132,17 +131,11 @@ function isBlurryImage(dataUrl: string, threshold = 45): Promise<boolean> {
   });
 }
 
-async function uploadToStorage(dataUrl: string, path: string, driverId: string, driverToken: string): Promise<string> {
+async function uploadToStorage(dataUrl: string, path: string): Promise<string> {
   try {
-    const res = await fetch(`${SERVER}/upload-image`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${publicAnonKey}`, 'X-Driver-Token': driverToken },
-      body: JSON.stringify({ data: dataUrl, path, driverId }),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const { url } = await res.json();
-    if (!url) throw new Error('No URL returned');
-    return url as string;
+    /* Straight to Supabase Storage as the signed-in driver — the storage policy only lets a driver
+       write under photos/<their assignment id>/ and docs/<their assignment id>/. */
+    return await uploadImage(dataUrl, path);
   } catch (err) {
     console.warn('[uploadToStorage] failed, falling back to data-URL:', err);
     return dataUrl;
@@ -664,9 +657,9 @@ function DetailRow({ label, value }: { label: string; value?: string | null }) {
 /* ════════════════════════════════════════════════════════════
    MAIN COMPONENT
    ════════════════════════════════════════════════════════════ */
-interface Props { driverId: string; driverName: string; driverToken: string; onLogout: () => void; }
+interface Props { driverId: string; driverName: string; onLogout: () => void; }
 
-export default function DriverInterface({ driverId, driverName, driverToken, onLogout }: Props) {
+export default function DriverInterface({ driverId, driverName, onLogout }: Props) {
   /* ── Server state ── */
   const [data,     setData]     = useState<DriverData | null>(null);
   const [online,   setOnline]   = useState(true);
@@ -706,11 +699,8 @@ export default function DriverInterface({ driverId, driverName, driverToken, onL
     if (!driverId) return;
     if (!quiet) setSyncing(true);
     try {
-      const res = await fetch(`${SERVER}/driver-data?driverId=${encodeURIComponent(driverId)}`, {
-        headers: { 'Authorization': `Bearer ${publicAnonKey}`, 'X-Driver-Token': driverToken },
-      });
-      if (!res.ok) throw new Error(`${res.status}`);
-      const json = await res.json();
+      /* Reads only this driver's own rows — the database's row-level security enforces that. */
+      const json = await loadDriverData(driverId);
       setData(json); setOnline(true); setLastSync(new Date());
     } catch {
       /* Do NOT auto-fill fake demo data here — leave `data` untouched so a
@@ -721,7 +711,7 @@ export default function DriverInterface({ driverId, driverName, driverToken, onL
          silently swapping in a fabricated one. */
       setOnline(false);
     } finally { setSyncing(false); }
-  }, [driverId, driverToken]);
+  }, [driverId]);
 
   useEffect(() => {
     fetchData();
@@ -737,12 +727,9 @@ export default function DriverInterface({ driverId, driverName, driverToken, onL
     setData((prev) => prev ? { ...prev, assignment: { ...prev.assignment!, ...updates } } : prev);
     if (!online) { await new Promise((r) => setTimeout(r, 400)); setUpdating(false); return; }
     try {
-      const res = await fetch(`${SERVER}/driver-update`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${publicAnonKey}`, 'X-Driver-Token': driverToken },
-        body: JSON.stringify({ driverId, assignmentId: a.id, updates, notif }),
-      });
-      if (!res.ok) throw new Error(`${res.status}`);
+      /* The database triggers only let a driver change status / photos / delay reports / new document
+         files (an approved document can't be re-approved or flipped by the driver). */
+      await driverUpdate(driverName, a.id, updates, notif);
       await fetchData(true);
     } catch { setOnline(false); }
     finally { setUpdating(false); }
@@ -762,7 +749,7 @@ export default function DriverInterface({ driverId, driverName, driverToken, onL
     if (!photoTarget || !data?.assignment) return;
     const status = photoTarget; setPhotoTarget(null);
     const path      = `photos/${data.assignment.id}/${status.replace(/[\s/]+/g, '_')}_${Date.now()}.jpg`;
-    const storedUrl = await uploadToStorage(photo.url, path, driverId, driverToken);
+    const storedUrl = await uploadToStorage(photo.url, path);
     await pushUpdate(
       { taskStatus: status, statusPhotos: { ...(data.assignment.statusPhotos ?? {}), [status]: { ...photo, url: storedUrl } } },
       { type: 'status_update', message: `[${data.assignment.truckPlate}] Marked as ${taskStatusConfig[status].label}`, assignmentId: data.assignment.id, truckPlate: data.assignment.truckPlate, statusUpdate: status, photoUrl: storedUrl, navigateTo: 'Monitor' }
@@ -816,7 +803,7 @@ export default function DriverInterface({ driverId, driverName, driverToken, onL
       let fileUrl = compressed;
       if (online) {
         const path = `docs/${data.assignment!.id}/${encodeURIComponent(docType.replace(/\s+/g, '_'))}_${Date.now()}.jpg`;
-        fileUrl = await uploadToStorage(compressed, path, driverId, driverToken);
+        fileUrl = await uploadToStorage(compressed, path);
       }
       await pushUpdate(
         { documents: data.assignment!.documents.map((d) => d.type === docType ? { ...d, uploaded: true, docStatus: 'pending' as DocStatus, fileUrl } : d) },
