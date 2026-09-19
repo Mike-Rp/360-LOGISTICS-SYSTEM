@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { CheckCircle2 } from 'lucide-react';
-import { SERVER } from './lib/supabaseClient';
-import { publicAnonKey } from '/utils/supabase/info';
+import { supabase } from './lib/supabaseClient';
+import { loadAdminData, syncAdminData, resetAllData, restoreSession, signOut } from './lib/db';
+import type { StaffSession } from './lib/db';
 import AdminDashboard from './components/admin/AdminDashboard';
 import DriverInterface from './components/driver/DriverInterface';
 import LoginScreen from './components/auth/LoginScreen';
 import type { Assignment, CompletedTask, LocalDriver, LocalTruck, AppNotification, AdminRole, AdminActivityEntry, AdminActivityInput } from './data/assignmentTypes';
-import { OM_EMAIL } from './data/assignmentTypes';
 
 type AppView = 'login' | 'admin' | 'driver';
 type NavItem = 'Dashboard' | 'Monitor' | 'Deliveries' | 'Documents' | 'Reports' | 'Accounts';
@@ -25,15 +25,18 @@ export default function App() {
     localStorage.setItem('360_active_nav', activeNav);
   }, [activeNav]);
 
-  /* Auth state */
+  /* Auth state. The session itself (who is signed in) is kept by Supabase Auth in the browser and
+     restored on refresh via restoreSession() — we no longer hand-roll tokens in localStorage. */
   const [adminRole,    setAdminRole]    = useState<AdminRole | null>(null);
   const [adminEmail,   setAdminEmail]   = useState<string | null>(null);
-  const [accessToken,  setAccessToken]  = useState<string | null>(null);
+  const [adminIsOm,    setAdminIsOm]    = useState(false);
+  const [signedIn,     setSignedIn]     = useState(false);
+  const [restoring,    setRestoring]    = useState(true);   // true until the "am I already signed in?" check finishes
   const [dataLoading,  setDataLoading]  = useState(false);
   const [savingToDb,   setSavingToDb]   = useState(false);
 
   /* Driver session (separate from admin) */
-  const [driverInfo, setDriverInfo] = useState<{ id: string; name: string; token?: string } | null>(null);
+  const [driverInfo, setDriverInfo] = useState<{ id: string; name: string } | null>(null);
 
   /* Shared app state */
   const [drivers,       setDrivers]       = useState<LocalDriver[]>([]);
@@ -44,81 +47,68 @@ export default function App() {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [activityLog,   setActivityLog]   = useState<AdminActivityEntry[]>([]);
 
-  /* ── Admin activity logging — auto-injects current account info ── */
+  /* Refs so timers/closures always see the latest values */
+  const saveTimerRef   = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isMounted      = useRef(false);
+  const isPollUpdate   = useRef(false);   // ← flag: skip auto-save during poll merges
+  const signedInRef    = useRef(false);
+  const savingRef      = useRef(false);
+  const adminEmailRef  = useRef<string | null>(null);
+  const adminRoleRef   = useRef<AdminRole | null>(null);
+  const [saveError,     setSaveError]     = useState<string | null>(null);
+  const [loginSuccess,  setLoginSuccess]  = useState<string | null>(null);
+
+  /* ── Admin activity logging — auto-tags the signed-in account. (The database also stamps the
+     real email/role on insert, so this can't be spoofed from the browser.) ── */
   const onLogActivity = useCallback((entry: AdminActivityInput) => {
-    /* Extract email from the current token so every entry is tagged by account */
-    const token = localStorage.getItem('360_admin_token');
-    let inferredEmail = entry.adminEmail;
-    let inferredRole  = entry.adminRole;
-    if (!inferredEmail && token) {
-      try {
-        const decoded = atob(token);
-        inferredEmail = decoded.split(':')[0];
-        inferredRole  = inferredRole ?? decoded.split(':')[1];
-      } catch { /* ignore */ }
-    }
     const fullEntry: AdminActivityEntry = {
       ...entry,
-      adminEmail: inferredEmail,
-      adminRole:  inferredRole,
+      adminEmail: entry.adminEmail ?? adminEmailRef.current ?? undefined,
+      adminRole:  entry.adminRole  ?? adminRoleRef.current  ?? undefined,
       id: `act-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       timestamp: new Date().toISOString(),
     };
     setActivityLog((prev) => [fullEntry, ...prev]);
   }, []);
 
-  /* ── Helpers: build correct headers for each request ── */
-  const adminGetHeaders = useCallback((token: string): HeadersInit => ({
-    'Authorization': `Bearer ${publicAnonKey}`,
-    'X-Admin-Token': token,
-  }), []);
-
-  /* ── Load data from server ── */
-  const loadData = useCallback(async (token: string) => {
+  /* ── Load data from the database (all tables the signed-in user is allowed to see) ── */
+  const loadData = useCallback(async () => {
     setDataLoading(true);
     isPollUpdate.current = true; // block auto-save while loading
     try {
-      const res = await fetch(`${SERVER}/app-data`, {
-        headers: adminGetHeaders(token),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        console.error('[loadData] error:', err);
-        // do NOT clear state on error — leave whatever is already in memory
-        return;
-      }
-      const data = await res.json();
-      setDrivers(data.drivers             ?? []);
-      setTrucks(data.trucks               ?? []);
-      setAssignments(data.assignments     ?? []);
-      setCompleted(data.completed         ?? []);
-      setCancelled(data.cancelled         ?? []);
-      setNotifications(data.notifications ?? []);
-      setActivityLog(data.activityLog     ?? []);
+      const data = await loadAdminData();
+      setDrivers(data.drivers);
+      setTrucks(data.trucks);
+      setAssignments(data.assignments);
+      setCompleted(data.completed);
+      setCancelled(data.cancelled);
+      setNotifications(data.notifications);
+      setActivityLog(data.activityLog);
     } catch (err) {
-      console.error('[loadData] fetch error:', err);
-      // do NOT clear state on network error
+      console.error('[loadData] error:', err);
+      // do NOT clear state on error — leave whatever is already in memory
     } finally {
       setDataLoading(false);
       setTimeout(() => { isPollUpdate.current = false; }, 200);
     }
-  }, [adminGetHeaders]);
+  }, []);
 
-  const applySession = useCallback(async (token: string, role: AdminRole, fresh = false, name?: string) => {
+  const applySession = useCallback(async (staff: StaffSession, fresh = false) => {
     isPollUpdate.current = true; // block auto-save until loadData finishes
-    const email = atob(token).split(':')[0];
-    setAdminRole(role);
-    setAdminEmail(email);
-    setAccessToken(token);
+    setAdminRole(staff.role);
+    setAdminEmail(staff.email);
+    setAdminIsOm(staff.isOm);
+    adminRoleRef.current  = staff.role;
+    adminEmailRef.current = staff.email;
+    signedInRef.current   = true;
+    setSignedIn(true);
     if (fresh) {
-      /* Reset the device-local display name on every fresh login so a previous
-         account's name (especially a real team member's) never leaks onto the
-         next session — member logins repopulate it with their real name, static
-         account logins fall back to Header's 'Admin User' default. */
-      if (name) localStorage.setItem('360_display_name', name);
+      /* Reset the device-local display name on every fresh login so a previous account's name never
+         leaks onto the next session — it now comes from this account's profile. */
+      if (staff.name) localStorage.setItem('360_display_name', staff.name);
       else localStorage.removeItem('360_display_name');
     }
-    await loadData(token);
+    await loadData();
     setView('admin');
     if (fresh) {
       /* Only a genuinely new login should land on Dashboard — restoring an
@@ -126,35 +116,27 @@ export default function App() {
          localStorage-persisted activeNav state above already resolved to. */
       setActiveNav('Dashboard');
       setLoginSuccess('Login Successful! Welcome to the Admin Portal.');
-      onLogActivity({ type: 'login', adminEmail: email, adminRole: role });
+      onLogActivity({ type: 'login', adminEmail: staff.email, adminRole: staff.role });
     }
   }, [loadData, onLogActivity]);
 
-  /* ── Check for existing session on mount (localStorage) ── */
+  /* ── Already signed in? (Supabase keeps the session in the browser across refreshes) ── */
   useEffect(() => {
-    const token = localStorage.getItem('360_admin_token');
-    const role  = localStorage.getItem('360_admin_role') as AdminRole | null;
-    if (token && role) {
-      applySession(token, role);
-      return;
-    }
-    /* Also restore driver session */
-    const dId    = localStorage.getItem('360_driver_id');
-    const dName  = localStorage.getItem('360_driver_name');
-    const dToken = localStorage.getItem('360_driver_token') ?? undefined;
-    if (dId && dName) {
-      setDriverInfo({ id: dId, name: dName, token: dToken });
-      setView('driver');
-    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const s = await restoreSession();
+        if (cancelled || !s) return;
+        if (s.kind === 'staff') await applySession(s.staff);
+        else { setDriverInfo(s.driver); setView('driver'); }
+      } catch (err) {
+        console.error('[restoreSession] error:', err);   // e.g. offline — stay on the login screen
+      } finally {
+        if (!cancelled) setRestoring(false);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [applySession]);
-
-  /* ── Auto-save to server (non-viewer only) ── */
-  const saveTimerRef   = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isMounted      = useRef(false);
-  const isPollUpdate   = useRef(false);   // ← flag: skip auto-save during poll merges
-  const accessTokenRef = useRef<string | null>(null);
-  const [saveError,     setSaveError]     = useState<string | null>(null);
-  const [loginSuccess,  setLoginSuccess]  = useState<string | null>(null);
 
   /* Auto-dismiss login success toast after 3 seconds */
   useEffect(() => {
@@ -163,39 +145,25 @@ export default function App() {
     return () => clearTimeout(t);
   }, [loginSuccess]);
 
-  /* Keep ref in sync so the setTimeout closure always has latest token */
-  useEffect(() => { accessTokenRef.current = accessToken; }, [accessToken]);
-
+  /* ── Save to the database (writers only — admin / CSR). Only changed rows are written. ── */
   const saveToServer = useCallback(async (
-    token: string,
     d: LocalDriver[], t: LocalTruck[],
     a: Assignment[], co: CompletedTask[],
     ca: Assignment[], n: AppNotification[],
     al: AdminActivityEntry[]
   ) => {
+    savingRef.current = true;
     setSavingToDb(true);
     setSaveError(null);
     try {
-      const res = await fetch(`${SERVER}/app-data`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'X-Admin-Token': token,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ drivers: d, trucks: t, assignments: a, completed: co, cancelled: ca, notifications: n, activityLog: al }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        console.error('[saveToServer] error:', err);
-        setSaveError(`Auto-save failed: ${err?.error ?? res.status}. Changes may be lost on refresh.`);
-        setTimeout(() => setSaveError(null), 6000);
-      }
+      await syncAdminData({ drivers: d, trucks: t, assignments: a, completed: co, cancelled: ca, notifications: n, activityLog: al });
     } catch (err) {
-      console.error('[saveToServer] fetch error:', err);
-      setSaveError('Auto-save failed — check your connection.');
+      console.error('[saveToServer] error:', err);
+      const why = err instanceof Error ? err.message : String(err);
+      setSaveError(`Auto-save failed: ${why}. Changes may be lost on refresh.`);
       setTimeout(() => setSaveError(null), 6000);
     } finally {
+      savingRef.current = false;
       setSavingToDb(false);
     }
   }, []);
@@ -204,13 +172,12 @@ export default function App() {
   useEffect(() => {
     if (!isMounted.current) { isMounted.current = true; return; }
     if (isPollUpdate.current) return;                              // ← skip poll updates
-    const token = accessTokenRef.current;
-    if (!token || adminRole === 'viewer' || adminRole === null) return;
+    if (!signedInRef.current || adminRole === 'viewer' || adminRole === null) return;
 
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
-      const t = accessTokenRef.current;
-      if (t) saveToServer(t, drivers, trucks, assignments, completed, cancelled, notifications, activityLog);
+      saveTimerRef.current = null;   // debounce finished — the poll below is allowed to run again
+      saveToServer(drivers, trucks, assignments, completed, cancelled, notifications, activityLog);
     }, 1500);
 
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
@@ -218,49 +185,43 @@ export default function App() {
 
   /* ── Admin real-time poll — refresh data every 12 s ── */
   useEffect(() => {
-    if (!accessToken || adminRole === 'viewer') return;
+    if (!signedIn || adminRole === 'viewer') return;
     const id = setInterval(async () => {
-      /* A local edit is mid-flight (debounced save pending, or the PUT itself
-         still in the air) — local state is already more current than
-         whatever this poll would fetch, so skip this cycle entirely rather
-         than momentarily stomping a just-made change back to its old value. */
-      if (saveTimerRef.current || savingToDb) return;
+      /* A local edit is mid-flight (debounced save pending, or the save itself
+         still running) — local state is already more current than whatever this
+         poll would fetch, so skip this cycle entirely rather than momentarily
+         stomping a just-made change back to its old value. */
+      if (saveTimerRef.current || savingRef.current) return;
       try {
-        const res = await fetch(`${SERVER}/app-data`, {
-          headers: {
-            'Authorization': `Bearer ${publicAnonKey}`,
-            'X-Admin-Token': accessToken,
-          },
-        });
-        if (!res.ok) return;
-        const data = await res.json();
+        const data = await loadAdminData();
+        if (saveTimerRef.current || savingRef.current) return;   // an edit started while we were fetching
         /* Mark as poll update so auto-save doesn't fire */
         isPollUpdate.current = true;
-        setAssignments(data.assignments   ?? []);
-        setNotifications(data.notifications ?? []);
-        setDrivers(data.drivers           ?? []);
-        setTrucks(data.trucks             ?? []);
-        setCompleted(data.completed       ?? []);
-        setCancelled(data.cancelled       ?? []);
-        setActivityLog(data.activityLog   ?? []);
+        setAssignments(data.assignments);
+        setNotifications(data.notifications);
+        setDrivers(data.drivers);
+        setTrucks(data.trucks);
+        setCompleted(data.completed);
+        setCancelled(data.cancelled);
+        setActivityLog(data.activityLog);
         /* Reset flag after React has processed the state updates */
         setTimeout(() => { isPollUpdate.current = false; }, 100);
       } catch { /* ignore poll errors */ }
     }, 12000);
     return () => clearInterval(id);
-  }, [accessToken, adminRole]);
+  }, [signedIn, adminRole]);
 
-  const handleLogout = async () => {
-    localStorage.removeItem('360_admin_token');
-    localStorage.removeItem('360_admin_role');
-    localStorage.removeItem('360_driver_id');
-    localStorage.removeItem('360_driver_name');
-    localStorage.removeItem('360_driver_token');
+  /* Forget who was signed in and go back to the login screen (local state only). */
+  const clearSession = useCallback(() => {
     localStorage.removeItem('360_driver_screen');
     localStorage.removeItem('360_active_nav');
+    signedInRef.current   = false;
+    adminEmailRef.current = null;
+    adminRoleRef.current  = null;
     setAdminRole(null);
     setAdminEmail(null);
-    setAccessToken(null);
+    setAdminIsOm(false);
+    setSignedIn(false);
     setDriverInfo(null);
     setView('login');
     setDrivers([]);
@@ -271,28 +232,32 @@ export default function App() {
     setNotifications([]);
     setActivityLog([]);
     isMounted.current = false;
+  }, []);
+
+  /* Signed out from somewhere else (another tab, or the session expired) → drop back to login. */
+  useEffect(() => {
+    const { data } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT') clearSession();
+    });
+    return () => data.subscription.unsubscribe();
+  }, [clearSession]);
+
+  const handleLogout = async () => {
+    try { await signOut(); } catch { /* still leave the screen even if the network call failed */ }
+    clearSession();
   };
 
-  /* ── Reset all data (drivers, trucks, assignments, etc.) — keeps admin accounts ── */
+  /* ── Reset all data (drivers, trucks, assignments, etc.) — keeps accounts and the activity log ── */
   const handleResetAll = useCallback(async (): Promise<void> => {
-    const token = accessTokenRef.current;
-    if (!token) return;
     try {
-      const res = await fetch(`${SERVER}/reset-data`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'X-Admin-Token': token,
-        },
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err?.error ?? `Server error ${res.status}`);
-      }
+      await resetAllData();
     } catch (err) {
-      console.error('[handleResetAll] server error, clearing local only:', err);
+      console.error('[handleResetAll] error:', err);
+      const why = err instanceof Error ? err.message : String(err);
+      setSaveError(`Reset failed: ${why}`);
+      setTimeout(() => setSaveError(null), 6000);
+      return;   // do NOT empty the screen if the database wasn't actually wiped
     }
-    /* Clear local state regardless of server outcome */
     isPollUpdate.current = true;
     setDrivers([]);
     setTrucks([]);
@@ -304,10 +269,10 @@ export default function App() {
   }, []);
 
   const isViewOnly   = adminRole === 'viewer';
-  const isOperationManager = adminEmail === OM_EMAIL;
+  const isOperationManager = adminIsOm;
 
   /* ── Loading screen ── */
-  if (dataLoading) {
+  if (restoring || dataLoading) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-gradient-to-br from-green-50 to-blue-50">
         <div className="w-10 h-10 border-4 border-[#0d9488] border-t-transparent rounded-full animate-spin" />
@@ -337,15 +302,8 @@ export default function App() {
       {/* ── Main Content ── */}
       {view === 'login' && (
         <LoginScreen
-          drivers={drivers}
-          trucks={trucks}
-          assignments={assignments}
-          onAdminLogin={async (token, role, name) => { await applySession(token, role, true, name); }}
+          onAdminLogin={async (staff) => { await applySession(staff, true); }}
           onDriverLogin={(info) => {
-            localStorage.setItem('360_driver_id',   info.id);
-            localStorage.setItem('360_driver_name', info.name);
-            if (info.token) localStorage.setItem('360_driver_token', info.token);
-            else localStorage.removeItem('360_driver_token');
             setDriverInfo(info);
             setView('driver');
             setLoginSuccess(`Login Successful! Welcome, ${info.name}.`);
@@ -378,15 +336,7 @@ export default function App() {
         <DriverInterface
           driverId={driverInfo?.id ?? ''}
           driverName={driverInfo?.name ?? ''}
-          driverToken={driverInfo?.token ?? ''}
-          onLogout={() => {
-            localStorage.removeItem('360_driver_id');
-            localStorage.removeItem('360_driver_name');
-            localStorage.removeItem('360_driver_token');
-            localStorage.removeItem('360_driver_screen');
-            setDriverInfo(null);
-            setView('login');
-          }}
+          onLogout={handleLogout}
         />
       )}
 
