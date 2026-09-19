@@ -1,0 +1,38 @@
+{
+  /* TypeScript settings for `pnpm typecheck` (tsc --noEmit).
+     Vite/esbuild only STRIPS types when it builds — it never checks them — so this
+     file is what actually verifies the code. It emits nothing; `pnpm build` is
+     still what produces dist/.
+
+     Scope note: only src/ is checked. vite.config.ts is deliberately left out. */
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "useDefineForClassFields": true,
+
+    /* Vite resolves modules like a bundler and never asks tsc to emit files. */
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "noEmit": true,
+
+    "strict": true,
+    "noFallthroughCasesInSwitch": true,
+
+    /* Left off on purpose: the codebase has unused imports and a few variables
+       (showSlider, lastSync, totalForRate, adminRole) that mark unfinished
+       features. Turning these on would report them as errors and invite deleting
+       the evidence. Revisit once those features are finished or dropped. */
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": { "@/*": ["src/*"] }
+  },
+  "include": ["src"]
+}
