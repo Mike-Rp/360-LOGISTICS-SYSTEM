@@ -9,6 +9,30 @@ export const DOCUMENT_TYPES = [
   'Waybill / Delivery Receipt',
 ] as const;
 
+/* ── Reading back a stored timestamp ──────────────────────────────────────────
+   Notification timestamps and `completedAt` are stored as DISPLAY strings such as
+   "Sep 19, 02:30 PM" (see timeLabel() in lib/db.ts). They carry NO year, and
+   JavaScript defaults a missing year to 2001 — so passing one straight to
+   new Date() made the dashboard's Recent activity read "Sep 19, 2001" and the
+   monthly report group under "September 2001".
+
+   This resolves a yearless stamp against the current year, stepping back a year
+   when that would land in the future, so an event from last December read in
+   January dates to last year rather than next year. Strings that already carry a
+   year — a delivery date like "Sep 19, 2026", or an ISO timestamp — are trusted
+   and returned as-is. Returns null when the string cannot be parsed at all. */
+export function parseStoredTimestamp(ts: string): Date | null {
+  if (!ts) return null;
+  const parsed = new Date(ts);
+  if (isNaN(parsed.getTime())) return null;
+  if (/\d{4}/.test(ts)) return parsed;
+  const now = new Date();
+  parsed.setFullYear(now.getFullYear());
+  /* A minute of slack absorbs small clock differences between stamp and now. */
+  if (parsed.getTime() > now.getTime() + 60_000) parsed.setFullYear(now.getFullYear() - 1);
+  return parsed;
+}
+
 export type TaskStatus = 'Assigned' | 'Picked Up' | 'In Transit' | 'Delivered' | 'Failed / Issue' | 'Cancelled';
 export type DocStatus  = 'pending' | 'approved' | 'rejected';
 

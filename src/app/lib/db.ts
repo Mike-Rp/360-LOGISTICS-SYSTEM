@@ -73,7 +73,10 @@ async function fetchAll(table: string, order: Array<[string, boolean]>): Promise
 export interface StaffSession {
   id: string; email: string; name: string; role: AdminRole; isOm: boolean; isDemo: boolean;
 }
-export type LoginErrorCode = 'invalid_credentials' | 'no_access' | 'network';
+/* 'unknown_mobile' is only ever produced for driver logins: it means the number
+   itself is not registered, as opposed to 'invalid_credentials', which by then
+   means the number exists but the PIN is wrong. */
+export type LoginErrorCode = 'invalid_credentials' | 'no_access' | 'network' | 'unknown_mobile';
 export class LoginError extends Error {
   code: LoginErrorCode;
   constructor(code: LoginErrorCode) { super(code); this.code = code; }
@@ -114,8 +117,31 @@ export async function signInStaff(email: string, password: string): Promise<Staf
     await supabase.auth.signOut();          // valid login but not a staff account (e.g. a driver, or removed)
     throw new LoginError('no_access');
   }
-  void supabase.rpc('touch_last_active');
+  /* Fire-and-forget: stamping "last active" must never block or fail a login.
+     The .catch() is required — without it a rejection here surfaces as an
+     unhandled promise rejection instead of a log line. */
+  /* Two-argument .then, not .catch(): rpc() returns a PostgrestFilterBuilder, which is a
+     thenable without a .catch method. The first handler covers a returned error, the
+     second an outright rejection (e.g. the network dropped). */
+  void supabase.rpc('touch_last_active').then(
+    ({ error }) => { if (error) console.warn('[touch_last_active] could not stamp last-active time:', error); },
+    (err: unknown) => { console.warn('[touch_last_active] request failed:', err); },
+  );
   return toStaff(profile);
+}
+
+/* Is this mobile number registered to a driver? Backed by the SECURITY DEFINER function
+   public.driver_mobile_exists(), because the browser cannot read public.drivers before
+   signing in. Returns only true/false — see the migration for the trade-off this carries.
+   On any failure it returns null, meaning "could not tell", so the caller falls back to
+   the combined error message rather than claiming a number is unregistered. */
+async function driverMobileExists(phone: string): Promise<boolean | null> {
+  const { data, error } = await supabase.rpc('driver_mobile_exists', { p_phone: phone });
+  if (error) {
+    console.warn('[driver_mobile_exists] lookup failed, falling back to generic error:', error);
+    return null;
+  }
+  return data === true;
 }
 
 /* mobile10 = the 10 digits after +63, e.g. "9171234567" */
@@ -123,7 +149,16 @@ export async function signInDriver(mobile10: string, pin: string): Promise<{ id:
   const { data, error } = await supabase.auth.signInWithPassword({
     email: driverLoginEmail('+63' + mobile10), password: driverLoginPassword(pin),
   });
-  if (error || !data.user) throw loginFailure(error ?? {});
+  if (error || !data.user) {
+    const failure = loginFailure(error ?? {});
+    /* Only worth asking on a credential rejection — a network failure tells us nothing
+       about whether the number exists, and this lookup runs only after a failed attempt
+       so a successful login never triggers it. */
+    if (failure.code === 'invalid_credentials' && await driverMobileExists('+63' + mobile10) === false) {
+      throw new LoginError('unknown_mobile');
+    }
+    throw failure;
+  }
   let driver: { id: string; name: string } | null;
   try { driver = await fetchOwnDriver(data.user.id); }
   catch { await supabase.auth.signOut(); throw new LoginError('network'); }

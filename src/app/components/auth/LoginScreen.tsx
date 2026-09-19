@@ -27,7 +27,9 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
   /* ── Driver form ── */
   const [mobile,        setMobile]        = useState('');
   const [pin,           setPin]           = useState(['', '', '', '']);
-  const [driverError,   setDriverError]   = useState<{ type: 'mobile' | 'pin' | 'general'; msg: string } | null>(null);
+  /* 'mobile_and_pin' marks BOTH fields — used when the number itself is not registered,
+   so neither the number nor whatever PIN was typed can be the right one. */
+  const [driverError,   setDriverError]   = useState<{ type: 'mobile' | 'pin' | 'mobile_and_pin' | 'general'; msg: string } | null>(null);
   const [driverLoading, setDriverLoading] = useState(false);
 
   const pinRefs = [
@@ -92,15 +94,22 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
     setDriverLoading(true);
     setDriverError(null);
 
-    /* Supabase Auth checks the mobile + PIN and answers only "valid" or "invalid" — it never says
-       which of the two was wrong (so nobody can probe which mobile numbers are registered).
+    /* Supabase Auth itself answers only "valid" or "invalid". When it rejects an attempt,
+       signInDriver additionally asks the database whether the number is registered, so the
+       two cases can be told apart:
+         unknown_mobile      -> number not registered   -> flag BOTH fields
+         invalid_credentials -> number exists, PIN wrong -> flag the PIN field only
+       If that lookup cannot run it stays invalid_credentials, and the PIN message is shown
+       rather than wrongly claiming the number is unregistered.
        There is no offline fallback any more: driver data is private until you are signed in. */
     try {
       const driver = await signInDriver(mobile, fullPin);
       onDriverLogin(driver);
     } catch (e) {
+      console.error('[signInDriver] error:', e);
       const code = e instanceof LoginError ? e.code : 'network';
-      if (code === 'invalid_credentials') setDriverError({ type: 'general', msg: 'Incorrect mobile number or PIN. Contact your admin if you forgot your PIN.' });
+      if (code === 'unknown_mobile')      setDriverError({ type: 'mobile_and_pin', msg: 'This mobile number is not registered.' });
+      else if (code === 'invalid_credentials') setDriverError({ type: 'pin', msg: 'Incorrect PIN. Contact your admin if you forgot your PIN.' });
       else if (code === 'no_access')      setDriverError({ type: 'general', msg: 'This is not a driver account. Use Admin Login instead.' });
       else                                setDriverError({ type: 'general', msg: 'Unable to reach the server. Check your internet connection.' });
     } finally {
@@ -121,6 +130,7 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
       const session = await signInStaff(inputEmail, inputPass);
       await onAdminLogin(session);
     } catch (e) {
+      console.error('[signInStaff] error:', e);
       const code = e instanceof LoginError ? e.code : 'network';
       if (code === 'invalid_credentials') setAdminError('Invalid email or password.');
       else if (code === 'no_access')      setAdminError('This account does not have access to the admin portal. Contact the Operation Manager.');
@@ -154,7 +164,7 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
                 <div className="space-y-2.5">
                   <label className="text-base font-semibold text-foreground block">Mobile Number</label>
                   <div className={`flex items-center rounded-2xl border overflow-hidden focus-within:ring-2 focus-within:ring-primary/30 transition-all ${
-                    driverError?.type === 'mobile' ? 'border-red-400 bg-red-50' : 'border-[#e5e7eb] bg-[#f9fafb]'
+                    driverError?.type === 'mobile' || driverError?.type === 'mobile_and_pin' ? 'border-red-400 bg-red-50' : 'border-[#e5e7eb] bg-[#f9fafb]'
                   }`}>
                     {/* Country prefix badge */}
                     <span className="px-4 py-4 bg-gray-100 border-r border-[#e5e7eb] text-base font-bold text-foreground select-none whitespace-nowrap flex-shrink-0">
@@ -180,7 +190,7 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
                   </div>
                 </div>
 
-                {driverError?.type === 'mobile' && (
+                {(driverError?.type === 'mobile' || driverError?.type === 'mobile_and_pin') && (
                   <ErrorBanner icon={Phone} title="Mobile Number Not Found" sub={driverError.msg} />
                 )}
 
@@ -194,7 +204,7 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
                         onChange={(e) => handlePin(i, e.target.value)}
                         onKeyDown={(e) => handlePinKey(i, e)}
                         className={`w-[64px] h-[60px] text-center text-2xl font-bold border-0 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all ${
-                          driverError?.type === 'pin'
+                          driverError?.type === 'pin' || driverError?.type === 'mobile_and_pin'
                             ? 'bg-red-100 ring-2 ring-red-300'
                             : digit ? 'bg-primary/20 text-primary' : 'bg-[#e5e7eb]'
                         }`}

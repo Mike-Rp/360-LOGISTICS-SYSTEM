@@ -99,7 +99,8 @@ function AddMemberModal({ onClose, onAdded }: {
       setCreated(member);
       onAdded(member);
     } catch (e) {
-      setError(e instanceof Error && e.message ? e.message : 'Could not add this member.');
+      console.error('[createTeamMember] error:', e);
+      setError(e instanceof Error && e.message ? e.message : 'Something went wrong, please try again.');
     } finally {
       setSubmitting(false);
     }
@@ -264,6 +265,9 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
   const [members,     setMembers]     = useState<TeamMember[]>([]);
   const [loading,     setLoading]     = useState(false);
   const [loadError,   setLoadError]   = useState('');
+  /* Separate from loadError: that one REPLACES the member list, which would hide
+     the very list this message refers to. This sits above it instead. */
+  const [actionError, setActionError] = useState('');
   const [showAddMember,  setShowAddMember]  = useState(false);
   const [removeTarget, setRemoveTarget] = useState<TeamMember | null>(null);
   const [removing,    setRemoving]    = useState(false);
@@ -274,8 +278,9 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
     setLoadError('');
     try {
       setMembers(await listTeamMembers());
-    } catch {
-      setLoadError('Could not load team members.');
+    } catch (e) {
+      console.error('[listTeamMembers] error:', e);
+      setLoadError('Could not load team members. Something went wrong, please try again.');
     } finally {
       setLoading(false);
     }
@@ -299,12 +304,16 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
   const handleRemove = async () => {
     if (!removeTarget) return;
     setRemoving(true);
+    setActionError('');
     try {
       await removeTeamMember(removeTarget.id);   // deletes their login; their access ends immediately
       setMembers((p) => p.filter((m) => m.id !== removeTarget.id));
       onLogActivity({ type: 'member_removed', adminEmail: adminEmail ?? undefined, memberName: removeTarget.name, memberEmail: removeTarget.email });
     } catch (e) {
       console.error('[removeTeamMember] error:', e);
+      /* The dialog closes either way (see finally), so without this the removal
+         looked like it worked and the member reappeared on the next load. */
+      setActionError(`Could not remove ${removeTarget.name}. Something went wrong, please try again.`);
     } finally {
       setRemoving(false);
       setRemoveTarget(null);
@@ -365,6 +374,10 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
                 <UserPlus className="w-3.5 h-3.5" /> Add Team Member
               </button>
             </div>
+
+            {actionError && (
+              <p className="text-sm text-red-500 mb-2">{actionError}</p>
+            )}
 
             {loading ? (
               <p className="text-sm text-muted-foreground text-center py-6">Loading…</p>

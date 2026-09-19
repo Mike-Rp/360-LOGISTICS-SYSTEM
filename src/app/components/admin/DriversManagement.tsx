@@ -1142,8 +1142,14 @@ export default function DriversManagement({
     }
 
     /* ── ETA must not precede pickup — both are zero-padded 24-hour "HH:MM",
-       so a plain string compare orders them correctly. ── */
-    if (taskPickupTime && taskEta && !e.eta && taskEta < taskPickupTime)
+       so a plain string compare orders them correctly.
+
+       This only applies when pickup and delivery fall on the SAME day. Across
+       different days the comparison is meaningless: a pickup at 14:00 on the 19th
+       and an arrival at 08:00 on the 21st is perfectly valid, but a raw time
+       compare would reject it. Same-day behaviour is unchanged. ── */
+    const sameDay = !!taskPickedUpDate && !!taskDate && taskPickedUpDate === taskDate;
+    if (sameDay && taskPickupTime && taskEta && !e.eta && taskEta < taskPickupTime)
       e.eta = 'ETA cannot be earlier than the pick up time.';
 
     if (Object.keys(e).length) { setTaskErrors(e); return; }
@@ -1612,24 +1618,14 @@ export default function DriversManagement({
               <SectionHeader>Schedule</SectionHeader>
 
               <div className="space-y-4">
-                {/* Dates — the two pickers bound each other live. ISO "YYYY-MM-DD"
-                    sorts lexicographically, so plain string compares work here. */}
+                {/* Row 1 — pickup. The two date pickers still bound each other live via
+                    minIso/maxIso; ISO "YYYY-MM-DD" sorts lexicographically, so plain
+                    string compares work here. */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <FieldLabel required>Delivery Date</FieldLabel>
-                    <DateField value={taskDate}
-                      onChange={(v) => { setTaskDate(v); setTaskErrors((p) => ({ ...p, date: '' })); }}
-                      hasError={!!taskErrors.date}
-                      minIso={taskPickedUpDate && taskPickedUpDate > todayIso() ? taskPickedUpDate : todayIso()}
-                    />
-                    {taskErrors.date
-                      ? <p className="text-xs text-red-500 mt-1">{taskErrors.date}</p>
-                      : <p className="text-[11px] text-muted-foreground mt-1.5">Target delivery date</p>}
-                  </div>
                   <div>
                     <FieldLabel required>Picked Up Date</FieldLabel>
                     <DateField value={taskPickedUpDate}
-                      onChange={(v) => { setTaskPickedUpDate(v); setTaskErrors((p) => ({ ...p, pickedUpDate: '' })); }}
+                      onChange={(v) => { setTaskPickedUpDate(v); setTaskErrors((p) => ({ ...p, pickedUpDate: '', eta: '' })); }}
                       hasError={!!taskErrors.pickedUpDate}
                       minIso={todayIso()}
                       maxIso={taskDate || undefined}
@@ -1638,10 +1634,6 @@ export default function DriversManagement({
                       ? <p className="text-xs text-red-500 mt-1">{taskErrors.pickedUpDate}</p>
                       : <p className="text-[11px] text-muted-foreground mt-1.5">Planned pickup date</p>}
                   </div>
-                </div>
-
-                {/* Times */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <FieldLabel required>Pick Up Time</FieldLabel>
                     <TimeField value={taskPickupTime}
@@ -1650,6 +1642,21 @@ export default function DriversManagement({
                       hasError={!!taskErrors.pickupTime}
                     />
                     {taskErrors.pickupTime && <p className="text-xs text-red-500 mt-1">{taskErrors.pickupTime}</p>}
+                  </div>
+                </div>
+
+                {/* Row 2 — delivery */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <FieldLabel required>Delivery Date</FieldLabel>
+                    <DateField value={taskDate}
+                      onChange={(v) => { setTaskDate(v); setTaskErrors((p) => ({ ...p, date: '', eta: '' })); }}
+                      hasError={!!taskErrors.date}
+                      minIso={taskPickedUpDate && taskPickedUpDate > todayIso() ? taskPickedUpDate : todayIso()}
+                    />
+                    {taskErrors.date
+                      ? <p className="text-xs text-red-500 mt-1">{taskErrors.date}</p>
+                      : <p className="text-[11px] text-muted-foreground mt-1.5">Target delivery date</p>}
                   </div>
                   <div>
                     <FieldLabel required>ETA</FieldLabel>
@@ -1693,6 +1700,7 @@ export default function DriversManagement({
       {quickAdd === 'driver' && (
         <RegisterDriverModal
           layer
+          drivers={drivers}
           setDrivers={setDrivers}
           onClose={() => setQuickAdd(null)}
           onCreated={(d) => setTaskDriverId(d.id)}

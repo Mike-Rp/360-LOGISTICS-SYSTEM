@@ -52,10 +52,22 @@ const DELIVERY_DELAY_REASONS = ['Heavy traffic','Wrong address / rerouting','Cus
 const ISSUE_REASONS          = ['Cargo damaged in transit','Wrong delivery address','Customer refused delivery','Vehicle breakdown','Cargo lost or missing','Accident / road incident','Other...'];
 
 /* ── Mock data ── */
+/* Demo-preview dates are derived from the current date rather than written in.
+   Fixed dates like "2026-04-25" go stale the moment the year turns over and make
+   the preview look broken, so these stay relative to whenever it is run. Formats
+   match what real data uses: ISO for deliveryDate, a display stamp for completedAt. */
+const daysAgoIso = (days: number) =>
+  new Date(Date.now() - days * 86_400_000).toISOString().split('T')[0];
+const daysAgoStamp = (days: number, hour: number, minute: number) => {
+  const d = new Date(Date.now() - days * 86_400_000);
+  d.setHours(hour, minute, 0, 0);
+  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+};
+
 const MOCK_DATA: DriverData = {
   driver: { id: 'DRIVER-PREVIEW', name: 'Preview Driver', phone: '+1 555-0100', status: 'Active', currentLocation: 'Warehouse A' },
   assignment: {
-    id: 'DEL-2026-0042', truckPlate: 'TRK-8847',
+    id: 'DEL-PREVIEW-0042', truckPlate: 'TRK-8847',
     destination: 'Industrial Compressor Units × 3', company: 'Apex Manufacturing Ltd.',
     pickupLocation: 'Warehouse A — Bay 4, Industrial Park Rd.',
     deliveryDate: new Date(Date.now() + 86_400_000).toISOString().split('T')[0],
@@ -64,8 +76,8 @@ const MOCK_DATA: DriverData = {
     taskStatus: 'In Transit' as TaskStatus, delayReports: [], statusPhotos: {}, documents: [],
   } as unknown as Assignment,
   completedHistory: [
-    { id: 'DEL-2026-0038', destination: 'Office Furniture Set', company: 'TechCorp Solutions', deliveryDate: '2026-04-25', completedAt: 'Apr 25, 11:42 AM', truckPlate: 'TRK-8847', taskStatus: 'Delivered' },
-    { id: 'DEL-2026-0031', destination: 'Medical Supplies × 50 boxes', company: 'City Hospital Group', deliveryDate: '2026-04-20', completedAt: 'Apr 20, 03:15 PM', truckPlate: 'TRK-8847', taskStatus: 'Delivered' },
+    { id: 'DEL-PREVIEW-0038', destination: 'Office Furniture Set', company: 'TechCorp Solutions', deliveryDate: daysAgoIso(5),  completedAt: daysAgoStamp(5, 11, 42),  truckPlate: 'TRK-8847', taskStatus: 'Delivered' },
+    { id: 'DEL-PREVIEW-0031', destination: 'Medical Supplies × 50 boxes', company: 'City Hospital Group', deliveryDate: daysAgoIso(10), completedAt: daysAgoStamp(10, 15, 15), truckPlate: 'TRK-8847', taskStatus: 'Delivered' },
   ],
 };
 
@@ -666,6 +678,9 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
   const [lastSync, setLastSync] = useState<Date | null>(null);
   const [syncing,  setSyncing]  = useState(false);
   const [updating, setUpdating] = useState(false);
+  /* Shown when a write failed. Separate from `online`: the "Offline" banner says the
+     connection dropped, this says a specific change of theirs did not save. */
+  const [actionError, setActionError] = useState('');
 
   /* ── Screen state: 'dashboard' or 'task' ── */
   /* Persisted the same way admin's activeNav is — otherwise a refresh while
@@ -702,7 +717,8 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
       /* Reads only this driver's own rows — the database's row-level security enforces that. */
       const json = await loadDriverData(driverId);
       setData(json); setOnline(true); setLastSync(new Date());
-    } catch {
+    } catch (err) {
+      console.error('[loadDriverData] error:', err);
       /* Do NOT auto-fill fake demo data here — leave `data` untouched so a
          first-load failure correctly falls through to the "No Connection"
          screen (which offers demo data only as an explicit, labeled choice),
@@ -731,7 +747,15 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
          files (an approved document can't be re-approved or flipped by the driver). */
       await driverUpdate(driverName, a.id, updates, notif);
       await fetchData(true);
-    } catch { setOnline(false); }
+      setActionError('');
+    } catch (err) {
+      console.error('[driverUpdate] error:', err);
+      setOnline(false);
+      /* Note: the optimistic update above is deliberately NOT rolled back here —
+         changing that mid-delivery is a behaviour decision, not error handling.
+         So the driver must be told the change did not reach the server. */
+      setActionError('Something went wrong, please try again. Your last change was not saved.');
+    }
     finally { setUpdating(false); }
   };
 
@@ -923,6 +947,20 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
     );
   }
 
+  /* ── Shared failed-write banner ── rendered on both screens, like LogoutDialog below.
+     Tap to dismiss; also clears by itself as soon as a write succeeds. */
+  const ActionErrorBanner = actionError && (
+    <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[60] w-[92%] max-w-sm">
+      <button
+        onClick={() => setActionError('')}
+        className="w-full bg-red-600 text-white text-sm font-semibold px-4 py-3 rounded-2xl shadow-lg flex items-start gap-2 text-left"
+      >
+        <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+        <span className="flex-1">{actionError}</span>
+      </button>
+    </div>
+  );
+
   /* ── Shared logout dialog ── */
   const LogoutDialog = logoutDlg && (
     <div className="fixed inset-0 z-50 flex items-end">
@@ -1096,6 +1134,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
           )}
         </div>
 
+        {ActionErrorBanner}
         {LogoutDialog}
       </div>
     );
@@ -1364,6 +1403,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
           onCancel={() => setIssueSheet(false)}
         />
       )}
+      {ActionErrorBanner}
       {LogoutDialog}
     </div>
   );

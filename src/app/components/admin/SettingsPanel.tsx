@@ -109,6 +109,7 @@ export default function SettingsPanel({ open, onClose, notifEnabled, setNotifEna
       setPassSaved(true);
       setTimeout(() => setPassSaved(false), 3000);
     } catch (e) {
+      console.error('[changeOwnPassword] error:', e);
       const code = e instanceof PasswordError ? e.code : 'network';
       setPassError(
         code === 'wrong_current'  ? 'Your current password is incorrect.' :

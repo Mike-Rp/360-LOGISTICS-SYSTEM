@@ -56,6 +56,7 @@ export default function App() {
   const adminEmailRef  = useRef<string | null>(null);
   const adminRoleRef   = useRef<AdminRole | null>(null);
   const [saveError,     setSaveError]     = useState<string | null>(null);
+  const [loadError,     setLoadError]     = useState<string | null>(null);
   const [loginSuccess,  setLoginSuccess]  = useState<string | null>(null);
 
   /* ── Admin activity logging — auto-tags the signed-in account. (The database also stamps the
@@ -74,6 +75,7 @@ export default function App() {
   /* ── Load data from the database (all tables the signed-in user is allowed to see) ── */
   const loadData = useCallback(async () => {
     setDataLoading(true);
+    setLoadError(null);
     isPollUpdate.current = true; // block auto-save while loading
     try {
       const data = await loadAdminData();
@@ -87,6 +89,8 @@ export default function App() {
     } catch (err) {
       console.error('[loadData] error:', err);
       // do NOT clear state on error — leave whatever is already in memory
+      /* Without this the screen just rendered empty or stale with no explanation. */
+      setLoadError('Could not load your data. Something went wrong, please try again.');
     } finally {
       setDataLoading(false);
       setTimeout(() => { isPollUpdate.current = false; }, 200);
@@ -197,6 +201,7 @@ export default function App() {
         if (saveTimerRef.current || savingRef.current) return;   // an edit started while we were fetching
         /* Mark as poll update so auto-save doesn't fire */
         isPollUpdate.current = true;
+        setLoadError(null);        // a good poll means the connection recovered
         setAssignments(data.assignments);
         setNotifications(data.notifications);
         setDrivers(data.drivers);
@@ -206,7 +211,12 @@ export default function App() {
         setActivityLog(data.activityLog);
         /* Reset flag after React has processed the state updates */
         setTimeout(() => { isPollUpdate.current = false; }, 100);
-      } catch { /* ignore poll errors */ }
+      } catch (err) {
+        /* A failed poll is not shown to the user on purpose — the screen keeps the
+           last good data and the next tick retries 12 s later. It is logged, though:
+           silently swallowing it hid real outages during debugging. */
+        console.warn('[poll] refresh failed, keeping last loaded data:', err);
+      }
     }, 12000);
     return () => clearInterval(id);
   }, [signedIn, adminRole]);
@@ -256,7 +266,10 @@ export default function App() {
       const why = err instanceof Error ? err.message : String(err);
       setSaveError(`Reset failed: ${why}`);
       setTimeout(() => setSaveError(null), 6000);
-      return;   // do NOT empty the screen if the database wasn't actually wiped
+      /* Re-thrown rather than swallowed: AccountsPanel awaits this call, and if it
+         returns normally the dialog reports "Reset complete" on a reset that failed.
+         The screen is still NOT emptied — the database wasn't actually wiped. */
+      throw err;
     }
     isPollUpdate.current = true;
     setDrivers([]);
@@ -296,6 +309,19 @@ export default function App() {
       {saveError && (
         <div className="fixed top-16 left-1/2 -translate-x-1/2 z-[100] bg-red-600 text-white text-xs font-medium px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2 max-w-sm text-center animate-in fade-in slide-in-from-top-2 duration-200">
           <span>⚠️</span> {saveError}
+        </div>
+      )}
+
+      {/* ── Load-error banner — stays until a later load or poll succeeds ── */}
+      {loadError && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-[100] bg-red-600 text-white text-xs font-medium px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2 max-w-sm text-center animate-in fade-in slide-in-from-top-2 duration-200">
+          <span>⚠️</span> {loadError}
+          <button
+            onClick={() => { setLoadError(null); void loadData(); }}
+            className="underline font-semibold whitespace-nowrap"
+          >
+            Retry
+          </button>
         </div>
       )}
 

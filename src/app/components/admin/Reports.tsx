@@ -5,6 +5,7 @@ import {
   User, MapPin, Building2, Timer, AlarmClock,
 } from 'lucide-react';
 import type { Assignment, CompletedTask, DelayReport } from '../../data/assignmentTypes';
+import { parseStoredTimestamp } from '../../data/assignmentTypes';
 
 /* ─── Types ───────────────────────────────────────── */
 interface WeeklyRow {
@@ -105,8 +106,11 @@ function buildMonthlyRows(completed: CompletedTask[]): MonthlyRow[] {
   // Group by calendar month
   const byMonth: Record<string, CompletedTask[]> = {};
   for (const c of completed) {
-    const key = c.completedAt
-      ? new Date(c.completedAt).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+    /* This heading prints the year, so a yearless completedAt used to group every
+       month under "September 2001". */
+    const parsed = c.completedAt ? parseStoredTimestamp(c.completedAt) : null;
+    const key = parsed
+      ? parsed.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
       : 'Unknown';
     if (!byMonth[key]) byMonth[key] = [];
     byMonth[key].push(c);

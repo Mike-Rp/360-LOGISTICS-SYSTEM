@@ -37,7 +37,7 @@ interface Props {
   isViewOnly: boolean;
   adminRole: AdminRole | null;
   savingToDb: boolean;
-  onResetAll: () => void;
+  onResetAll: () => Promise<void>;   // AccountsPanel awaits this
   isOperationManager: boolean;
   adminEmail: string | null;
 }
@@ -113,6 +113,7 @@ export default function AdminDashboard({
           <AccountsPanel
             drivers={drivers}   setDrivers={setDrivers}
             trucks={trucks}     setTrucks={setTrucks}
+            assignments={assignments}
             isViewOnly={isViewOnly}
             onResetAll={onResetAll}
             adminRole={adminRole}

@@ -3,6 +3,7 @@ import {
   Activity, FileText, Truck, AlertTriangle, AlertCircle, CheckCircle, Clock,
 } from 'lucide-react';
 import type { Assignment, CompletedTask, AppNotification } from '../../data/assignmentTypes';
+import { parseStoredTimestamp } from '../../data/assignmentTypes';
 
 /* Placeholder Mon–Sun breakdown — not yet computed from real assignment data. */
 const weeklyDeliveryData = [
@@ -161,14 +162,17 @@ function buildFleetEvents(
     }));
 
   return [...notifEvents, ...completionEvents]
-    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    .sort((a, b) => (parseStoredTimestamp(b.timestamp)?.getTime() ?? 0) - (parseStoredTimestamp(a.timestamp)?.getTime() ?? 0))
     .slice(0, 9);
 }
 
 function fmtRelative(ts: string): string {
   try {
-    const parsed = new Date(ts);
-    if (isNaN(parsed.getTime())) return ts;
+    /* Yearless stamps used to resolve to 2001, which put every event ~25 years in
+       the past — so the branches below always fell through to the absolute date
+       and printed "Sep 19, 2001" instead of a relative time. */
+    const parsed = parseStoredTimestamp(ts);
+    if (!parsed) return ts;
     const diff  = Date.now() - parsed.getTime();
     if (diff < 0) return 'just now';
     const mins  = Math.floor(diff / 60000);

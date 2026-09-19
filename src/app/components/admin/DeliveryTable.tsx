@@ -9,6 +9,8 @@ interface DeliveryTableProps {
   fullView?: boolean;
   completed?: CompletedTask[];
   assignments?: Assignment[];
+  /* Cancelled assignments — shown under the "Cancelled" tab. */
+  cancelled?: Assignment[];
 }
 
 function StatusBadge({ status }: { status: TaskStatus }) {
@@ -129,13 +131,14 @@ export default function DeliveryTable({
   fullView = false,
   completed = [],
   assignments = [],
+  cancelled = [],
 }: DeliveryTableProps) {
 
   if (!fullView) {
     return <RecentActivities assignments={assignments} completed={completed} />;
   }
 
-  const [tab, setTab]       = useState<'active' | 'completed'>('active');
+  const [tab, setTab]       = useState<'active' | 'completed' | 'cancelled'>('active');
   const [period, setPeriod] = useState<FilterPeriod>('all');
   const [search, setSearch] = useState('');
 
@@ -151,6 +154,14 @@ export default function DeliveryTable({
   const filteredDone = completed
     .filter((c) => matchesPeriod(c.deliveryDate, period))
     .filter((c) => matchesSearch([c.truckPlate, c.id, c.driverName, c.destination, c.company]));
+
+  const filteredCancelled = cancelled
+    .filter((a) => matchesPeriod(a.deliveryDate, period))
+    .filter((a) => matchesSearch([a.truckPlate, a.id, a.driverName, a.destination, a.company, a.taskStatus]));
+
+  /* Cancelled rows are plain Assignment objects, exactly like active ones, so both tabs
+     render through the same table/card markup below instead of a duplicated copy. */
+  const listRows = tab === 'cancelled' ? filteredCancelled : filteredActive;
 
   return (
     <div className="bg-white rounded-xl border border-border shadow-sm overflow-hidden">
@@ -194,6 +205,13 @@ export default function DeliveryTable({
                   <span className={`text-xs rounded-full px-1.5 py-0.5 min-w-[20px] text-center ${tab === 'completed' ? 'bg-green-500 text-white' : 'bg-muted text-muted-foreground'}`}>{completed.length}</span>
                 )}
               </button>
+              <button onClick={() => setTab('cancelled')}
+                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-1.5 ${tab === 'cancelled' ? 'bg-white shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+                Cancelled
+                {cancelled.length > 0 && (
+                  <span className={`text-xs rounded-full px-1.5 py-0.5 min-w-[20px] text-center ${tab === 'cancelled' ? 'bg-gray-500 text-white' : 'bg-muted text-muted-foreground'}`}>{cancelled.length}</span>
+                )}
+              </button>
             </div>
 
             {/* Filter */}
@@ -212,24 +230,29 @@ export default function DeliveryTable({
         {/* Search result count */}
         {q && (
           <p className="text-xs text-muted-foreground mt-2">
-            {tab === 'active' ? filteredActive.length : filteredDone.length} result{(tab === 'active' ? filteredActive.length : filteredDone.length) !== 1 ? 's' : ''} for <span className="font-semibold text-foreground">"{search}"</span>
+            {tab === 'completed' ? filteredDone.length : listRows.length} result{(tab === 'completed' ? filteredDone.length : listRows.length) !== 1 ? 's' : ''} for <span className="font-semibold text-foreground">"{search}"</span>
           </p>
         )}
       </div>
 
-      {/* ── Active Assignments ── */}
-      {tab === 'active' && (
+      {/* ── Active / Cancelled Assignments (same row shape) ── */}
+      {tab !== 'completed' && (
         <>
-          {filteredActive.length === 0 ? (
+          {listRows.length === 0 ? (
             <div className="py-16 text-center">
               <Package className="w-12 h-12 mx-auto mb-3 text-muted-foreground/30" />
               <p className="font-medium text-foreground">
                 {q
                   ? 'No results for "' + search + '"'
-                  : 'No active assignments' + (period !== 'all' ? ' for ' + PERIOD_LABELS[period].toLowerCase() : '')}
+                  : (tab === 'cancelled' ? 'No cancelled deliveries' : 'No active assignments')
+                    + (period !== 'all' ? ' for ' + PERIOD_LABELS[period].toLowerCase() : '')}
               </p>
               <p className="text-sm text-muted-foreground mt-1">
-                {q ? 'Try a different search term.' : 'Assign tasks from Drivers Management to see them here.'}
+                {q
+                  ? 'Try a different search term.'
+                  : tab === 'cancelled'
+                    ? 'Assignments cancelled from Monitor will appear here.'
+                    : 'Assign tasks from Drivers Management to see them here.'}
               </p>
             </div>
           ) : (
@@ -245,7 +268,7 @@ export default function DeliveryTable({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {filteredActive.map((a) => (
+                    {listRows.map((a) => (
                       <tr key={a.id} className={"hover:bg-accent/50 transition-colors" + (q ? " bg-yellow-50/30" : "")}>
                         <td className="px-5 py-4">
                           <div className="flex items-center gap-2">
@@ -286,7 +309,7 @@ export default function DeliveryTable({
 
               {/* Mobile card list */}
               <div className="sm:hidden divide-y divide-border">
-                {filteredActive.map((a) => (
+                {listRows.map((a) => (
                   <div key={a.id} className={`p-4 space-y-2.5 ${q ? 'bg-yellow-50/30' : ''}`}>
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex items-center gap-2 min-w-0">

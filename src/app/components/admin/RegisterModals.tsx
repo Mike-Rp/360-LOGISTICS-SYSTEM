@@ -4,9 +4,39 @@ import {
   Package, Weight, Check, ChevronDown, ClipboardList,
 } from 'lucide-react';
 import type { LocalDriver, LocalTruck } from '../../data/assignmentTypes';
+import { normaliseMobile } from '../../lib/db';
 
 /* ── Helpers ── */
 const generatePin = () => String(Math.floor(1000 + Math.random() * 9000));
+
+/* ── Duplicate-account detection ──────────────────────────────────────────────
+   Phones are compared through normaliseMobile (the same rule db.ts and the SQL
+   normalise_mobile() use), so "+639171234567" and "09171234567" are recognised as
+   the same number rather than slipping through as two accounts. A duplicate phone
+   matters beyond tidiness: the driver's Auth login email is derived from it, so a
+   second account with the same number fails at sync_driver_login and leaves a
+   driver row behind with no login.
+
+   `excludeId` exists so an edit screen can ignore the record being edited. No edit
+   screen exists today; this keeps the check correct for whenever one is added. */
+export function findDuplicateDriver(
+  drivers: LocalDriver[],
+  candidate: { phone?: string; name?: string; excludeId?: string },
+): { field: 'phone' | 'name'; message: string } | null {
+  const others = drivers.filter((d) => d.id !== candidate.excludeId);
+
+  const phone = normaliseMobile(candidate.phone ?? '');
+  if (phone && others.some((d) => normaliseMobile(d.phone) === phone)) {
+    return { field: 'phone', message: 'This mobile number is already in use.' };
+  }
+
+  const name = (candidate.name ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  if (name && others.some((d) => d.name.trim().toLowerCase().replace(/\s+/g, ' ') === name)) {
+    return { field: 'name', message: 'A driver with this name already exists.' };
+  }
+
+  return null;
+}
 
 /* ── Truck Classification & Capacity Options ── */
 export const TRUCK_CLASSIFICATIONS = [
@@ -56,7 +86,9 @@ function ModalShell({ title, onClose, layer = false, children, footer }: {
 /* ═══════════════════════════════════════════════════════
    Register Driver Modal
    ═══════════════════════════════════════════════════════ */
-export function RegisterDriverModal({ setDrivers, onClose, onCreated, layer = false }: {
+export function RegisterDriverModal({ drivers = [], setDrivers, onClose, onCreated, layer = false }: {
+  /* Existing drivers, used only to reject duplicates before saving. */
+  drivers?: LocalDriver[];
   setDrivers: React.Dispatch<React.SetStateAction<LocalDriver[]>>;
   onClose: () => void;
   /* Fired once the driver row exists — lets the caller auto-select it */
@@ -71,16 +103,52 @@ export function RegisterDriverModal({ setDrivers, onClose, onCreated, layer = fa
   const [nameError,    setNameError]    = useState('');
   const [registered,   setRegistered]   = useState(false);
 
-  const handleGeneratePin = () => {
-    if (!surname.trim() || !firstName.trim()) { setNameError('Both surname and first name are required.'); return; }
-    if (phoneNumber.replace(/\D/g, '').length !== 10) { setPhoneError('Enter a valid 10-digit mobile number.'); return; }
+  /* Full name as it will be stored, so the duplicate check compares like with like. */
+  const fullName = () => `${firstName.trim()} ${surname.trim()}`;
+  const fullPhone = () => `+63${phoneNumber.replace(/\D/g, '')}`;
+
+  /* Shared by the blur handlers and by submit, so the same rules apply either way. */
+  const validateDriver = (): boolean => {
+    if (!surname.trim() || !firstName.trim()) { setNameError('Both surname and first name are required.'); return false; }
+    const digits = phoneNumber.replace(/\D/g, '');
+    if (digits.length !== 10) { setPhoneError('Enter a valid 10-digit mobile number.'); return false; }
+    /* The login screen only accepts numbers starting with 9, so without this a driver
+       could be registered who is permanently unable to sign in. */
+    if (!digits.startsWith('9')) { setPhoneError('Mobile number must start with 9 (e.g. 9XX XXX XXXX).'); return false; }
+
+    const dup = findDuplicateDriver(drivers, { phone: fullPhone(), name: fullName() });
+    if (dup) {
+      if (dup.field === 'phone') setPhoneError(dup.message);
+      else                       setNameError(dup.message);
+      return false;
+    }
     setNameError(''); setPhoneError('');
+    return true;
+  };
+
+  /* On blur: check only the field the person just left, so they are not shown an error
+     about a field they have not filled in yet. */
+  const checkPhoneOnBlur = () => {
+    const digits = phoneNumber.replace(/\D/g, '');
+    if (digits.length !== 10) return;
+    if (!digits.startsWith('9')) { setPhoneError('Mobile number must start with 9 (e.g. 9XX XXX XXXX).'); return; }
+    const dup = findDuplicateDriver(drivers, { phone: fullPhone() });
+    setPhoneError(dup?.field === 'phone' ? dup.message : '');
+  };
+
+  const checkNameOnBlur = () => {
+    if (!surname.trim() || !firstName.trim()) return;
+    const dup = findDuplicateDriver(drivers, { name: fullName() });
+    setNameError(dup?.field === 'name' ? dup.message : '');
+  };
+
+  const handleGeneratePin = () => {
+    if (!validateDriver()) return;
     setGeneratedPin(generatePin());
   };
 
   const handleRegisterDriver = () => {
-    if (!surname.trim() || !firstName.trim()) { setNameError('Both surname and first name are required.'); return; }
-    if (phoneNumber.replace(/\D/g, '').length !== 10) { setPhoneError('Enter a valid 10-digit mobile number.'); return; }
+    if (!validateDriver()) return;
     if (!generatedPin) { setNameError('Please generate a PIN first.'); return; }
 
     const newDriver: LocalDriver = {
@@ -113,6 +181,7 @@ export function RegisterDriverModal({ setDrivers, onClose, onCreated, layer = fa
                 <input
                   type="text" value={surname}
                   onChange={(e) => { setSurname(e.target.value); setNameError(''); }}
+                  onBlur={checkNameOnBlur}
                   placeholder="e.g. dela Cruz"
                   className={`w-full px-4 py-3 rounded-xl border text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 text-sm ${nameError ? 'border-red-400 bg-red-50' : 'border-border bg-white'}`}
                 />
@@ -122,6 +191,7 @@ export function RegisterDriverModal({ setDrivers, onClose, onCreated, layer = fa
                 <input
                   type="text" value={firstName}
                   onChange={(e) => { setFirstName(e.target.value); setNameError(''); }}
+                  onBlur={checkNameOnBlur}
                   placeholder="e.g. Juan"
                   className={`w-full px-4 py-3 rounded-xl border text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 text-sm ${nameError ? 'border-red-400 bg-red-50' : 'border-border bg-white'}`}
                 />
@@ -140,6 +210,7 @@ export function RegisterDriverModal({ setDrivers, onClose, onCreated, layer = fa
               <input
                 type="text" inputMode="numeric" value={phoneNumber}
                 onChange={(e) => { setPhoneNumber(e.target.value.replace(/\D/g, '').slice(0, 10)); setPhoneError(''); }}
+                onBlur={checkPhoneOnBlur}
                 placeholder="9123456789"
                 maxLength={10}
                 className="flex-1 px-4 py-3 bg-transparent text-foreground placeholder:text-muted-foreground focus:outline-none text-sm tracking-wider"

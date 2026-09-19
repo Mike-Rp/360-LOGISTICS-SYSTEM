@@ -4,7 +4,7 @@ import {
   CheckCircle2, Shield, KeyRound, Phone,
   Package, Weight, Trash2, AlertTriangle,
 } from 'lucide-react';
-import type { LocalDriver, LocalTruck, AdminRole, AdminActivityInput } from '../../data/assignmentTypes';
+import type { LocalDriver, LocalTruck, AdminRole, AdminActivityInput, Assignment } from '../../data/assignmentTypes';
 import { RegisterDriverModal, RegisterTruckModal } from './RegisterModals';
 
 /* ── Helpers ── */
@@ -46,6 +46,8 @@ interface Props {
   setDrivers: React.Dispatch<React.SetStateAction<LocalDriver[]>>;
   trucks: LocalTruck[];
   setTrucks: React.Dispatch<React.SetStateAction<LocalTruck[]>>;
+  /* Needed to block deleting a driver who still has an open task (see activeTaskFor). */
+  assignments?: Assignment[];
   isViewOnly?: boolean;
   onResetAll?: () => Promise<void>;
   adminRole?: AdminRole | null;
@@ -61,27 +63,13 @@ const ROLE_LABEL: Record<string, string> = {
 
 type TabView = 'Drivers' | 'Trucks';
 
-export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, isViewOnly = false, onResetAll, adminRole, savingToDb, onLogActivity }: Props) {
+export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, assignments = [], isViewOnly = false, onResetAll, adminRole, savingToDb, onLogActivity }: Props) {
   const [tab, setTab] = useState<TabView>('Drivers');
 
-  /* ── Reset All confirmation state ── */
-  const [showResetConfirm, setShowResetConfirm] = useState(false);
-  const [resetLoading,     setResetLoading]     = useState(false);
-  const [resetDone,        setResetDone]        = useState(false);
-
-  const handleConfirmReset = async () => {
-    setResetLoading(true);
-    try {
-      await onResetAll?.();
-      setResetDone(true);
-      setTimeout(() => {
-        setShowResetConfirm(false);
-        setResetDone(false);
-      }, 2000);
-    } finally {
-      setResetLoading(false);
-    }
-  };
+  /* The "Reset All Data" button was removed from this page. The backend is untouched:
+     resetAllData() in lib/db.ts and the reset_all_data() database function both still
+     exist, and `onResetAll` is still passed down, so the feature can be restored by
+     re-adding a trigger here. */
 
   /* ── Register Driver / Truck modals (shared components) ── */
   const [showAddDriver, setShowAddDriver] = useState(false);
@@ -89,12 +77,33 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
 
   /* ── Delete driver state ── */
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [deleteError,  setDeleteError]  = useState('');
+
+  /* A driver counts as "on a task" while they hold any assignment the admin has not yet
+     closed out. `assignments` holds only state='active' rows — completed and cancelled
+     ones live in separate arrays — so membership here is the whole test, whatever the
+     task_status is. That deliberately includes 'Delivered' and 'Failed / Issue', because
+     those are still open (documents pending approval) and deleting the driver would
+     strand the assignment: the database nulls its driver_id and the Monitor page then
+     filters it out of sight permanently. */
+  const activeTaskFor = (driverId: string) => assignments.find((a) => a.driverId === driverId) ?? null;
 
   const handleDeleteDriver = () => {
     if (!deleteTarget) return;
+    /* Checked here, in the delete path itself — not merely by hiding the button — so the
+       rule holds however this dialog was reached. */
+    const blocking = activeTaskFor(deleteTarget.id);
+    if (blocking) {
+      setDeleteError(
+        `${deleteTarget.name} has an active task (${blocking.id} — ${blocking.taskStatus}) and can't be deleted. ` +
+        'Complete or cancel that task first.'
+      );
+      return;
+    }
     setDrivers((p) => p.filter((d) => d.id !== deleteTarget.id));
     onLogActivity?.({ type: 'driver_deleted', driverName: deleteTarget.name });
     setDeleteTarget(null);
+    setDeleteError('');
   };
 
   /* ── Handlers: drivers ── */
@@ -111,16 +120,6 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
           <p className="text-sm text-muted-foreground mt-1">Register drivers with PINs and manage truck fleet</p>
         </div>
         <div className="flex items-center flex-wrap gap-3">
-          {/* Reset All Data — only for non-viewer */}
-          {!isViewOnly && onResetAll && (
-            <button
-              onClick={() => setShowResetConfirm(true)}
-              className="flex items-center gap-2 px-3.5 py-2 bg-red-50 text-red-600 border border-red-200 rounded-xl hover:bg-red-100 transition-colors text-sm"
-            >
-              <Trash2 className="w-4 h-4" />
-              Reset All Data
-            </button>
-          )}
           <div className="flex items-center bg-muted/40 border border-border rounded-xl p-1 gap-1">
             {(['Drivers', 'Trucks'] as TabView[]).map((t) => (
               <button key={t} onClick={() => setTab(t)}
@@ -142,55 +141,6 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
           </div>
         </div>
       </div>
-
-      {/* ══ RESET CONFIRM MODAL ══ */}
-      {showResetConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => !resetLoading && setShowResetConfirm(false)} />
-          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 flex flex-col items-center gap-4">
-            {resetDone ? (
-              <>
-                <div className="w-14 h-14 rounded-full bg-green-100 flex items-center justify-center">
-                  <CheckCircle2 className="w-7 h-7 text-green-600" />
-                </div>
-                <p className="text-base font-semibold text-foreground">All Data Cleared</p>
-                <p className="text-sm text-muted-foreground text-center">Drivers, trucks, assignments, and history have been removed from the database.</p>
-              </>
-            ) : (
-              <>
-                <div className="w-14 h-14 rounded-full bg-red-100 flex items-center justify-center">
-                  <AlertTriangle className="w-7 h-7 text-red-600" />
-                </div>
-                <div className="text-center space-y-1.5">
-                  <p className="text-base font-semibold text-foreground">Reset All Data?</p>
-                  <p className="text-sm text-muted-foreground">
-                    This will permanently delete all <span className="font-medium text-foreground">drivers</span>, <span className="font-medium text-foreground">trucks</span>, <span className="font-medium text-foreground">assignments</span>, and history from the database.
-                  </p>
-                  <p className="text-xs text-red-500 font-medium pt-1">Admin accounts are NOT affected. This cannot be undone.</p>
-                </div>
-                <div className="flex gap-3 w-full pt-1">
-                  <button
-                    onClick={() => setShowResetConfirm(false)}
-                    disabled={resetLoading}
-                    className="flex-1 py-2.5 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-colors text-sm font-medium disabled:opacity-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleConfirmReset}
-                    disabled={resetLoading}
-                    className="flex-1 py-2.5 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors text-sm font-medium disabled:opacity-60 flex items-center justify-center gap-2"
-                  >
-                    {resetLoading
-                      ? <><RefreshCw className="w-4 h-4 animate-spin" /> Resetting…</>
-                      : <><Trash2 className="w-4 h-4" /> Yes, Reset</>}
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* ════ DRIVERS TAB ════ */}
       {tab === 'Drivers' && (
@@ -298,7 +248,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                             <RefreshCw className="w-3.5 h-3.5" /> New PIN
                           </button>
                           <button
-                            onClick={() => setDeleteTarget({ id: d.id, name: d.name })}
+                            onClick={() => { setDeleteError(''); setDeleteTarget({ id: d.id, name: d.name }); }}
                             title="Delete Driver"
                             className="flex items-center gap-1.5 px-3 py-1.5 border border-red-200 rounded-lg text-xs text-red-500 hover:bg-red-50 hover:text-red-600 hover:border-red-300 transition-colors whitespace-nowrap"
                           >
@@ -364,7 +314,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                             <RefreshCw className="w-3.5 h-3.5" /> New PIN
                           </button>
                           <button
-                            onClick={() => setDeleteTarget({ id: d.id, name: d.name })}
+                            onClick={() => { setDeleteError(''); setDeleteTarget({ id: d.id, name: d.name }); }}
                             className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 border border-red-200 rounded-lg text-xs text-red-500 hover:bg-red-50 hover:text-red-600 hover:border-red-300 transition-colors"
                           >
                             <Trash2 className="w-3.5 h-3.5" /> Delete
@@ -555,10 +505,18 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                 Are you sure you want to permanently remove <span className="font-medium text-foreground">{deleteTarget.name}</span> from the system? Their account and PIN will be deleted.
               </p>
 
+              {/* Blocked because the driver still has an open task */}
+              {deleteError && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-start gap-2.5">
+                  <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                  <p className="text-sm text-amber-800">{deleteError}</p>
+                </div>
+              )}
+
               {/* Buttons */}
               <div className="flex gap-3 pt-1">
                 <button
-                  onClick={() => setDeleteTarget(null)}
+                  onClick={() => { setDeleteTarget(null); setDeleteError(''); }}
                   className="flex-1 px-4 py-2.5 border border-border rounded-xl hover:bg-accent transition-colors text-sm font-medium text-foreground"
                 >
                   Cancel
@@ -578,6 +536,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
       {/* ════ MODAL: Register Driver ════ */}
       {showAddDriver && !isViewOnly && (
         <RegisterDriverModal
+          drivers={drivers}
           setDrivers={setDrivers}
           onClose={() => setShowAddDriver(false)}
         />
