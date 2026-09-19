@@ -3,9 +3,12 @@ dist/
 dist-ssr/
 *.local
 
-# Env files - this project has no .env today, but never commit one if added later
+# Env files - real values live in .env.local, which must never be committed
 .env
 .env.*
+# ...except the placeholder template, which the .env.* rule above would
+# otherwise swallow. It contains no real values.
+!.env.example
 
 # Editor/OS
 .claude/
