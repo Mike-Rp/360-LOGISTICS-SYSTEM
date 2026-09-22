@@ -1,6 +1,6 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import imgLogo from 'figma:asset/5e73e3c08e898d68c86717993c6e7442d03e9ac4.png';
-import { Eye, EyeOff, AlertCircle, Phone, KeySquare, Loader2 } from 'lucide-react';
+import { Eye, EyeOff, AlertCircle, Phone, KeySquare, Loader2, X } from 'lucide-react';
 import { signInStaff, signInDriver, LoginError } from '../../lib/db';
 import type { StaffSession } from '../../lib/db';
 
@@ -8,6 +8,13 @@ interface Props {
   onAdminLogin:  (session: StaffSession) => void | Promise<void>;
   onDriverLogin: (info: { id: string; name: string }) => void;
 }
+
+/* Dispatch hotline shown in the "Forgot your PIN?" dialog. Drivers cannot reset their own
+   PIN — only an admin can regenerate it from the Accounts page — so this number is the
+   whole recovery path. CHANGE IT HERE if dispatch ever moves to a different line.
+   `DISPATCH_TEL` is what the phone dials; `DISPATCH_DISPLAY` is what the driver reads. */
+const DISPATCH_TEL     = '09384033610';
+const DISPATCH_DISPLAY = '0938 403 3610';
 
 const ErrorBanner = ({ icon: Icon, title, sub }: { icon: React.ElementType; title: string; sub: string }) => (
   <div className="flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-2xl">
@@ -31,6 +38,8 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
    so neither the number nor whatever PIN was typed can be the right one. */
   const [driverError,   setDriverError]   = useState<{ type: 'mobile' | 'pin' | 'mobile_and_pin' | 'general'; msg: string } | null>(null);
   const [driverLoading, setDriverLoading] = useState(false);
+  /* "Forgot your PIN?" dialog — purely informational, it starts no reset flow. */
+  const [showPinHelp,   setShowPinHelp]   = useState(false);
 
   const pinRefs = [
     useRef<HTMLInputElement>(null),
@@ -45,6 +54,15 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
   const [showPass,     setShowPass]     = useState(false);
   const [adminError,   setAdminError]   = useState('');
   const [adminLoading, setAdminLoading] = useState(false);
+
+  /* Escape closes the PIN-help dialog. The listener is only attached while the dialog is
+     open, and the cleanup removes it — otherwise every render would stack another one. */
+  useEffect(() => {
+    if (!showPinHelp) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowPinHelp(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showPinHelp]);
 
   const handleMobile = (v: string) => {
     // digits only, max 10, must start with 9
@@ -153,8 +171,37 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
             <div className="flex flex-col items-center gap-3">
               <img src={imgLogo} alt="360 Logistics" className="h-16 object-contain" />
               <p className="text-base text-muted-foreground text-center">
-                Trucking Operations &amp; Delivery Tracking
+                Welcome Back, Please enter your details
               </p>
+            </div>
+
+            {/* ══ DRIVER / ADMIN SEGMENTED TOGGLE ══
+                Replaces the old blue "Admin Login" / "← Back" footer buttons. The click
+                handlers carry over the exact same state resets those buttons did, so
+                switching tabs still clears the other form's fields and errors. */}
+            <div className="flex p-1.5 bg-[#f3f4f6] rounded-2xl">
+              <button
+                type="button"
+                onClick={() => { setView('driver'); setDriverError(null); }}
+                className={`flex-1 py-3 rounded-xl text-base transition-all duration-200 ${
+                  view === 'driver'
+                    ? 'bg-white shadow-sm font-bold text-foreground'
+                    : 'font-semibold text-gray-500 hover:text-foreground'
+                }`}
+              >
+                Driver
+              </button>
+              <button
+                type="button"
+                onClick={() => { setView('admin'); setAdminError(''); setEmail(''); setPassword(''); }}
+                className={`flex-1 py-3 rounded-xl text-base transition-all duration-200 ${
+                  view === 'admin'
+                    ? 'bg-white shadow-sm font-bold text-foreground'
+                    : 'font-semibold text-gray-500 hover:text-foreground'
+                }`}
+              >
+                Admin
+              </button>
             </div>
 
             {/* ══ DRIVER LOGIN ══ */}
@@ -230,10 +277,17 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
                   {driverLoading ? <><Loader2 className="w-5 h-5 animate-spin" /> Verifying…</> : 'Log In'}
                 </button>
 
-                {/* Static "Forgot PIN" — no self-service, call dispatch */}
-                <div className="flex items-center justify-center gap-2 text-sm text-gray-500">
-                  <Phone className="w-4 h-4 flex-shrink-0" />
-                  <span>Forgot your PIN? Call dispatch to reset it.</span>
+                {/* "Reset PIN" opens an informational dialog only — there is no self-service
+                    reset in this system, so the link must not imply one. */}
+                <div className="text-center text-sm text-gray-500">
+                  Forgot your PIN?{' '}
+                  <button
+                    type="button"
+                    onClick={() => setShowPinHelp(true)}
+                    className="text-[#10b981] font-semibold underline underline-offset-2 hover:text-[#059669] transition-colors"
+                  >
+                    Reset PIN
+                  </button>
                 </div>
               </div>
             )}
@@ -247,7 +301,7 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
                   <input
                     type="email" value={email}
                     onChange={(e) => { setEmail(e.target.value); setAdminError(''); }}
-                    placeholder="Enter email"
+                    placeholder="e.g. 360logistics@email.ph"
                     onKeyDown={(e) => e.key === 'Enter' && handleAdminLogin()}
                     className="w-full px-4 py-4 text-base bg-[#f9fafb] border border-[#e5e7eb] rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
                   />
@@ -288,26 +342,72 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
             )}
           </div>
 
-          {/* Footer toggle */}
-          <div className="border-t border-[#e5e7eb] px-7 sm:px-9 py-5">
-            {view === 'driver' ? (
-              <button
-                onClick={() => { setView('admin'); setAdminError(''); setEmail(''); setPassword(''); }}
-                className="w-full py-3 bg-[#2290fa] text-white rounded-2xl hover:bg-blue-600 transition-colors shadow-md font-semibold text-base"
-              >
-                Admin Login
-              </button>
-            ) : (
-              <button
-                onClick={() => { setView('driver'); setDriverError(null); }}
-                className="w-full py-3 bg-[#2290fa] text-white rounded-2xl hover:bg-blue-600 transition-colors shadow-md font-semibold text-base"
-              >
-                ← Back
-              </button>
-            )}
-          </div>
         </div>
       </div>
+
+      {/* ══ "FORGOT YOUR PIN?" DIALOG ══
+          Informational only: it starts no reset flow, because none exists. Drivers cannot
+          reset their own PIN — an admin regenerates it from the Accounts page — so the
+          dispatch number below is the entire recovery path.
+
+          Responsive by construction rather than by breakpoint: the wrapper centres the card
+          with a p-4 gutter, and the card is `w-full max-w-sm`. On a phone that means
+          full-width minus the gutter; on a laptop it settles at 384px. Same approach the
+          admin modals use. */}
+      {showPinHelp && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="pin-help-title"
+        >
+          {/* Backdrop — click anywhere outside the card to dismiss */}
+          <div
+            className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            onClick={() => setShowPinHelp(false)}
+          />
+
+          <div className="relative w-full max-w-sm bg-white rounded-3xl shadow-2xl p-6 sm:p-7 text-center animate-in fade-in zoom-in-95 duration-200">
+            <button
+              type="button"
+              onClick={() => setShowPinHelp(false)}
+              aria-label="Close"
+              className="absolute right-4 top-4 p-1.5 rounded-lg text-muted-foreground hover:bg-gray-100 hover:text-foreground transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="w-14 h-14 rounded-full bg-[#10b981]/10 flex items-center justify-center mx-auto mb-4">
+              <Phone className="w-7 h-7 text-[#10b981]" />
+            </div>
+
+            <h3 id="pin-help-title" className="text-xl font-bold text-foreground">
+              Forgot your PIN?
+            </h3>
+            <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
+              Your PIN can only be reset by dispatch. Give them a call and they&apos;ll
+              regenerate it for you.
+            </p>
+
+            {/* tel: link — taps to dial on a phone, reads as plain text on a laptop */}
+            <a
+              href={`tel:${DISPATCH_TEL}`}
+              className="mt-5 flex items-center justify-center gap-2 w-full py-4 bg-[#f3f4f6] rounded-2xl text-xl font-bold text-foreground tracking-wide hover:bg-gray-200 transition-colors"
+            >
+              <Phone className="w-5 h-5 text-[#10b981] flex-shrink-0" />
+              {DISPATCH_DISPLAY}
+            </a>
+
+            <button
+              type="button"
+              onClick={() => setShowPinHelp(false)}
+              className="mt-3 w-full py-4 bg-[#10b981] text-white rounded-2xl hover:bg-[#059669] transition-colors font-bold text-base"
+            >
+              Got it
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
