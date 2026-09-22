@@ -220,7 +220,7 @@ function RecentActivity({
                   <p className="text-xs font-semibold text-foreground truncate leading-tight">{ev.driverName}</p>
                   <p className="text-xs text-muted-foreground truncate leading-tight mt-0.5">{ev.description}</p>
                 </div>
-                <div className="flex items-center gap-0.5 text-[10px] text-muted-foreground flex-shrink-0 whitespace-nowrap">
+                <div className="flex items-center gap-0.5 text-[12px] text-muted-foreground flex-shrink-0 whitespace-nowrap">
                   <Clock className="w-3 h-3" />
                   {fmtRelative(ev.timestamp)}
                 </div>

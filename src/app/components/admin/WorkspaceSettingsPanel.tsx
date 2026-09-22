@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import {
   X, Users, UserPlus, Trash2, Clock, ClipboardList, Search,
   LogIn, CheckCircle, XCircle, FileCheck, FileX, UserX, UserMinus,
-  RefreshCw, Shield, Eye, EyeOff, AlertTriangle, Mail,
+  RefreshCw, Shield, Eye, EyeOff, AlertTriangle, Mail, Pencil, Archive,
 } from 'lucide-react';
 import { listTeamMembers, createTeamMember, removeTeamMember } from '../../lib/db';
 import type { AdminActivityEntry, AdminActivityType, AdminActivityInput, TeamMember } from '../../data/assignmentTypes';
@@ -13,6 +13,9 @@ const ACT_CONFIG: Record<AdminActivityType, { label: string; icon: React.Element
   task_assigned:       { label: 'Task Assigned',  icon: ClipboardList, color: 'text-purple-500' },
   task_completed:      { label: 'Task Completed', icon: CheckCircle,  color: 'text-green-500'  },
   task_cancelled:      { label: 'Task Cancelled', icon: XCircle,      color: 'text-gray-500'   },
+  task_edited:         { label: 'Task Edited',    icon: Pencil,       color: 'text-amber-500'  },
+  driver_archived:     { label: 'Driver Archived', icon: Archive,     color: 'text-orange-500' },
+  truck_archived:      { label: 'Truck Archived',  icon: Archive,     color: 'text-orange-500' },
   doc_approved:        { label: 'Doc Approved',   icon: FileCheck,    color: 'text-teal-500'   },
   doc_rejected:        { label: 'Doc Rejected',   icon: FileX,        color: 'text-red-500'    },
   driver_deleted:      { label: 'Driver Removed', icon: UserX,        color: 'text-orange-500' },
@@ -34,9 +37,12 @@ function getDesc(e: AdminActivityEntry): string {
     case 'task_assigned':        return `Assigned to ${e.driverName ?? '—'} · ${e.destination ?? ''}`;
     case 'task_completed':       return `Completed by ${e.driverName ?? '—'} · ${e.destination ?? ''}`;
     case 'task_cancelled':       return `Cancelled — ${e.driverName ?? '—'}`;
+    case 'task_edited':          return `Edited ${e.assignmentId ?? 'delivery'} (${Object.keys(e.changes ?? {}).length} field${Object.keys(e.changes ?? {}).length === 1 ? '' : 's'}) — ${e.reason ?? 'no reason'}`;
     case 'doc_approved':         return `Approved "${e.docType ?? 'document'}" for ${e.driverName ?? '—'}`;
     case 'doc_rejected':         return `Rejected "${e.docType ?? 'document'}" for ${e.driverName ?? '—'}`;
     case 'driver_deleted':       return `Removed driver "${e.driverName ?? '—'}"`;
+    case 'driver_archived':      return `Moved driver "${e.driverName ?? '—'}" to archive`;
+    case 'truck_archived':       return `Moved truck ${e.truckPlate ?? '—'} to archive`;
     case 'member_added':         return `Added ${e.memberName ?? e.memberEmail ?? 'a member'} as ${e.adminRole ?? 'a team member'}`;
     case 'member_removed':       return `Removed ${e.memberName ?? e.memberEmail ?? 'a member'}`;
   }
@@ -407,7 +413,7 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
                       {m.role === 'csr' ? 'CSR' : 'Viewer'}
                     </span>
                     <div className="text-right flex-shrink-0 hidden sm:block">
-                      <p className="text-[10px] text-muted-foreground">
+                      <p className="text-[12px] text-muted-foreground">
                         {m.lastActive ? fmtTs(m.lastActive) : 'Never logged in'}
                       </p>
                     </div>
@@ -464,12 +470,12 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
                       <Icon className={`w-4 h-4 flex-shrink-0 mt-0.5 ${cfg.color}`} />
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-medium text-foreground leading-tight">{cfg.label}</p>
-                        <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug truncate">{getDesc(entry)}</p>
+                        <p className="text-[12px] text-muted-foreground mt-0.5 leading-snug truncate">{getDesc(entry)}</p>
                         {entry.adminEmail && (
-                          <p className="text-[10px] text-muted-foreground/70 mt-0.5 truncate">{entry.adminEmail}</p>
+                          <p className="text-[12px] text-muted-foreground/70 mt-0.5 truncate">{entry.adminEmail}</p>
                         )}
                       </div>
-                      <div className="flex items-center gap-1 text-[10px] text-muted-foreground flex-shrink-0 whitespace-nowrap">
+                      <div className="flex items-center gap-1 text-[12px] text-muted-foreground flex-shrink-0 whitespace-nowrap">
                         <Clock className="w-3 h-3" />
                         {fmtTs(entry.timestamp)}
                       </div>
@@ -478,14 +484,14 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
                 })}
               </div>
             )}
-            <p className="text-[11px] text-muted-foreground text-center pt-3 border-t border-border/60 mt-3">
+            <p className="text-[12px] text-muted-foreground text-center pt-3 border-t border-border/60 mt-3">
               {filteredLog.length} of {activityLog.length} entries
             </p>
           </section>
         </div>
 
         <div className="px-6 py-4 border-t border-border bg-muted/20 flex-shrink-0">
-          <p className="text-[11px] text-muted-foreground text-center">
+          <p className="text-[12px] text-muted-foreground text-center">
             Team members get real individual logins. Removing one revokes access immediately.
           </p>
         </div>

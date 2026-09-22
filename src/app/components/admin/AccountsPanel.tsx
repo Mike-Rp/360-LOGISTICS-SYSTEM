@@ -1,11 +1,55 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Users, Truck, Plus, Eye, EyeOff, RefreshCw,
   CheckCircle2, Shield, KeyRound, Phone,
-  Package, Weight, Trash2, AlertTriangle,
+  Package, Weight, Trash2, AlertTriangle, Archive,
 } from 'lucide-react';
 import type { LocalDriver, LocalTruck, AdminRole, AdminActivityInput, Assignment } from '../../data/assignmentTypes';
 import { RegisterDriverModal, RegisterTruckModal } from './RegisterModals';
+import TruckImage from '../TruckImage';
+import ConfirmPasswordDialog from './ConfirmPasswordDialog';
+import { archiveDriver, archiveTruck, resetDriverPin, AssignmentActionError } from '../../lib/db';
+
+/* Plain-language text for the errors the archive / PIN database functions can return */
+const accountActionError = (err: unknown): string => {
+  const code = err instanceof AssignmentActionError ? err.code : 'network';
+  switch (code) {
+    case 'reauth_required':  return 'Please enter your password again.';
+    case 'driver_busy':      return 'This driver has an active delivery and can\'t be archived. Complete or cancel it first.';
+    case 'truck_busy':       return 'This truck is on an active delivery and can\'t be archived. Complete or cancel it first.';
+    case 'already_archived': return 'This record is already archived. Refresh the page.';
+    case 'not_authorized':   return 'Your account is not allowed to make this change.';
+    case 'not_deployed':     return 'This feature isn\'t set up on the database yet (the archive migration hasn\'t been applied).';
+    case 'invalid':          return 'This record no longer exists. Refresh the page.';
+    default:                 return 'Couldn\'t reach the server. Check your connection and try again.';
+  }
+};
+
+const fmtArchived = (iso?: string) => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? iso
+    : d.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+};
+
+/* Active / Archived switch shown inside the Drivers and Trucks tabs */
+function StatusTabs({ value, onChange, activeCount, archivedCount }: {
+  value: 'active' | 'archived'; onChange: (v: 'active' | 'archived') => void;
+  activeCount: number; archivedCount: number;
+}) {
+  return (
+    <div className="inline-flex items-center bg-muted/40 border border-border rounded-lg p-0.5 gap-0.5">
+      {(['active', 'archived'] as const).map((v) => (
+        <button key={v} onClick={() => onChange(v)}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+            value === v ? 'bg-white shadow-sm text-foreground border border-border' : 'text-muted-foreground hover:text-foreground'}`}>
+          {v === 'active' ? 'Active' : 'Archived'}
+          <span className="tabular-nums text-muted-foreground">{v === 'active' ? activeCount : archivedCount}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
 
 /* ── Helpers ── */
 const generatePin = () => String(Math.floor(1000 + Math.random() * 9000));
@@ -53,6 +97,10 @@ interface Props {
   adminRole?: AdminRole | null;
   savingToDb?: boolean;
   onLogActivity?: (entry: AdminActivityInput) => void;
+  /* Runs a database-function change (archive / new PIN), then reloads — see App.tsx */
+  onServerChange: (action: () => Promise<void>) => Promise<void>;
+  archivedDrivers?: LocalDriver[];
+  archivedTrucks?: LocalTruck[];
 }
 
 const ROLE_LABEL: Record<string, string> = {
@@ -63,8 +111,18 @@ const ROLE_LABEL: Record<string, string> = {
 
 type TabView = 'Drivers' | 'Trucks';
 
-export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, assignments = [], isViewOnly = false, onResetAll, adminRole, savingToDb, onLogActivity }: Props) {
+export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, assignments = [], isViewOnly = false, onResetAll, adminRole, savingToDb, onLogActivity, onServerChange, archivedDrivers = [], archivedTrucks = [] }: Props) {
   const [tab, setTab] = useState<TabView>('Drivers');
+  const [driverView, setDriverView] = useState<'active' | 'archived'>('active');
+  const [truckView,  setTruckView]  = useState<'active' | 'archived'>('active');
+
+  /* Success message after an archive / PIN change — hides itself after 4 s */
+  const [toast, setToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   /* The "Reset All Data" button was removed from this page. The backend is untouched:
      resetAllData() in lib/db.ts and the reset_all_data() database function both still
@@ -75,9 +133,10 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
   const [showAddDriver, setShowAddDriver] = useState(false);
   const [showAddTruck,  setShowAddTruck]  = useState(false);
 
-  /* ── Delete driver state ── */
+  /* ── Archive driver / new PIN / archive truck — each opens a confirmation dialog ── */
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
-  const [deleteError,  setDeleteError]  = useState('');
+  const [pinTarget,    setPinTarget]    = useState<{ id: string; name: string } | null>(null);
+  const [truckTarget,  setTruckTarget]  = useState<{ id: string; plate: string } | null>(null);
 
   /* A driver counts as "on a task" while they hold any assignment the admin has not yet
      closed out. `assignments` holds only state='active' rows — completed and cancelled
@@ -88,27 +147,38 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
      filters it out of sight permanently. */
   const activeTaskFor = (driverId: string) => assignments.find((a) => a.driverId === driverId) ?? null;
 
-  const handleDeleteDriver = () => {
-    if (!deleteTarget) return;
-    /* Checked here, in the delete path itself — not merely by hiding the button — so the
-       rule holds however this dialog was reached. */
-    const blocking = activeTaskFor(deleteTarget.id);
-    if (blocking) {
-      setDeleteError(
-        `${deleteTarget.name} has an active task (${blocking.id} — ${blocking.taskStatus}) and can't be deleted. ` +
-        'Complete or cancel that task first.'
-      );
-      return;
-    }
-    setDrivers((p) => p.filter((d) => d.id !== deleteTarget.id));
-    onLogActivity?.({ type: 'driver_deleted', driverName: deleteTarget.name });
-    setDeleteTarget(null);
-    setDeleteError('');
+  /* Shown in the dialog (and the action disabled) while the driver still has an open task.
+     archive_driver() refuses it on the server too. */
+  const driverBlockedReason = (driverId: string, name: string) => {
+    const blocking = activeTaskFor(driverId);
+    return blocking
+      ? `${name} has an active task (${blocking.id} — ${blocking.taskStatus}) and can't be archived. Complete or cancel that task first.`
+      : undefined;
+  };
+  const truckBlockedReason = (truckId: string, plate: string) => {
+    const blocking = assignments.find((a) => a.truckId === truckId);
+    return blocking
+      ? `${plate} is on an active task (${blocking.id} — ${blocking.taskStatus}) and can't be archived. Complete or cancel that task first.`
+      : undefined;
   };
 
-  /* ── Handlers: drivers ── */
-  const handleRegeneratePinFor = (id: string) =>
-    setDrivers((p) => p.map((d) => d.id === id ? { ...d, pin: generatePin() } : d));
+  /* All three go through database functions (not the auto-save); the password step
+     in ConfirmPasswordDialog runs first for the two driver actions. */
+  const handleArchiveDriver = async (target: { id: string; name: string }) => {
+    await onServerChange(() => archiveDriver(target.id));
+    setDeleteTarget(null);
+    setToast(`${target.name} moved to archive.`);
+  };
+  const handleNewPin = async (target: { id: string; name: string }) => {
+    await onServerChange(() => resetDriverPin(target.id, generatePin()));
+    setPinTarget(null);
+    setToast(`PIN successfully changed for ${target.name}.`);
+  };
+  const handleArchiveTruck = async (target: { id: string; plate: string }) => {
+    await onServerChange(() => archiveTruck(target.id));
+    setTruckTarget(null);
+    setToast(`${target.plate} moved to archive.`);
+  };
 
   return (
     <div className="space-y-6">
@@ -146,7 +216,10 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
       {tab === 'Drivers' && (
         <div className="space-y-4">
           {/* Bar */}
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <StatusTabs value={driverView} onChange={setDriverView}
+              activeCount={drivers.length} archivedCount={archivedDrivers.length} />
+            {driverView === 'active' && (
             <div className="flex items-center gap-4 text-sm">
               <div className="flex items-center gap-1.5 text-muted-foreground">
                 <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
@@ -157,7 +230,8 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                 <span>{drivers.filter((d) => !isAvailable(d.status)).length} Unavailable</span>
               </div>
             </div>
-            {!isViewOnly && (
+            )}
+            {!isViewOnly && driverView === 'active' && (
               <button onClick={() => setShowAddDriver(true)}
                 className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors text-sm">
                 <Plus className="w-4 h-4" /> Register Driver
@@ -165,8 +239,38 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
             )}
           </div>
 
+          {/* Archived drivers — read-only, with the archive date */}
+          {driverView === 'archived' && (
+            archivedDrivers.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-dashed border-border p-12 text-center">
+                <Archive className="w-10 h-10 mx-auto mb-3 text-muted-foreground/40" />
+                <p className="font-medium text-foreground">No archived drivers</p>
+                <p className="text-sm text-muted-foreground mt-1">Archived drivers appear here with the date they were archived.</p>
+              </div>
+            ) : (
+              <div className="bg-white rounded-2xl border border-border shadow-sm divide-y divide-border">
+                {archivedDrivers.map((d) => (
+                  <div key={d.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 sm:px-5 py-3.5">
+                    <div className="flex items-center gap-3 min-w-0 flex-1 basis-48">
+                      <div className="w-9 h-9 bg-muted rounded-full flex items-center justify-center flex-shrink-0 border border-border">
+                        <Users className="w-4 h-4 text-muted-foreground" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-foreground break-words">{d.name}</p>
+                        <p className="text-xs text-muted-foreground break-words">{d.id} · {d.phone}</p>
+                      </div>
+                    </div>
+                    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/50 border border-border rounded-full px-2.5 py-1">
+                      <Archive className="w-3 h-3" /> Archived {fmtArchived(d.archivedAt)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+
           {/* Empty state */}
-          {drivers.length === 0 ? (
+          {driverView === 'active' && (drivers.length === 0 ? (
             <div className="bg-white rounded-2xl border border-dashed border-border p-16 text-center">
               <div className="w-16 h-16 bg-muted/50 rounded-full flex items-center justify-center mx-auto mb-4">
                 <Users className="w-8 h-8 text-muted-foreground/40" />
@@ -241,18 +345,18 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                       {!isViewOnly && (
                         <div className="flex items-center gap-1.5">
                           <button
-                            onClick={() => handleRegeneratePinFor(d.id)}
+                            onClick={() => setPinTarget({ id: d.id, name: d.name })}
                             title="Regenerate PIN"
                             className="flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors whitespace-nowrap"
                           >
                             <RefreshCw className="w-3.5 h-3.5" /> New PIN
                           </button>
                           <button
-                            onClick={() => { setDeleteError(''); setDeleteTarget({ id: d.id, name: d.name }); }}
-                            title="Delete Driver"
+                            onClick={() => setDeleteTarget({ id: d.id, name: d.name })}
+                            title="Move driver to archive"
                             className="flex items-center gap-1.5 px-3 py-1.5 border border-red-200 rounded-lg text-xs text-red-500 hover:bg-red-50 hover:text-red-600 hover:border-red-300 transition-colors whitespace-nowrap"
                           >
-                            <Trash2 className="w-3.5 h-3.5" /> Delete
+                            <Archive className="w-3.5 h-3.5" /> Archive
                           </button>
                         </div>
                       )}
@@ -308,16 +412,16 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                       {!isViewOnly && (
                         <div className="flex gap-2 mt-2.5">
                           <button
-                            onClick={() => handleRegeneratePinFor(d.id)}
+                            onClick={() => setPinTarget({ id: d.id, name: d.name })}
                             className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 border border-border rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
                           >
                             <RefreshCw className="w-3.5 h-3.5" /> New PIN
                           </button>
                           <button
-                            onClick={() => { setDeleteError(''); setDeleteTarget({ id: d.id, name: d.name }); }}
+                            onClick={() => setDeleteTarget({ id: d.id, name: d.name })}
                             className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 border border-red-200 rounded-lg text-xs text-red-500 hover:bg-red-50 hover:text-red-600 hover:border-red-300 transition-colors"
                           >
-                            <Trash2 className="w-3.5 h-3.5" /> Delete
+                            <Archive className="w-3.5 h-3.5" /> Archive
                           </button>
                         </div>
                       )}
@@ -326,19 +430,24 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                 })}
               </div>
             </div>
-          )}
+          ))}
 
+          {driverView === 'active' && (
           <p className="text-xs text-muted-foreground flex items-center gap-1.5">
             <Shield className="w-3.5 h-3.5" />
             Status is <strong className="text-red-500">Unavailable</strong> when the driver has an active task. Hold the eye icon to reveal a PIN.
           </p>
+          )}
         </div>
       )}
 
       {/* ════ TRUCKS TAB ════ */}
       {tab === 'Trucks' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <StatusTabs value={truckView} onChange={setTruckView}
+              activeCount={trucks.length} archivedCount={archivedTrucks.length} />
+            {truckView === 'active' && (
             <div className="flex items-center gap-4 text-sm">
               <div className="flex items-center gap-1.5 text-muted-foreground">
                 <Truck className="w-4 h-4 text-green-500" />
@@ -349,7 +458,8 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                 <span>{trucks.filter((t) => t.status === 'Assigned').length} Unavailable</span>
               </div>
             </div>
-            {!isViewOnly && (
+            )}
+            {!isViewOnly && truckView === 'active' && (
               <button onClick={() => setShowAddTruck(true)}
                 className="flex items-center gap-2 px-4 py-2 bg-secondary text-white rounded-lg hover:bg-secondary/90 transition-colors text-sm">
                 <Plus className="w-4 h-4" /> Register Truck
@@ -357,7 +467,37 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
             )}
           </div>
 
-          {trucks.length === 0 ? (
+          {/* Archived trucks — read-only, with the archive date */}
+          {truckView === 'archived' && (
+            archivedTrucks.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-dashed border-border p-12 text-center">
+                <Archive className="w-10 h-10 mx-auto mb-3 text-muted-foreground/40" />
+                <p className="font-medium text-foreground">No archived trucks</p>
+                <p className="text-sm text-muted-foreground mt-1">Archived trucks appear here with the date they were archived.</p>
+              </div>
+            ) : (
+              <div className="bg-white rounded-2xl border border-border shadow-sm divide-y divide-border">
+                {archivedTrucks.map((t) => (
+                  <div key={t.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 sm:px-5 py-3.5">
+                    <div className="flex items-center gap-3 min-w-0 flex-1 basis-48">
+                      <div className="w-9 h-9 bg-muted rounded-full flex items-center justify-center flex-shrink-0 border border-border overflow-hidden grayscale">
+                        <TruckImage zoom className="w-full h-full" classification={t.classification} iconClassName="w-4 h-4 text-muted-foreground" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-mono font-semibold text-foreground tracking-wider break-words">{t.plateNumber}</p>
+                        <p className="text-xs text-muted-foreground break-words">{t.classification || 'Type not set'} · {t.id}</p>
+                      </div>
+                    </div>
+                    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/50 border border-border rounded-full px-2.5 py-1">
+                      <Archive className="w-3 h-3" /> Archived {fmtArchived(t.archivedAt)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+
+          {truckView === 'active' && (trucks.length === 0 ? (
             <div className="bg-white rounded-2xl border border-dashed border-border p-16 text-center">
               <div className="w-16 h-16 bg-muted/50 rounded-full flex items-center justify-center mx-auto mb-4">
                 <Truck className="w-8 h-8 text-muted-foreground/40" />
@@ -375,20 +515,21 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
             <div className="bg-white rounded-2xl border border-border shadow-sm overflow-hidden">
               {/* Desktop/tablet table */}
               <div className="hidden sm:block overflow-x-auto">
-              <div className="grid grid-cols-[minmax(140px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px] gap-4 px-5 py-3 bg-muted/30 border-b border-border text-xs font-semibold text-muted-foreground uppercase tracking-wide min-w-[560px]">
+              <div className={`grid ${isViewOnly ? 'grid-cols-[minmax(140px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px] min-w-[560px]' : 'grid-cols-[minmax(140px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px_auto] min-w-[660px]'} gap-4 px-5 py-3 bg-muted/30 border-b border-border text-xs font-semibold text-muted-foreground uppercase tracking-wide`}>
                 <span>Plate Number</span>
                 <span className="flex items-center gap-1"><Package className="w-3.5 h-3.5" /> Classification</span>
                 <span className="flex items-center gap-1"><Weight className="w-3.5 h-3.5" /> Payload Capacity</span>
                 <span>Status</span>
+                {!isViewOnly && <span>Action</span>}
               </div>
               <div className="divide-y divide-border">
                 {trucks.map((t) => (
                   <div key={t.id}
-                    className="grid grid-cols-[minmax(140px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px] gap-4 items-center px-5 py-4 hover:bg-muted/10 transition-colors min-w-[560px]">
+                    className={`grid ${isViewOnly ? 'grid-cols-[minmax(140px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px] min-w-[560px]' : 'grid-cols-[minmax(140px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px_auto] min-w-[660px]'} gap-4 items-center px-5 py-4 hover:bg-muted/10 transition-colors`}>
                     {/* Plate */}
                     <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 bg-[#0d9488]/15 rounded-full flex items-center justify-center flex-shrink-0 border border-[#0d9488]/20">
-                        <Truck className="w-4 h-4 text-[#0d9488]" />
+                      <div className="w-9 h-9 bg-[#0d9488]/15 rounded-full flex items-center justify-center flex-shrink-0 border border-[#0d9488]/20 overflow-hidden">
+                        <TruckImage zoom className="w-full h-full" classification={t.classification} iconClassName="w-4 h-4 text-[#0d9488]" />
                       </div>
                       <div>
                         <p className="font-mono font-semibold text-foreground tracking-wider">{t.plateNumber}</p>
@@ -418,6 +559,15 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                       <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${t.status === 'Available' ? 'bg-green-500' : 'bg-red-400'}`} />
                       {t.status === 'Available' ? 'Available' : 'Unavailable'}
                     </span>
+                    {!isViewOnly && (
+                      <button
+                        onClick={() => setTruckTarget({ id: t.id, plate: t.plateNumber })}
+                        title="Move truck to archive"
+                        className="flex items-center gap-1.5 px-3 py-1.5 border border-red-200 rounded-lg text-xs text-red-500 hover:bg-red-50 hover:text-red-600 hover:border-red-300 transition-colors whitespace-nowrap w-fit"
+                      >
+                        <Archive className="w-3.5 h-3.5" /> Archive
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -428,8 +578,8 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                 {trucks.map((t) => (
                   <div key={t.id} className="p-3.5">
                     <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 bg-[#0d9488]/15 rounded-full flex items-center justify-center flex-shrink-0 border border-[#0d9488]/20">
-                        <Truck className="w-4 h-4 text-[#0d9488]" />
+                      <div className="w-9 h-9 bg-[#0d9488]/15 rounded-full flex items-center justify-center flex-shrink-0 border border-[#0d9488]/20 overflow-hidden">
+                        <TruckImage zoom className="w-full h-full" classification={t.classification} iconClassName="w-4 h-4 text-[#0d9488]" />
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="font-mono font-semibold text-foreground tracking-wider truncate">{t.plateNumber}</p>
@@ -460,78 +610,83 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                         )}
                       </div>
                     </div>
+                    {!isViewOnly && (
+                      <button
+                        onClick={() => setTruckTarget({ id: t.id, plate: t.plateNumber })}
+                        className="w-full flex items-center justify-center gap-1.5 mt-2.5 px-3 py-2 border border-red-200 rounded-lg text-xs text-red-500 hover:bg-red-50 hover:text-red-600 hover:border-red-300 transition-colors"
+                      >
+                        <Archive className="w-3.5 h-3.5" /> Archive
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
             </div>
-          )}
+          ))}
         </div>
       )}
 
-      {/* ════ MODAL: Confirm Delete Driver ════ */}
+      {/* ════ DIALOG: Archive driver (password required) ════ */}
       {deleteTarget && !isViewOnly && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setDeleteTarget(null)} />
-          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            {/* Top accent bar */}
-            <div className="h-1.5 w-full bg-red-500 rounded-t-2xl" />
+        <ConfirmPasswordDialog
+          title="Move driver to archive?"
+          message={<>
+            <span className="font-medium text-foreground">{deleteTarget.name}</span> will be moved to the archive.
+            They'll no longer be able to log in or be assigned deliveries. Their past deliveries stay in the records.
+          </>}
+          blockedReason={driverBlockedReason(deleteTarget.id, deleteTarget.name)}
+          confirmLabel="Move to Archive"
+          busyLabel="Archiving…"
+          onConfirm={() => handleArchiveDriver(deleteTarget)}
+          onCancel={() => setDeleteTarget(null)}
+          errorText={accountActionError}
+        />
+      )}
 
-            <div className="p-6 space-y-4">
-              {/* Icon + title */}
-              <div className="flex items-start gap-4">
-                <div className="w-11 h-11 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <AlertTriangle className="w-5 h-5 text-red-500" />
-                </div>
-                <div>
-                  <h3 className="text-base font-semibold text-foreground">Delete Driver</h3>
-                  <p className="text-sm text-muted-foreground mt-0.5">
-                    This action cannot be undone.
-                  </p>
-                </div>
-              </div>
+      {/* ════ DIALOG: New PIN (password required) ════ */}
+      {pinTarget && !isViewOnly && (
+        <ConfirmPasswordDialog
+          tone="primary"
+          title="Set a new PIN?"
+          message={<>
+            A new 4-digit PIN will be generated for <span className="font-medium text-foreground">{pinTarget.name}</span>.
+            Their current PIN will stop working.
+          </>}
+          confirmLabel="Set New PIN"
+          busyLabel="Saving…"
+          onConfirm={() => handleNewPin(pinTarget)}
+          onCancel={() => setPinTarget(null)}
+          errorText={accountActionError}
+        />
+      )}
 
-              {/* Driver info card */}
-              <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-center gap-3">
-                <div className="w-9 h-9 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0 border border-red-200">
-                  <Users className="w-4 h-4 text-red-500" />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-red-700">{deleteTarget.name}</p>
-                  <p className="text-xs text-red-500">{deleteTarget.id}</p>
-                </div>
-              </div>
+      {/* ════ DIALOG: Archive truck (no password) ════ */}
+      {truckTarget && !isViewOnly && (
+        <ConfirmPasswordDialog
+          requirePassword={false}
+          title="Move truck to archive?"
+          message={<>
+            <span className="font-mono font-semibold text-foreground">{truckTarget.plate}</span> will be moved to the archive
+            and can no longer be assigned to deliveries. Its past deliveries stay in the records.
+          </>}
+          blockedReason={truckBlockedReason(truckTarget.id, truckTarget.plate)}
+          confirmLabel="Move to Archive"
+          busyLabel="Archiving…"
+          onConfirm={() => handleArchiveTruck(truckTarget)}
+          onCancel={() => setTruckTarget(null)}
+          errorText={accountActionError}
+        />
+      )}
 
-              <p className="text-sm text-muted-foreground">
-                Are you sure you want to permanently remove <span className="font-medium text-foreground">{deleteTarget.name}</span> from the system? Their account and PIN will be deleted.
-              </p>
-
-              {/* Blocked because the driver still has an open task */}
-              {deleteError && (
-                <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-start gap-2.5">
-                  <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-                  <p className="text-sm text-amber-800">{deleteError}</p>
-                </div>
-              )}
-
-              {/* Buttons */}
-              <div className="flex gap-3 pt-1">
-                <button
-                  onClick={() => { setDeleteTarget(null); setDeleteError(''); }}
-                  className="flex-1 px-4 py-2.5 border border-border rounded-xl hover:bg-accent transition-colors text-sm font-medium text-foreground"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleDeleteDriver}
-                  className="flex-1 px-4 py-2.5 bg-red-500 text-white rounded-xl hover:bg-red-600 transition-colors text-sm font-medium flex items-center justify-center gap-2"
-                >
-                  <Trash2 className="w-4 h-4" /> Yes, Delete
-                </button>
-              </div>
-            </div>
-          </div>
+      {/* ════ Success message ════ */}
+      {toast && (
+        <div role="status"
+          className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[90] w-[calc(100%-2rem)] max-w-sm bg-green-600 text-white text-sm font-medium px-4 py-3 rounded-xl shadow-xl flex items-center gap-2.5 animate-in fade-in slide-in-from-bottom-3 duration-300">
+          <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+          <span className="break-words min-w-0">{toast}</span>
         </div>
       )}
+
 
       {/* ════ MODAL: Register Driver ════ */}
       {showAddDriver && !isViewOnly && (

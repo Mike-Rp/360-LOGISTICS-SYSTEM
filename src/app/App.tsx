@@ -46,6 +46,9 @@ export default function App() {
   const [cancelled,     setCancelled]     = useState<Assignment[]>([]);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [activityLog,   setActivityLog]   = useState<AdminActivityEntry[]>([]);
+  /* Archived drivers/trucks — read-only lists for the Accounts "Archived" tabs (never auto-saved) */
+  const [archivedDrivers, setArchivedDrivers] = useState<LocalDriver[]>([]);
+  const [archivedTrucks,  setArchivedTrucks]  = useState<LocalTruck[]>([]);
 
   /* Refs so timers/closures always see the latest values */
   const saveTimerRef   = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -86,6 +89,8 @@ export default function App() {
       setCancelled(data.cancelled);
       setNotifications(data.notifications);
       setActivityLog(data.activityLog);
+      setArchivedDrivers(data.archivedDrivers);
+      setArchivedTrucks(data.archivedTrucks);
     } catch (err) {
       console.error('[loadData] error:', err);
       // do NOT clear state on error — leave whatever is already in memory
@@ -187,6 +192,37 @@ export default function App() {
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
   }, [drivers, trucks, assignments, completed, cancelled, notifications, activityLog, adminRole]);
 
+  /* ── Server-side change (edit / cancel an assignment via a database function) ──
+     1. Flush a still-pending auto-save first, so it can't later write stale values over
+        what the server is about to change.
+     2. Run the change. Errors are re-thrown for the calling screen to show.
+     3. Reload quietly (like the poll — no full-screen loading spinner). */
+  const onServerChange = useCallback(async (action: () => Promise<void>): Promise<void> => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+      await saveToServer(drivers, trucks, assignments, completed, cancelled, notifications, activityLog);
+    }
+    await action();
+    try {
+      const data = await loadAdminData();
+      isPollUpdate.current = true;
+      setAssignments(data.assignments);
+      setNotifications(data.notifications);
+      setDrivers(data.drivers);
+      setTrucks(data.trucks);
+      setCompleted(data.completed);
+      setCancelled(data.cancelled);
+      setActivityLog(data.activityLog);
+      setArchivedDrivers(data.archivedDrivers);
+      setArchivedTrucks(data.archivedTrucks);
+      setTimeout(() => { isPollUpdate.current = false; }, 100);
+    } catch (err) {
+      /* The change itself succeeded — the next 12 s poll will pick it up */
+      console.warn('[onServerChange] reload failed, the next poll will retry:', err);
+    }
+  }, [saveToServer, drivers, trucks, assignments, completed, cancelled, notifications, activityLog]);
+
   /* ── Admin real-time poll — refresh data every 12 s ── */
   useEffect(() => {
     if (!signedIn || adminRole === 'viewer') return;
@@ -209,6 +245,8 @@ export default function App() {
         setCompleted(data.completed);
         setCancelled(data.cancelled);
         setActivityLog(data.activityLog);
+        setArchivedDrivers(data.archivedDrivers);
+        setArchivedTrucks(data.archivedTrucks);
         /* Reset flag after React has processed the state updates */
         setTimeout(() => { isPollUpdate.current = false; }, 100);
       } catch (err) {
@@ -241,6 +279,8 @@ export default function App() {
     setCancelled([]);
     setNotifications([]);
     setActivityLog([]);
+    setArchivedDrivers([]);
+    setArchivedTrucks([]);
     isMounted.current = false;
   }, []);
 
@@ -347,6 +387,8 @@ export default function App() {
           notifications={notifications} setNotifications={setNotifications}
           activityLog={activityLog}
           onLogActivity={onLogActivity}
+          onServerChange={onServerChange}
+          archivedDrivers={archivedDrivers} archivedTrucks={archivedTrucks}
           activeNav={activeNav}      setActiveNav={setActiveNav}
           onLogout={handleLogout}
           onResetAll={handleResetAll}

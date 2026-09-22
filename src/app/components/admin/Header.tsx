@@ -53,6 +53,9 @@ export default function Header({
   const [accountOpen, setAccountOpen] = useState(false);
 
   const accountRef = useRef<HTMLDivElement>(null);
+  /* The account menu unmounts when a row is clicked, so Settings / Help hand focus to this
+     button first — the modal returns focus here when it closes. */
+  const accountBtnRef = useRef<HTMLButtonElement>(null);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
@@ -88,7 +91,7 @@ export default function Header({
                 : <BellOff className="w-5 h-5 text-muted-foreground/50" />
               }
               {notifEnabled && unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-green-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1 leading-none">
+                <span className="absolute -top-1 -right-1 min-w-[20px] h-[20px] bg-green-500 text-white text-[12px] font-bold rounded-full flex items-center justify-center px-1 leading-none">
                   {unreadCount > 99 ? '99+' : unreadCount}
                 </span>
               )}
@@ -107,7 +110,7 @@ export default function Header({
                   <Bell className="w-4 h-4 text-green-500 flex-shrink-0" />
                   <h3 className="text-sm font-semibold text-foreground">Notifications</h3>
                   {unreadCount > 0 && (
-                    <span className="min-w-[18px] h-[18px] bg-green-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1 leading-none">
+                    <span className="min-w-[20px] h-[20px] bg-green-500 text-white text-[12px] font-bold rounded-full flex items-center justify-center px-1 leading-none">
                       {unreadCount > 99 ? '99+' : unreadCount}
                     </span>
                   )}
@@ -159,7 +162,7 @@ export default function Header({
                             {/* Truck icon + plate in teal */}
                             <div className="flex items-center gap-1 mb-0.5">
                               <Truck className="w-3 h-3 text-teal-600 flex-shrink-0" />
-                              <span className="text-[11px] font-semibold text-teal-600 font-mono tracking-wide">{n.truckPlate}</span>
+                              <span className="text-[12px] font-semibold text-teal-600 font-mono tracking-wide">{n.truckPlate}</span>
                             </div>
                             {/* Description */}
                             <p className={`text-xs leading-snug ${!n.read ? 'font-medium text-foreground' : 'text-foreground/80'}`}>
@@ -167,10 +170,10 @@ export default function Header({
                             </p>
                             {/* Timestamp + nav link */}
                             <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                              <p className="text-[10px] text-muted-foreground">{fmtTimestamp(n.timestamp)}</p>
+                              <p className="text-[12px] text-muted-foreground">{fmtTimestamp(n.timestamp)}</p>
                               <button
                                 onClick={() => { onNavigate(navPage); setBellOpen(false); }}
-                                className="text-[10px] text-teal-600 hover:text-teal-700 font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap"
+                                className="text-[12px] text-teal-600 hover:text-teal-700 font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap"
                               >
                                 Go to {navPage} →
                               </button>
@@ -212,6 +215,7 @@ export default function Header({
         {/* ── Admin User pill ── */}
         <div className="relative" ref={accountRef}>
           <button
+            ref={accountBtnRef}
             onClick={() => { setAccountOpen((v) => !v); setBellOpen(false); }}
             className="flex items-center gap-2.5 px-3 py-1.5 rounded-full border border-border hover:bg-accent transition-colors"
           >
@@ -251,7 +255,7 @@ export default function Header({
                 )}
 
                 <button
-                  onClick={() => { onOpenSettings(); setAccountOpen(false); }}
+                  onClick={() => { accountBtnRef.current?.focus(); onOpenSettings(); setAccountOpen(false); }}
                   className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-accent/50 transition-colors text-left"
                 >
                   <Settings className="w-4 h-4 text-muted-foreground flex-shrink-0" />
@@ -259,7 +263,7 @@ export default function Header({
                 </button>
 
                 <button
-                  onClick={() => { onOpenHelp(); setAccountOpen(false); }}
+                  onClick={() => { accountBtnRef.current?.focus(); onOpenHelp(); setAccountOpen(false); }}
                   className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-accent/50 transition-colors text-left"
                 >
                   <HelpCircle className="w-4 h-4 text-muted-foreground flex-shrink-0" />

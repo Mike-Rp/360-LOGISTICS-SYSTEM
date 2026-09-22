@@ -96,9 +96,11 @@ async function fetchProfile(uid: string): Promise<Row | null> {
   return data;
 }
 async function fetchOwnDriver(uid: string): Promise<{ id: string; name: string } | null> {
-  const { data, error } = await supabase.from('drivers').select('id, name').eq('auth_user_id', uid).maybeSingle();
+  /* select('*') rather than naming archived_at, so this keeps working before the archive migration is applied */
+  const { data, error } = await supabase.from('drivers').select('*').eq('auth_user_id', uid).maybeSingle();
   if (error) throw error;
-  return data;
+  if (!data || data.archived_at) return null;     // archived drivers can't sign in (their login is also removed)
+  return { id: data.id, name: data.name };
 }
 
 function loginFailure(error: { status?: number; code?: string }): LoginError {
@@ -239,6 +241,7 @@ function assignmentFromRow(r: Row, docs: Row[], photos: Row[], delays: Row[]): A
     ...(r.issue_reason ? { issueReason: r.issue_reason } : {}),
     ...(delays.length ? { delayReports: [...delays].sort((a, b) => a.id - b.id).map(delayFromRow) } : {}),
     ...(r.driver_acknowledged_at ? { driverAcknowledgedAt: r.driver_acknowledged_at } : {}),
+    ...(r.created_at ? { createdAt: r.created_at } : {}),
   };
 }
 
@@ -258,7 +261,11 @@ export interface AdminData {
   notifications: AppNotification[]; activityLog: AdminActivityEntry[];
 }
 
-export async function loadAdminData(): Promise<AdminData> {
+/* Archived drivers/trucks come back SEPARATELY and are never part of AdminData, so the
+   auto-save (syncAdminData) can't edit or delete them — they change only via archive_*(). */
+export interface ArchivedData { archivedDrivers: LocalDriver[]; archivedTrucks: LocalTruck[] }
+
+export async function loadAdminData(): Promise<AdminData & ArchivedData> {
   const [driverRows, pinRows, truckRows, asnRows, docRows, photoRows, delayRows, notifRows, actRows] = await Promise.all([
     fetchAll('drivers',              [['created_at', true], ['id', true]]),
     fetchAll('driver_pins',          [['driver_id', true]]),
@@ -272,18 +279,24 @@ export async function loadAdminData(): Promise<AdminData> {
   ]);
 
   const pins = new Map(pinRows.map((p) => [p.driver_id as string, p.pin as string]));
-  const drivers: LocalDriver[] = driverRows.map((r) => ({
+  const allDrivers: LocalDriver[] = driverRows.map((r) => ({
     id: r.id, name: r.name, phone: r.phone, truckNumber: r.truck_number ?? '', status: r.status,
     currentLocation: r.current_location ?? '—', deliveriesToday: r.deliveries_today ?? 0,
     rating: Number(r.rating ?? 0),
     ...(pins.has(r.id) ? { pin: pins.get(r.id) } : {}),
     ...(r.shift ? { shift: r.shift } : {}),
+    ...(r.archived_at ? { archivedAt: r.archived_at } : {}),
   }));
-  const trucks: LocalTruck[] = truckRows.map((r) => ({
+  const allTrucks: LocalTruck[] = truckRows.map((r) => ({
     id: r.id, plateNumber: r.plate_number, status: r.status,
     ...(r.classification ? { classification: r.classification } : {}),
     ...(r.capacity ? { capacity: r.capacity } : {}),
+    ...(r.archived_at ? { archivedAt: r.archived_at } : {}),
   }));
+  const drivers         = allDrivers.filter((d) => !d.archivedAt);
+  const trucks          = allTrucks.filter((t)  => !t.archivedAt);
+  const archivedDrivers = allDrivers.filter((d) => !!d.archivedAt);
+  const archivedTrucks  = allTrucks.filter((t)  => !!t.archivedAt);
 
   const docsBy = groupBy(docRows, 'assignment_id');
   const photosBy = groupBy(photoRows, 'assignment_id');
@@ -318,11 +331,13 @@ export async function loadAdminData(): Promise<AdminData> {
     ...(r.company ? { company: r.company } : {}),
     ...(r.member_name ? { memberName: r.member_name } : {}),
     ...(r.member_email ? { memberEmail: r.member_email } : {}),
+    ...(r.reason ? { reason: r.reason } : {}),
+    ...(r.changes ? { changes: r.changes } : {}),
   }));
 
   const data: AdminData = { drivers, trucks, assignments, completed, cancelled, notifications, activityLog };
-  snapshot = flatten(data);        // remember what the database looks like right now
-  return data;
+  snapshot = flatten(data);        // remember what the database looks like right now (active records only)
+  return { ...data, archivedDrivers, archivedTrucks };
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -546,6 +561,92 @@ export function syncAdminData(data: AdminData): Promise<void> {
   const result = saveQueue.then(run);
   saveQueue = result.catch(() => undefined);     // a failed save must not block the next one
   return result;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ADMIN — EDIT / CANCEL AN ASSIGNMENT (Monitor → View Details)
+   These do NOT go through syncAdminData. The database functions edit_assignment()
+   and cancel_assignment() check "is it still Assigned?" and write in one step, so a
+   stale tab can't change a delivery the driver already picked up. They also write
+   the audit-log row themselves. The caller reloads the data afterwards.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+export type AssignmentActionErrorCode =
+  | 'wrong_password' | 'reauth_required' | 'not_editable' | 'not_cancellable'
+  | 'driver_busy' | 'truck_unavailable' | 'no_changes' | 'not_authorized' | 'not_deployed' | 'invalid' | 'network'
+  | 'already_archived' | 'truck_busy';
+export class AssignmentActionError extends Error {
+  code: AssignmentActionErrorCode;
+  constructor(code: AssignmentActionErrorCode, detail?: string) { super(detail ?? code); this.code = code; }
+}
+
+/* Re-enter-password check before an edit: signs in again as the CURRENT user.
+   The password only goes to Supabase Auth — it is never stored or logged here. */
+export async function verifyOwnPassword(password: string): Promise<void> {
+  const { data } = await supabase.auth.getSession();
+  const email = data.session?.user.email;
+  if (!email) throw new AssignmentActionError('not_authorized');
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) {
+    const bad = error.status === 400 || error.status === 401 || (error as any).code === 'invalid_credentials';
+    throw new AssignmentActionError(bad ? 'wrong_password' : 'network');
+  }
+}
+
+/* Editable fields, in the stored (display) formats the rest of the app uses */
+export interface AssignmentEdit {
+  driverId?: string; truckId?: string; destination?: string; company?: string; pickupLocation?: string;
+  pickupTime?: string; pickedUpDate?: string; eta?: string; deliveryDate?: string; remarks?: string;
+}
+const EDIT_COLUMNS: Record<keyof AssignmentEdit, string> = {
+  driverId: 'driver_id', truckId: 'truck_id', destination: 'destination', company: 'company',
+  pickupLocation: 'pickup_location', pickupTime: 'pickup_time', pickedUpDate: 'picked_up_date',
+  eta: 'eta', deliveryDate: 'delivery_date', remarks: 'remarks',
+};
+
+/* The functions raise short codes like 'not_editable' — turn them back into a typed error */
+function actionFailure(error: { message?: string; code?: string }): AssignmentActionError {
+  const m = error.message ?? '';
+  const known: AssignmentActionErrorCode[] = [
+    'reauth_required', 'not_editable', 'not_cancellable', 'driver_busy', 'truck_unavailable', 'no_changes', 'not_authorized',
+    'already_archived', 'truck_busy',
+  ];
+  for (const c of known) if (m.includes(c)) return new AssignmentActionError(c, m);
+  if (error.code === 'PGRST202') return new AssignmentActionError('not_deployed', m);   // function missing: migration not applied
+  if (error.code === '22023' || error.code === 'P0002') return new AssignmentActionError('invalid', m);
+  return new AssignmentActionError('network', m);
+}
+
+export async function editAssignment(id: string, changes: AssignmentEdit, reason: string): Promise<void> {
+  const payload = Object.fromEntries(
+    Object.entries(changes).map(([k, v]) => [EDIT_COLUMNS[k as keyof AssignmentEdit], v]),
+  );
+  const { error } = await supabase.rpc('edit_assignment', { p_id: id, p_changes: payload, p_reason: reason });
+  if (error) throw actionFailure(error);
+}
+
+export async function cancelAssignment(id: string): Promise<void> {
+  const { error } = await supabase.rpc('cancel_assignment', { p_id: id });
+  if (error) throw actionFailure(error);
+}
+
+/* ── Accounts: archive instead of delete, and new PIN ──
+   archive_driver() and reset_driver_pin() refuse unless the admin re-entered their password
+   in the last 5 minutes (verifyOwnPassword right before). All three write their own changes;
+   the caller reloads afterwards. */
+export async function archiveDriver(id: string): Promise<void> {
+  const { error } = await supabase.rpc('archive_driver', { p_driver_id: id });
+  if (error) throw actionFailure(error);
+}
+
+export async function archiveTruck(id: string): Promise<void> {
+  const { error } = await supabase.rpc('archive_truck', { p_truck_id: id });
+  if (error) throw actionFailure(error);
+}
+
+export async function resetDriverPin(id: string, pin: string): Promise<void> {
+  const { error } = await supabase.rpc('reset_driver_pin', { p_driver_id: id, p_pin: pin });
+  if (error) throw actionFailure(error);
 }
 
 /* Wipe everything except accounts + the audit log (the "reset all data" button). */

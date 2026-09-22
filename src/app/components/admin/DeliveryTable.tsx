@@ -23,25 +23,29 @@ function StatusBadge({ status }: { status: TaskStatus }) {
   );
 }
 
-function matchesPeriod(dateStr: string, period: FilterPeriod): boolean {
-  if (period === 'all') return true;
-  const now   = new Date();
-  const parts = dateStr.split('-');
-  if (parts.length < 3) return true;
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return true;
+/* When the delivery was created, in ms. createdAt comes from assignments.created_at; a row
+   dispatched moments ago that hasn't been reloaded yet has none, so it counts as "just now". */
+const createdMs = (a: Assignment) => {
+  const t = a.createdAt ? Date.parse(a.createdAt) : NaN;
+  return isNaN(t) ? Date.now() : t;
+};
 
-  if (period === 'today') {
-    return d.toISOString().slice(0, 10) === now.toISOString().slice(0, 10);
-  }
-  if (period === 'month') {
-    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
-  }
-  if (period === 'year') {
-    return d.getFullYear() === now.getFullYear();
-  }
+/* Filters by CREATED time, compared in the browser's local time (Philippine time for the
+   team) — not UTC, which would shift anything created before 8 AM to the previous day. */
+function matchesPeriod(a: Assignment, period: FilterPeriod): boolean {
+  if (period === 'all') return true;
+  const d   = new Date(createdMs(a));
+  const now = new Date();
+  const sameYear = d.getFullYear() === now.getFullYear();
+  if (period === 'year')  return sameYear;
+  if (period === 'month') return sameYear && d.getMonth() === now.getMonth();
+  if (period === 'today') return sameYear && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
   return true;
 }
+
+/* Newest first, by created time */
+const newestFirst = <T extends Assignment>(rows: T[]): T[] =>
+  [...rows].sort((x, y) => createdMs(y) - createdMs(x));
 
 const PERIOD_LABELS: Record<FilterPeriod, string> = {
   all:   'All Time',
@@ -147,17 +151,21 @@ export default function DeliveryTable({
   const matchesSearch = (fields: string[]) =>
     !q || fields.some((f) => f.toLowerCase().includes(q));
 
-  const filteredActive = assignments
-    .filter((a) => matchesPeriod(a.deliveryDate, period))
-    .filter((a) => matchesSearch([a.truckPlate, a.id, a.driverName, a.destination, a.company, a.taskStatus]));
+  /* Time filter (created time) + search, then newest first — the same for all three tabs */
+  const filteredActive = newestFirst(assignments
+    .filter((a) => matchesPeriod(a, period))
+    .filter((a) => matchesSearch([a.truckPlate, a.id, a.driverName, a.destination, a.company, a.taskStatus])));
 
-  const filteredDone = completed
-    .filter((c) => matchesPeriod(c.deliveryDate, period))
-    .filter((c) => matchesSearch([c.truckPlate, c.id, c.driverName, c.destination, c.company]));
+  const filteredDone = newestFirst(completed
+    .filter((c) => matchesPeriod(c, period))
+    .filter((c) => matchesSearch([c.truckPlate, c.id, c.driverName, c.destination, c.company])));
 
-  const filteredCancelled = cancelled
-    .filter((a) => matchesPeriod(a.deliveryDate, period))
-    .filter((a) => matchesSearch([a.truckPlate, a.id, a.driverName, a.destination, a.company, a.taskStatus]));
+  const filteredCancelled = newestFirst(cancelled
+    .filter((a) => matchesPeriod(a, period))
+    .filter((a) => matchesSearch([a.truckPlate, a.id, a.driverName, a.destination, a.company, a.taskStatus])));
+
+  /* A time range or search is narrowing the list */
+  const filtering = !!q || period !== 'all';
 
   /* Cancelled rows are plain Assignment objects, exactly like active ones, so both tabs
      render through the same table/card markup below instead of a duplicated copy. */
@@ -194,22 +202,22 @@ export default function DeliveryTable({
               <button onClick={() => setTab('active')}
                 className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-1.5 ${tab === 'active' ? 'bg-white shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
                 Active
-                {assignments.length > 0 && (
-                  <span className={`text-xs rounded-full px-1.5 py-0.5 min-w-[20px] text-center ${tab === 'active' ? 'bg-primary text-white' : 'bg-muted text-muted-foreground'}`}>{assignments.length}</span>
+                {filteredActive.length > 0 && (
+                  <span className={`text-xs rounded-full px-1.5 py-0.5 min-w-[20px] text-center ${tab === 'active' ? 'bg-primary text-white' : 'bg-muted text-muted-foreground'}`}>{filteredActive.length}</span>
                 )}
               </button>
               <button onClick={() => setTab('completed')}
                 className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-1.5 ${tab === 'completed' ? 'bg-white shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
                 Completed
-                {completed.length > 0 && (
-                  <span className={`text-xs rounded-full px-1.5 py-0.5 min-w-[20px] text-center ${tab === 'completed' ? 'bg-green-500 text-white' : 'bg-muted text-muted-foreground'}`}>{completed.length}</span>
+                {filteredDone.length > 0 && (
+                  <span className={`text-xs rounded-full px-1.5 py-0.5 min-w-[20px] text-center ${tab === 'completed' ? 'bg-green-500 text-white' : 'bg-muted text-muted-foreground'}`}>{filteredDone.length}</span>
                 )}
               </button>
               <button onClick={() => setTab('cancelled')}
                 className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-1.5 ${tab === 'cancelled' ? 'bg-white shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
                 Cancelled
-                {cancelled.length > 0 && (
-                  <span className={`text-xs rounded-full px-1.5 py-0.5 min-w-[20px] text-center ${tab === 'cancelled' ? 'bg-gray-500 text-white' : 'bg-muted text-muted-foreground'}`}>{cancelled.length}</span>
+                {filteredCancelled.length > 0 && (
+                  <span className={`text-xs rounded-full px-1.5 py-0.5 min-w-[20px] text-center ${tab === 'cancelled' ? 'bg-gray-500 text-white' : 'bg-muted text-muted-foreground'}`}>{filteredCancelled.length}</span>
                 )}
               </button>
             </div>
@@ -242,14 +250,13 @@ export default function DeliveryTable({
             <div className="py-16 text-center">
               <Package className="w-12 h-12 mx-auto mb-3 text-muted-foreground/30" />
               <p className="font-medium text-foreground">
-                {q
-                  ? 'No results for "' + search + '"'
-                  : (tab === 'cancelled' ? 'No cancelled deliveries' : 'No active assignments')
-                    + (period !== 'all' ? ' for ' + PERIOD_LABELS[period].toLowerCase() : '')}
+                {filtering
+                  ? 'No deliveries found for this filter'
+                  : (tab === 'cancelled' ? 'No cancelled deliveries' : 'No active assignments')}
               </p>
               <p className="text-sm text-muted-foreground mt-1">
-                {q
-                  ? 'Try a different search term.'
+                {filtering
+                  ? 'Try a different time range or search term.'
                   : tab === 'cancelled'
                     ? 'Assignments cancelled from Monitor will appear here.'
                     : 'Assign tasks from Drivers Management to see them here.'}
@@ -364,12 +371,10 @@ export default function DeliveryTable({
             <div className="py-14 text-center">
               <CheckCircle2 className="w-12 h-12 mx-auto mb-3 text-muted-foreground/30" />
               <p className="font-medium text-foreground">
-                {q
-                  ? 'No results for "' + search + '"'
-                  : 'No completed deliveries' + (period !== 'all' ? ' for ' + PERIOD_LABELS[period].toLowerCase() : '')}
+                {filtering ? 'No deliveries found for this filter' : 'No completed deliveries'}
               </p>
               <p className="text-sm text-muted-foreground mt-1">
-                {q ? 'Try a different search term.' : 'Completed deliveries from Drivers Management will appear here.'}
+                {filtering ? 'Try a different time range or search term.' : 'Completed deliveries from Drivers Management will appear here.'}
               </p>
             </div>
           ) : (

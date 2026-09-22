@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   User, Truck, MapPin, Building2, Calendar, MessageSquare,
   Activity, X, ClipboardList, CheckCircle2,
@@ -7,9 +7,16 @@ import {
   Navigation, Timer, AlarmClock, Camera, Search,
   Plus, ArrowLeft, ArrowRight, ChevronLeft, ChevronRight,
   Receipt, ClipboardCheck, ScrollText, FileCheck, PackageCheck,
+  Pencil, KeyRound,
 } from 'lucide-react';
 import { RegisterDriverModal, RegisterTruckModal } from './RegisterModals';
 import { Popover, PopoverAnchor, PopoverContent } from '../ui/popover';
+import TruckImage from '../TruckImage';
+import { truckSideImageFor } from '../../data/truckTypes';
+import {
+  verifyOwnPassword, editAssignment, cancelAssignment, AssignmentActionError,
+  type AssignmentActionErrorCode, type AssignmentEdit,
+} from '../../lib/db';
 
 /* ── Highlight helper ── */
 function Highlight({ text, query }: { text: string; query: string }) {
@@ -80,6 +87,124 @@ const time24ToDate = (base: Date, v: string): Date => {
   return d;
 };
 
+/* "Aug 3, 2026" → "2026-08-03" — the reverse of isoToDisplay, used to pre-fill the Edit form.
+   Returns '' when the stored text doesn't parse, so the field shows as empty/required. */
+const displayToIso = (s: string) => {
+  const m = /^([A-Z][a-z]{2}) (\d{1,2}), (\d{4})$/.exec((s ?? '').trim());
+  if (!m) return '';
+  const mi = MONTHS.indexOf(m[1]);
+  if (mi < 0) return '';
+  return `${m[3]}-${String(mi + 1).padStart(2, '0')}-${m[2].padStart(2, '0')}`;
+};
+
+/* "3:05 PM" → "15:05" — the reverse of time24ToDisplay */
+const displayToTime24 = (s: string) => {
+  const m = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec((s ?? '').trim());
+  if (!m) return '';
+  let h = Number(m[1]) % 12;
+  if (m[3].toUpperCase() === 'PM') h += 12;
+  return `${String(h).padStart(2, '0')}:${m[2]}`;
+};
+
+/* A real calendar date with a 4-digit year — rejects "20266-01-01" and Feb 30 */
+const isRealIso = (iso: string) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false;
+  const [y, m, d] = iso.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d;
+};
+
+/* Remarks and "Reason for change" share this limit (the database checks it too) */
+const TEXT_MAX = 150;
+
+/* The browser reports a half-typed or impossible date (e.g. 02/30) as "bad input" and an empty value */
+type BadDates = { pickup: boolean; delivery: boolean };
+const INVALID_DATE = 'Enter a real date (mm/dd/yyyy, 4-digit year).';
+
+/* Latest date allowed for pickup / delivery: today + 1 year (worked out now, never hardcoded) */
+const oneYearAheadIso = () => {
+  const d = new Date();
+  return dateToIso(new Date(d.getFullYear() + 1, d.getMonth(), d.getDate()));
+};
+
+/* Date rules shared by the live check (while typing) and submit.
+   `requireFilled` also flags empty fields — submit only, not while the admin is still typing. */
+function dateErrors(pickup: string, delivery: string, bad: BadDates, requireFilled: boolean): Record<string, string> {
+  const e: Record<string, string> = {};
+  const today      = todayIso();               // worked out now, never hardcoded
+  const latest     = oneYearAheadIso();
+  const pickupOk   = !!pickup && isRealIso(pickup);
+  const deliveryOk = !!delivery && isRealIso(delivery);
+
+  if (bad.pickup || (pickup && !pickupOk))       e.pickedUpDate = INVALID_DATE;
+  else if (!pickup) { if (requireFilled)         e.pickedUpDate = 'Select a picked up date.'; }
+  else if (pickup < today)                       e.pickedUpDate = 'Picked up date cannot be before today.';
+  else if (pickup > latest)                      e.pickedUpDate = 'Picked up date cannot be more than 1 year ahead.';
+
+  if (bad.delivery || (delivery && !deliveryOk)) e.date = INVALID_DATE;
+  else if (!delivery) { if (requireFilled)       e.date = 'Select a delivery date.'; }
+  else if (delivery < today)                     e.date = 'Delivery date cannot be in the past.';
+  else if (delivery > latest)                    e.date = 'Delivery date cannot be more than 1 year ahead.';
+  else if (pickupOk && delivery < pickup)        e.date = 'Delivery date cannot be before the picked up date.';
+  return e;
+}
+
+/* Every schedule rule checked on submit — used by both Dispatch Truck and Edit */
+function scheduleErrors(s: {
+  pickup: string; delivery: string; pickupTime: string; eta: string; remarks: string; bad: BadDates;
+}): Record<string, string> {
+  const e = dateErrors(s.pickup, s.delivery, s.bad, true);
+  if (!s.pickupTime) e.pickupTime = 'Select a pick up time.';
+  if (!s.eta)        e.eta        = 'Select an ETA.';
+
+  /* If the delivery date is today, times must be in the future */
+  if (s.delivery && !e.date) {
+    const selDate = isoToDate(s.delivery);
+    const todayMidnight = new Date(); todayMidnight.setHours(0, 0, 0, 0);
+    if (selDate.getTime() === todayMidnight.getTime()) {
+      const now = new Date();
+      if (s.pickupTime && time24ToDate(selDate, s.pickupTime) <= now)
+        e.pickupTime = "Pickup time must be in the future for today's date.";
+      if (s.eta && time24ToDate(selDate, s.eta) <= now)
+        e.eta = "ETA must be in the future for today's date.";
+    }
+  }
+
+  /* ── ETA must not precede pickup — both are zero-padded 24-hour "HH:MM",
+     so a plain string compare orders them correctly.
+
+     This only applies when pickup and delivery fall on the SAME day. Across
+     different days the comparison is meaningless: a pickup at 14:00 on the 19th
+     and an arrival at 08:00 on the 21st is perfectly valid, but a raw time
+     compare would reject it. Same-day behaviour is unchanged. ── */
+  const sameDay = !!s.pickup && !!s.delivery && s.pickup === s.delivery;
+  if (sameDay && s.pickupTime && s.eta && !e.eta && s.eta < s.pickupTime)
+    e.eta = 'ETA cannot be earlier than the pick up time.';
+
+  if (s.remarks.length > TEXT_MAX) e.remarks = `Remarks can be at most ${TEXT_MAX} characters.`;
+  return e;
+}
+
+/* Plain-language text for the errors the edit/cancel database functions can return */
+const actionMessage = (code: AssignmentActionErrorCode): string => ({
+  wrong_password:    'Incorrect password.',
+  reauth_required:   'Please confirm your password again.',
+  not_editable:      'This delivery is no longer "Assigned" — the driver may have picked it up — so it can\'t be edited.',
+  not_cancellable:   'This delivery is no longer "Assigned" — the driver may have picked it up — so it can\'t be cancelled.',
+  driver_busy:       'That driver was just given another delivery. Pick a different driver.',
+  truck_unavailable: 'That truck is no longer available. Pick a different truck.',
+  no_changes:        'Nothing has changed.',
+  not_authorized:    'Your account is not allowed to make this change.',
+  not_deployed:      'This feature isn\'t set up on the database yet (the migration hasn\'t been applied).',
+  already_archived:  'That record has been archived. Refresh the page.',
+  truck_busy:        'That truck is on another delivery. Pick a different truck.',
+  invalid:           'The server rejected one of the values. Check the form and try again.',
+  network:           'Couldn\'t reach the server. Check your connection and try again.',
+}[code]);
+
+const errorCode = (err: unknown): AssignmentActionErrorCode =>
+  err instanceof AssignmentActionError ? err.code : 'network';
+
 /* Slim, light scrollbars — the browser default renders as heavy dark bars */
 const thinScroll =
   '[scrollbar-width:thin] [scrollbar-color:#d1d5db_transparent] ' +
@@ -89,7 +214,8 @@ const thinScroll =
 
 /* ─── Date field — type into the input, or click the icon for a calendar ─── */
 function DateField({ value, onChange, hasError, minIso, maxIso }: {
-  value: string; onChange: (v: string) => void; hasError?: boolean;
+  /* `bad` = the browser holds a half-typed or impossible date (its value is then '') */
+  value: string; onChange: (v: string, bad?: boolean) => void; hasError?: boolean;
   /* Bound the selectable range; typing is still validated on submit */
   minIso?: string;
   maxIso?: string;
@@ -126,8 +252,10 @@ function DateField({ value, onChange, hasError, minIso, maxIso }: {
         <div className="relative">
           <input
             type="date" value={value}
-            onChange={(e) => onChange(e.target.value)}
-            min={minIso} max={maxIso}
+            onChange={(e) => onChange(e.target.value, e.target.validity.badInput)}
+            onBlur={(e) => { if (e.target.validity.badInput) onChange(e.target.value, true); }}
+            /* Without a max the browser lets the year run to 6 digits */
+            min={minIso} max={maxIso ?? '9999-12-31'}
             className={`${fieldBase} ${fieldTone(hasError)} pr-10 [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-inner-spin-button]:hidden`}
           />
           <button type="button" onClick={openCalendar} aria-label="Open calendar"
@@ -158,7 +286,7 @@ function DateField({ value, onChange, hasError, minIso, maxIso }: {
 
         <div className="grid grid-cols-7 gap-0.5 mb-1">
           {WEEKDAYS.map((w) => (
-            <span key={w} className="text-[10px] font-semibold text-muted-foreground text-center py-1">{w}</span>
+            <span key={w} className="text-[12px] font-semibold text-muted-foreground text-center py-1">{w}</span>
           ))}
         </div>
 
@@ -222,7 +350,7 @@ function TimeField({ value, onChange, hasError }: {
       active ? 'bg-[#1DBF73] text-white' : 'text-foreground hover:bg-[#1DBF73]/10'
     }`;
 
-  const colHead = 'text-[10px] font-semibold uppercase tracking-wider text-muted-foreground text-center pb-1.5 mb-1 border-b border-border';
+  const colHead = 'text-[12px] font-semibold uppercase tracking-wide text-muted-foreground text-center pb-1.5 mb-1 border-b border-border';
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -346,7 +474,7 @@ function StepProgress({ step, total = 2 }: { step: number; total?: number }) {
         <div className="h-full bg-[#1DBF73] rounded-full transition-all duration-300"
              style={{ width: `${(step / total) * 100}%` }} />
       </div>
-      <span className="hidden sm:inline text-[11px] font-medium text-muted-foreground tabular-nums whitespace-nowrap">Step {step} of {total}</span>
+      <span className="hidden sm:inline text-[12px] font-medium text-muted-foreground tabular-nums whitespace-nowrap">Step {step} of {total}</span>
     </div>
   );
 }
@@ -423,6 +551,101 @@ function ResourceSelect({ value, onChange, options, placeholder, emptyLabel, onA
       </select>
       <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
     </div>
+  );
+}
+
+/* ─── Truck preview pieces (Dispatch Truck, Edit, View Details) ─── */
+
+/* Picture for the truck's classification (shared mapping in data/truckTypes.ts);
+   the neutral truck icon when the type has no picture (missing / "Tanker"). */
+function TruckThumb({ classification }: { classification?: string }) {
+  return (
+    <div className="w-16 h-12 rounded-lg bg-muted/60 border border-border flex items-center justify-center flex-shrink-0 overflow-hidden">
+      <TruckImage classification={classification} className="w-full h-full" iconClassName="w-6 h-6 text-muted-foreground" />
+    </div>
+  );
+}
+
+/* Capacity is stored as one text value, e.g. "8,000 – 20,000 kg (8–20 t)" (see formatCapacity) */
+function CapacityBadge({ capacity }: { capacity?: string }) {
+  if (!capacity) return <span className="text-xs text-muted-foreground whitespace-nowrap">Capacity not set</span>;
+  return (
+    <span className="inline-flex items-center rounded-full bg-[#1DBF73]/15 border border-[#1DBF73]/30 px-3 py-1 text-xs font-semibold text-[#0b7a47] whitespace-nowrap">
+      {capacity}
+    </span>
+  );
+}
+
+function TruckPreviewCard({ truck }: { truck: LocalTruck }) {
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-white p-3">
+      <TruckThumb classification={truck.classification} />
+      <div className="flex-1 min-w-[8rem]">
+        <p className="text-sm font-semibold text-foreground break-words">{truck.classification || 'Type not set'}</p>
+        <p className="text-xs text-muted-foreground break-words">{truck.plateNumber}</p>
+      </div>
+      <CapacityBadge capacity={truck.capacity} />
+    </div>
+  );
+}
+
+/* Side-view picture + plate, highlighted type and capacity badge.
+   Used by View Details (plate first) and the Edit preview (type first — it's what you're choosing). */
+function TruckSummary({ truck, fallbackPlate, typeFirst = false }: {
+  truck: LocalTruck | null; fallbackPlate?: string; typeFirst?: boolean;
+}) {
+  const plate = (
+    <p className="text-2xl sm:text-[28px] font-bold text-foreground leading-tight break-words">
+      {truck?.plateNumber ?? fallbackPlate}
+    </p>
+  );
+  const type = (
+    <p className={`text-lg sm:text-xl font-bold uppercase leading-tight break-words mt-0.5 ${
+      truck?.classification ? 'text-blue-600' : 'text-muted-foreground'}`}>
+      {truck?.classification || 'Type not set'}
+    </p>
+  );
+  return (
+    <div className="flex items-center gap-3 sm:gap-4">
+      {/* Side view: shows the left part of the 1200×400 canvas, where the truck is */}
+      <div className="w-[40%] max-w-[11rem] aspect-[7/5] flex items-center justify-center flex-shrink-0 overflow-hidden">
+        <TruckImage anchorLeft src={truckSideImageFor(truck?.classification)} alt={truck?.classification}
+          className="w-full h-full" iconClassName="w-10 h-10 text-muted-foreground" />
+      </div>
+      <div className="flex-1 min-w-0">
+        {typeFirst ? (
+          <>
+            {type}
+            <p className="text-sm font-medium text-muted-foreground mt-1">Plate Number</p>
+            <p className="text-base font-bold text-foreground leading-tight break-words">{truck?.plateNumber ?? fallbackPlate}</p>
+          </>
+        ) : (
+          <>
+            <p className="text-sm font-medium text-foreground">Plate Number</p>
+            {plate}
+            {type}
+          </>
+        )}
+        <div className="mt-2">
+          {truck?.capacity ? (
+            <span className="inline-flex items-center rounded-full bg-[#1DBF73] px-3 py-1.5 text-xs font-semibold text-white break-words">
+              {truck.capacity}
+            </span>
+          ) : (
+            <span className="text-xs text-muted-foreground">Capacity not set</span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* Live "n/150" counter under a limited text field */
+function CharCount({ value, max = TEXT_MAX }: { value: string; max?: number }) {
+  return (
+    <span className={`text-[12px] tabular-nums ${value.length >= max ? 'text-amber-600 font-medium' : 'text-muted-foreground'}`}>
+      {value.length}/{max}
+    </span>
   );
 }
 
@@ -508,7 +731,7 @@ function ImagePreviewModal({ url, docType, onClose }: { url: string; docType: st
 function DetailCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="rounded-xl border border-border/70 bg-muted/25 p-4">
-      <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-3">{title}</p>
+      <p className="text-[12px] font-semibold text-muted-foreground uppercase tracking-wider mb-3">{title}</p>
       <div className="space-y-3">{children}</div>
     </section>
   );
@@ -523,7 +746,7 @@ function DetailRow({ icon, label, value, hero = false }: {
     <div className="flex items-start gap-2.5">
       <span className="text-muted-foreground mt-0.5 flex-shrink-0">{icon}</span>
       <div className="min-w-0 flex-1">
-        <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">{label}</p>
+        <p className="text-[12px] font-medium text-muted-foreground uppercase tracking-wide">{label}</p>
         {filled ? (
           <p className={hero
             ? 'text-2xl font-bold text-foreground leading-tight mt-0.5'
@@ -546,7 +769,7 @@ function RouteRow({ route }: { route: string }) {
     <div className="flex items-start gap-2.5">
       <Navigation className="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0" />
       <div className="min-w-0 flex-1">
-        <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Route</p>
+        <p className="text-[12px] font-medium text-muted-foreground uppercase tracking-wide">Route</p>
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[15px] font-semibold text-foreground break-words">{from || route}</span>
           {to && <ArrowRight className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />}
@@ -579,9 +802,9 @@ function DeliveryStepper({ status }: { status: TaskStatus }) {
                 done   ? 'bg-blue-500 border-blue-500 text-white'
                 : active ? 'bg-white border-blue-500 text-blue-600 ring-4 ring-blue-100'
                 : 'bg-white border-border text-muted-foreground'}`}>
-                {done ? <Check className="w-3.5 h-3.5" /> : <span className="text-[10px] font-bold">{i + 1}</span>}
+                {done ? <Check className="w-3.5 h-3.5" /> : <span className="text-[12px] font-bold">{i + 1}</span>}
               </span>
-              <span className={`mt-1.5 text-[11px] text-center leading-tight ${
+              <span className={`mt-1.5 text-[12px] text-center leading-tight ${
                 active ? 'font-semibold text-blue-600' : done ? 'font-medium text-foreground' : 'text-muted-foreground'}`}>
                 {step}
               </span>
@@ -604,7 +827,7 @@ function RemarksBlock({ remarks }: { remarks?: string }) {
   if (!remarks?.trim()) {
     return (
       <section className="rounded-xl border border-dashed border-border p-4">
-        <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Remarks</p>
+        <p className="text-[12px] font-semibold text-muted-foreground uppercase tracking-wider">Remarks</p>
         <p className="text-xs text-muted-foreground mt-1">No remarks for this assignment.</p>
       </section>
     );
@@ -613,10 +836,10 @@ function RemarksBlock({ remarks }: { remarks?: string }) {
     <section className="rounded-xl border border-border/70 bg-muted/25 overflow-hidden">
       <button type="button" onClick={() => setExpanded((v) => !v)}
         className="w-full flex items-center justify-between p-4 hover:bg-accent/40 transition-colors">
-        <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Remarks</span>
+        <span className="text-[12px] font-semibold text-muted-foreground uppercase tracking-wider">Remarks</span>
         {expanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
       </button>
-      <p className={`px-4 pb-4 text-sm text-foreground leading-relaxed ${expanded ? '' : 'line-clamp-2'}`}>
+      <p className={`px-4 pb-4 text-sm text-foreground leading-relaxed break-words [overflow-wrap:anywhere] ${expanded ? '' : 'line-clamp-2'}`}>
         {remarks}
       </p>
     </section>
@@ -658,26 +881,31 @@ function DocChip({ doc }: { doc: AssignmentDoc }) {
     : doc.docStatus === 'rejected' ? { cls: 'bg-red-50 text-red-700 border-red-200', icon: <XCircle className="w-3 h-3" />, label: 'Rejected' }
     : { cls: 'bg-amber-50 text-amber-700 border-amber-200', icon: <Clock className="w-3 h-3" />, label: 'Pending review' };
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] font-medium whitespace-nowrap ${cfg.cls}`}>
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[12px] font-medium whitespace-nowrap ${cfg.cls}`}>
       {cfg.icon}{cfg.label}
     </span>
   );
 }
 
 /* ─── View Details Modal ───────────────────────────── */
-function ViewDetailsModal({ assignment, driver, onClose, onApproveDoc, onRejectDoc, onComplete, onCancel, onSimulateLate, isViewOnly = false, adminEmail }: {
+function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApproveDoc, onRejectDoc, onComplete, onCancel, onSimulateLate, isViewOnly = false, adminEmail }: {
   assignment: Assignment | null; driver: LocalDriver | null;
+  /* null when the truck record was deleted — the plate saved on the assignment is still shown */
+  truck: LocalTruck | null;
   onClose: () => void;
+  onEdit:         () => void;
   onApproveDoc:   (id: string, docType: string) => void;
   onRejectDoc:    (id: string, docType: string, reason: string) => void;
   onComplete:     (id: string) => void;
-  onCancel:       (id: string) => void;
+  onCancel:       (id: string) => Promise<void>;
   onSimulateLate: (id: string) => void;
   isViewOnly?:    boolean;
   adminEmail?:    string | null;
 }) {
   const isDemoAdmin = adminEmail === DEMO_ADMIN_EMAIL;
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [cancelBusy,    setCancelBusy]    = useState(false);
+  const [cancelError,   setCancelError]   = useState('');
   const [previewDoc,    setPreviewDoc]    = useState<{ url: string; type: string } | null>(null);
   const [rejectingDoc,  setRejectingDoc]  = useState<string | null>(null);
   const [rejectReason,  setRejectReason]  = useState('');
@@ -728,7 +956,7 @@ function ViewDetailsModal({ assignment, driver, onClose, onApproveDoc, onRejectD
           {/* Delivery progress */}
           <div className="rounded-xl border border-border/70 p-4">
             <div className="flex items-center justify-between mb-4">
-              <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Delivery Progress</p>
+              <p className="text-[12px] font-semibold text-muted-foreground uppercase tracking-wider">Delivery Progress</p>
               <StatusBadge status={assignment.taskStatus} size="xs" />
             </div>
             <DeliveryStepper status={assignment.taskStatus} />
@@ -752,9 +980,13 @@ function ViewDetailsModal({ assignment, driver, onClose, onApproveDoc, onRejectD
             </div>
           )}
 
+          {/* Truck */}
+          <DetailCard title="Truck">
+            <TruckSummary truck={truck} fallbackPlate={assignment.truckPlate} />
+          </DetailCard>
+
           {/* Route & Client */}
           <DetailCard title="Route & Client">
-            <DetailRow icon={<Truck className="w-4 h-4" />}     label="Truck #" value={assignment.truckPlate} />
             <RouteRow route={assignment.destination} />
             <DetailRow icon={<Building2 className="w-4 h-4" />} label="Client" value={assignment.company} />
             <DetailRow icon={<MapPin className="w-4 h-4" />}    label="Pickup Location" value={assignment.pickupLocation} />
@@ -817,7 +1049,7 @@ function ViewDetailsModal({ assignment, driver, onClose, onApproveDoc, onRejectD
                         <div className="min-w-0">
                           <p className="text-foreground font-medium leading-snug break-words">{photo.location}</p>
                           {photo.coords && (
-                            <p className="text-[10px] text-muted-foreground mt-0.5">
+                            <p className="text-[12px] text-muted-foreground mt-0.5">
                               {photo.coords.lat.toFixed(5)}° N, {photo.coords.lng.toFixed(5)}° E
                             </p>
                           )}
@@ -841,7 +1073,7 @@ function ViewDetailsModal({ assignment, driver, onClose, onApproveDoc, onRejectD
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-0.5">
                         <span className="text-xs font-semibold text-amber-800 capitalize">{report.type} Delay</span>
-                        <span className="text-[10px] text-amber-600">{report.reportedAt}</span>
+                        <span className="text-[12px] text-amber-600">{report.reportedAt}</span>
                       </div>
                       <p className="text-xs text-amber-700">{report.reason}</p>
                     </div>
@@ -868,12 +1100,12 @@ function ViewDetailsModal({ assignment, driver, onClose, onApproveDoc, onRejectD
             <div className="flex items-center gap-3 rounded-xl border border-border/70 bg-muted/25 p-4 mb-3">
               <div className="relative flex items-center justify-center">
                 <ProgressRing value={approvedCount} total={assignment.documents.length} />
-                <span className="absolute text-[11px] font-bold text-foreground">
+                <span className="absolute text-[12px] font-bold text-foreground">
                   {approvedCount}/{assignment.documents.length}
                 </span>
               </div>
               <div className="min-w-0">
-                <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Documents</p>
+                <p className="text-[12px] font-semibold text-muted-foreground uppercase tracking-wider">Documents</p>
                 <p className="text-[15px] font-semibold text-foreground">
                   {approvedCount} of {assignment.documents.length} approved
                 </p>
@@ -982,11 +1214,21 @@ function ViewDetailsModal({ assignment, driver, onClose, onApproveDoc, onRejectD
 
         {/* ── Sticky action bar ── */}
         <footer className="flex items-center gap-2 px-5 py-4 border-t border-border flex-shrink-0 bg-white rounded-b-xl">
-          <button onClick={onClose}
-            className="flex-1 py-2.5 border border-border rounded-xl text-sm font-medium text-foreground hover:bg-accent transition-colors">
-            Close
-          </button>
-          {assignment && !isViewOnly && (
+          {/* Editable only while Assigned (the database re-checks this on save).
+              Read-only viewers always get Close. */}
+          {assignment?.taskStatus === 'Assigned' && !isViewOnly ? (
+            <button onClick={onEdit}
+              className="flex-1 py-2.5 bg-[#1DBF73] text-white rounded-xl text-sm font-semibold hover:bg-[#19a865] transition-colors flex items-center justify-center gap-2">
+              <Pencil className="w-4 h-4" /> Edit
+            </button>
+          ) : (
+            <button onClick={onClose}
+              className="flex-1 py-2.5 border border-border rounded-xl text-sm font-medium text-foreground hover:bg-accent transition-colors">
+              Close
+            </button>
+          )}
+          {/* Hidden once the driver has picked it up; cancel_assignment() refuses it too */}
+          {assignment && !isViewOnly && assignment.taskStatus === 'Assigned' && (
             <button onClick={() => setConfirmCancel(true)}
               className="flex-1 py-2.5 border border-red-200 text-red-600 rounded-xl text-sm font-medium hover:bg-red-50 transition-colors flex items-center justify-center gap-2">
               <Trash2 className="w-4 h-4" /> Cancel Assignment
@@ -1005,11 +1247,22 @@ function ViewDetailsModal({ assignment, driver, onClose, onApproveDoc, onRejectD
               <p className="text-xs text-muted-foreground text-center mt-1">
                 This releases {driver.name} and the assigned truck. It can't be undone.
               </p>
+              {cancelError && (
+                <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mt-3 break-words">{cancelError}</p>
+              )}
               <div className="flex gap-2 mt-4">
-                <button onClick={() => setConfirmCancel(false)}
+                <button onClick={() => { setConfirmCancel(false); setCancelError(''); }}
                   className="flex-1 py-2 border border-border rounded-lg text-sm hover:bg-accent transition-colors">Keep It</button>
-                <button onClick={() => { onCancel(assignment.id); onClose(); }}
-                  className="flex-1 py-2 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 transition-colors">Yes, Cancel</button>
+                <button disabled={cancelBusy}
+                  onClick={async () => {
+                    setCancelBusy(true); setCancelError('');
+                    try { await onCancel(assignment.id); onClose(); }
+                    catch (err) { setCancelError(actionMessage(errorCode(err))); }
+                    finally { setCancelBusy(false); }
+                  }}
+                  className="flex-1 py-2 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                  {cancelBusy ? 'Cancelling…' : 'Yes, Cancel'}
+                </button>
               </div>
             </div>
           </div>
@@ -1024,6 +1277,352 @@ function ViewDetailsModal({ assignment, driver, onClose, onApproveDoc, onRejectD
   );
 }
 
+/* ─── Edit Assignment Modal ────────────────────────── */
+/* Failed password attempts are counted per browser tab and survive closing/reopening
+   the modal. Supabase Auth also rate-limits sign-ins on its own servers. */
+const REAUTH_MAX_FAILS   = 3;
+const REAUTH_COOLDOWN_MS = 30_000;
+let reauthFails       = 0;
+let reauthLockedUntil = 0;
+
+function EditAssignmentModal({ assignment, drivers, trucks, assignments, addressBook, onClose, onSaved, onServerChange }: {
+  /* Live copy from props — null once it leaves the active list (completed/cancelled elsewhere) */
+  assignment: Assignment | null;
+  drivers: LocalDriver[]; trucks: LocalTruck[]; assignments: Assignment[];
+  addressBook: { from: string[]; to: string[]; pickup: string[] };
+  onClose: () => void;
+  onSaved: (id: string) => void;
+  onServerChange: (action: () => Promise<void>) => Promise<void>;
+}) {
+  /* The version the form was opened with */
+  const [original] = useState(assignment);
+  const [routeFrom, routeTo] = (original?.destination ?? '').split('→').map((s) => s.trim());
+
+  const [f, setF] = useState({
+    driverId: original?.driverId ?? '', truckId: original?.truckId ?? '',
+    from: routeFrom ?? '', to: routeTo ?? '',
+    company: original?.company ?? '', pickupLocation: original?.pickupLocation ?? '',
+    pickup: displayToIso(original?.pickedUpDate ?? ''), delivery: displayToIso(original?.deliveryDate ?? ''),
+    pickupTime: displayToTime24(original?.pickupTime ?? ''), eta: displayToTime24(original?.eta ?? ''),
+    remarks: original?.remarks ?? '', reason: '',
+  });
+  const [badDates,  setBadDates]  = useState<BadDates>({ pickup: false, delivery: false });
+  const [errors,    setErrors]    = useState<Record<string, string>>({});
+  const [formError, setFormError] = useState('');
+
+  /* Password confirmation step */
+  const [pending,  setPending]  = useState<AssignmentEdit | null>(null);
+  const [password, setPassword] = useState('');
+  const [pwError,  setPwError]  = useState('');
+  const [busy,     setBusy]     = useState(false);
+  const [now,      setNow]      = useState(Date.now());
+
+  /* Tick once a second while the password step is open, so the cooldown counts down */
+  useEffect(() => {
+    if (!pending) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [pending]);
+
+  if (!original) return null;
+
+  /* A poll may show the driver already picked it up — lock the form (the database refuses it anyway) */
+  const stillEditable = !!assignment && assignment.taskStatus === 'Assigned';
+  const lockedFor = Math.max(0, Math.ceil((reauthLockedUntil - now) / 1000));
+
+  const set = (key: keyof typeof f, value: string, errKey: string = key) => {
+    setF((p) => ({ ...p, [key]: value }));
+    setErrors((p) => ({ ...p, [errKey]: '' }));
+    setFormError('');
+  };
+
+  const setDate = (which: 'pickup' | 'delivery', v: string, bad?: boolean) => {
+    const nextBad = { ...badDates, [which]: !!bad };
+    const next    = { ...f, [which]: v };
+    setBadDates(nextBad);
+    setF(next);
+    setFormError('');
+    setErrors((p) => ({ ...p, pickedUpDate: '', date: '', eta: '', ...dateErrors(next.pickup, next.delivery, nextBad, false) }));
+  };
+
+  /* Drivers not on another active delivery (plus this one's driver); Available trucks (plus this one's truck) */
+  const busyDrivers   = new Set(assignments.filter((a) => a.id !== original.id).map((a) => a.driverId));
+  const driverOptions = drivers.filter((d) => !busyDrivers.has(d.id)).map((d) => ({ id: d.id, label: d.name }));
+  const truckOptions  = trucks.filter((t) => t.status === 'Available' || t.id === original.truckId)
+    .map((t) => ({ id: t.id, label: t.plateNumber }));
+  const selectedTruck = trucks.find((t) => t.id === f.truckId) ?? null;
+
+  const validate = () => {
+    const e: Record<string, string> = {};
+    if (!f.driverId)              e.driver         = 'Select a driver.';
+    if (!f.truckId)               e.truck          = 'Select a truck.';
+    if (!f.from.trim())           e.from           = 'Enter an origin.';
+    if (!f.to.trim())             e.to             = 'Enter a destination.';
+    if (!f.company.trim())        e.company        = 'Enter a client name.';
+    if (!f.pickupLocation.trim()) e.pickupLocation = 'Enter a pickup location.';
+    Object.assign(e, scheduleErrors({
+      pickup: f.pickup, delivery: f.delivery, pickupTime: f.pickupTime, eta: f.eta, remarks: f.remarks, bad: badDates,
+    }));
+    if (!f.reason.trim())                    e.reason = 'Enter the reason for this change.';
+    else if (f.reason.trim().length > TEXT_MAX) e.reason = `Reason can be at most ${TEXT_MAX} characters.`;
+    setErrors(e);
+    return Object.keys(e).length === 0;
+  };
+
+  /* Only the fields that differ from the current record, in the stored formats */
+  const buildChanges = (): AssignmentEdit => {
+    const base = assignment ?? original;
+    const next: Required<AssignmentEdit> = {
+      driverId: f.driverId, truckId: f.truckId,
+      destination: `${f.from.trim()} → ${f.to.trim()}`,
+      company: f.company.trim(), pickupLocation: f.pickupLocation.trim(),
+      pickupTime: time24ToDisplay(f.pickupTime), pickedUpDate: isoToDisplay(f.pickup),
+      eta: time24ToDisplay(f.eta), deliveryDate: isoToDisplay(f.delivery),
+      remarks: f.remarks.trim(),
+    };
+    const before: Required<AssignmentEdit> = {
+      driverId: base.driverId, truckId: base.truckId, destination: base.destination,
+      company: base.company, pickupLocation: base.pickupLocation,
+      pickupTime: base.pickupTime, pickedUpDate: base.pickedUpDate,
+      eta: base.eta, deliveryDate: base.deliveryDate, remarks: base.remarks,
+    };
+    return Object.fromEntries(
+      (Object.keys(next) as (keyof AssignmentEdit)[]).filter((k) => next[k] !== before[k]).map((k) => [k, next[k]]),
+    );
+  };
+
+  const handleSave = () => {
+    if (!stillEditable || !validate()) return;
+    const changes = buildChanges();
+    if (Object.keys(changes).length === 0) { setFormError('Nothing has changed yet.'); return; }
+    setPwError('');
+    setPending(changes);
+  };
+
+  const handleConfirm = async () => {
+    if (!pending || !password || busy || Date.now() < reauthLockedUntil) return;
+    setBusy(true);
+    setPwError('');
+    const typed = password;
+    setPassword('');                     // don't keep the password in state any longer than needed
+    try {
+      await verifyOwnPassword(typed);
+      reauthFails = 0;
+      await onServerChange(() => editAssignment(original.id, pending, f.reason.trim()));
+      onSaved(original.id);
+    } catch (err) {
+      const code = errorCode(err);
+      if (code === 'wrong_password') {
+        reauthFails += 1;
+        if (reauthFails >= REAUTH_MAX_FAILS) {
+          reauthFails = 0;
+          reauthLockedUntil = Date.now() + REAUTH_COOLDOWN_MS;
+          setNow(Date.now());
+          setPwError(`Too many failed attempts. Try again in ${REAUTH_COOLDOWN_MS / 1000} seconds.`);
+        } else {
+          const left = REAUTH_MAX_FAILS - reauthFails;
+          setPwError(`Incorrect password. ${left} attempt${left === 1 ? '' : 's'} left.`);
+        }
+      } else {
+        setPwError(actionMessage(code));
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const errText = (k: string) => errors[k] ? <p className="text-xs text-red-500 mt-1">{errors[k]}</p> : null;
+
+  return (
+    <>
+      <ModalShell title={`Edit Delivery · ${original.id}`} onClose={onClose}>
+        {!stillEditable && (
+          <div className="flex items-start gap-2 p-3 mb-5 bg-red-50 border border-red-200 rounded-xl">
+            <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-red-700">{actionMessage('not_editable')}</p>
+          </div>
+        )}
+
+        <SectionHeader>Assignment</SectionHeader>
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <FieldLabel required>Driver Name</FieldLabel>
+              <ResourceSelect value={f.driverId} onChange={(v) => set('driverId', v, 'driver')}
+                options={driverOptions} placeholder="Select a driver…" emptyLabel="No drivers available"
+                onAdd={() => {}} hasError={!!errors.driver} />
+              {errText('driver')}
+            </div>
+            <div>
+              <FieldLabel required>Truck</FieldLabel>
+              <ResourceSelect value={f.truckId} onChange={(v) => set('truckId', v, 'truck')}
+                options={truckOptions} placeholder="Select a truck…" emptyLabel="No trucks available"
+                onAdd={() => {}} hasError={!!errors.truck} />
+              {errText('truck')}
+            </div>
+          </div>
+
+          {selectedTruck && (
+            <div className="rounded-xl border border-border bg-white p-3">
+              <TruckSummary truck={selectedTruck} typeFirst />
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <FieldLabel required>From</FieldLabel>
+              <AddressAutocomplete value={f.from} onChange={(v) => set('from', v)} options={addressBook.from}
+                placeholder="e.g. Origin city or municipality" hasError={!!errors.from}
+                icon={<MapPin className="w-3.5 h-3.5" />} />
+              {errText('from')}
+            </div>
+            <div>
+              <FieldLabel required>To</FieldLabel>
+              <AddressAutocomplete value={f.to} onChange={(v) => set('to', v)} options={addressBook.to}
+                placeholder="e.g. Destination city or municipality" hasError={!!errors.to}
+                icon={<Navigation className="w-3.5 h-3.5" />} />
+              {errText('to')}
+            </div>
+          </div>
+
+          <div>
+            <FieldLabel required>Client</FieldLabel>
+            <div className="relative">
+              <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+              <input type="text" value={f.company} onChange={(e) => set('company', e.target.value)}
+                placeholder="e.g. ABC Retail Corp"
+                className={`${fieldBase} ${fieldTone(!!errors.company)} pl-9`} />
+            </div>
+            {errText('company')}
+          </div>
+
+          <div>
+            <FieldLabel required>Pickup Location</FieldLabel>
+            <AddressAutocomplete value={f.pickupLocation} onChange={(v) => set('pickupLocation', v)}
+              options={addressBook.pickup} placeholder="e.g. Warehouse A, Valenzuela City"
+              hasError={!!errors.pickupLocation} icon={<Package className="w-3.5 h-3.5" />} />
+            {errText('pickupLocation')}
+          </div>
+        </div>
+
+        <div className="mt-7">
+          <SectionHeader>Schedule</SectionHeader>
+        </div>
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <FieldLabel required>Picked Up Date</FieldLabel>
+              <DateField value={f.pickup} onChange={(v, bad) => setDate('pickup', v, bad)}
+                hasError={!!errors.pickedUpDate} minIso={todayIso()} maxIso={f.delivery || oneYearAheadIso()} />
+              {errText('pickedUpDate')}
+            </div>
+            <div>
+              <FieldLabel required>Pick Up Time</FieldLabel>
+              <TimeField value={f.pickupTime}
+                onChange={(v) => { set('pickupTime', v); setErrors((p) => ({ ...p, eta: '' })); }}
+                hasError={!!errors.pickupTime} />
+              {errText('pickupTime')}
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <FieldLabel required>Delivery Date</FieldLabel>
+              <DateField value={f.delivery} onChange={(v, bad) => setDate('delivery', v, bad)}
+                hasError={!!errors.date}
+                minIso={f.pickup && f.pickup > todayIso() ? f.pickup : todayIso()} maxIso={oneYearAheadIso()} />
+              {errText('date')}
+            </div>
+            <div>
+              <FieldLabel required>ETA</FieldLabel>
+              <TimeField value={f.eta} onChange={(v) => set('eta', v)} hasError={!!errors.eta} />
+              {errText('eta')}
+            </div>
+          </div>
+
+          <div>
+            <FieldLabel hint="(optional)">Remarks</FieldLabel>
+            <textarea value={f.remarks} maxLength={TEXT_MAX} onChange={(e) => set('remarks', e.target.value)}
+              placeholder="Any special instructions…" rows={3}
+              className={`${fieldBase} ${fieldTone(!!errors.remarks)} resize-none break-words`} />
+            <div className="flex items-start justify-between gap-2 mt-1">
+              {errors.remarks ? <p className="text-xs text-red-500">{errors.remarks}</p> : <span />}
+              <CharCount value={f.remarks} />
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-7">
+          <SectionHeader>Reason for change</SectionHeader>
+        </div>
+        <div>
+          <FieldLabel required>Reason</FieldLabel>
+          <textarea value={f.reason} maxLength={TEXT_MAX} onChange={(e) => set('reason', e.target.value)}
+            placeholder="e.g. Client moved the delivery to Friday" rows={2}
+            className={`${fieldBase} ${fieldTone(!!errors.reason)} resize-none break-words`} />
+          <div className="flex items-start justify-between gap-2 mt-1">
+            {errors.reason ? <p className="text-xs text-red-500">{errors.reason}</p> : <span />}
+            <CharCount value={f.reason} />
+          </div>
+        </div>
+
+        {formError && (
+          <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mt-5">{formError}</p>
+        )}
+
+        <div className="flex flex-col-reverse sm:flex-row gap-3 pt-6 sm:pt-7">
+          <button onClick={onClose}
+            className="px-5 py-2.5 border border-border rounded-[10px] hover:bg-accent transition-colors text-sm font-medium text-foreground inline-flex items-center justify-center gap-1.5">
+            <ArrowLeft className="w-4 h-4" /> Back
+          </button>
+          <button onClick={handleSave} disabled={!stillEditable}
+            className="flex-1 px-5 py-2.5 bg-[#1DBF73] text-white rounded-[10px] hover:bg-[#19a865] transition-all shadow-sm hover:shadow active:scale-[0.99] text-sm font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
+            <CheckCircle2 className="w-4 h-4" /> Save Changes
+          </button>
+        </div>
+      </ModalShell>
+
+      {/* ── Re-enter password before saving ── */}
+      {pending && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" onClick={() => { if (!busy) { setPending(null); setPassword(''); } }} />
+          <form
+            onSubmit={(e) => { e.preventDefault(); void handleConfirm(); }}
+            className="relative bg-white rounded-xl border border-border shadow-xl p-5 w-full max-w-[360px] animate-in fade-in zoom-in-95 duration-200">
+            <div className="w-10 h-10 rounded-full bg-[#1DBF73]/10 border border-[#1DBF73]/25 flex items-center justify-center mx-auto mb-3">
+              <KeyRound className="w-5 h-5 text-[#1DBF73]" />
+            </div>
+            <p className="text-sm font-semibold text-foreground text-center">Confirm it's you</p>
+            <p className="text-xs text-muted-foreground text-center mt-1">
+              Enter your account password to save {Object.keys(pending).length} change{Object.keys(pending).length === 1 ? '' : 's'}.
+            </p>
+            <input type="password" autoFocus autoComplete="current-password" value={password}
+              onChange={(e) => { setPassword(e.target.value); setPwError(''); }}
+              disabled={busy || lockedFor > 0}
+              placeholder="Password"
+              className={`${fieldBase} ${fieldTone(!!pwError)} mt-4 disabled:opacity-60`} />
+            {(pwError || lockedFor > 0) && (
+              <p className="text-xs text-red-600 mt-1.5 break-words">
+                {lockedFor > 0 ? `Too many failed attempts. Try again in ${lockedFor}s.` : pwError}
+              </p>
+            )}
+            <div className="flex gap-2 mt-4">
+              <button type="button" disabled={busy}
+                onClick={() => { setPending(null); setPassword(''); }}
+                className="flex-1 py-2 border border-border rounded-lg text-sm hover:bg-accent transition-colors disabled:opacity-50">
+                Cancel
+              </button>
+              <button type="submit" disabled={busy || !password || lockedFor > 0}
+                className="flex-1 py-2 bg-[#1DBF73] text-white rounded-lg text-sm font-medium hover:bg-[#19a865] transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                {busy ? 'Saving…' : 'Confirm & Save'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+    </>
+  );
+}
+
 /* ─── Props ────────────────────────────────────────── */
 interface Props {
   drivers: LocalDriver[];     setDrivers: React.Dispatch<React.SetStateAction<LocalDriver[]>>;
@@ -1033,6 +1632,8 @@ interface Props {
   setCancelled: React.Dispatch<React.SetStateAction<Assignment[]>>;
   isViewOnly?: boolean;
   onLogActivity?: (entry: AdminActivityInput) => void;
+  /* Runs a database-function change (edit / cancel), then reloads — see App.tsx */
+  onServerChange: (action: () => Promise<void>) => Promise<void>;
   adminEmail?: string | null;
 }
 
@@ -1040,12 +1641,13 @@ interface Props {
 export default function DriversManagement({
   drivers, setDrivers, trucks, setTrucks,
   assignments, setAssignments, completed, setCompleted, setCancelled,
-  isViewOnly = false, onLogActivity, adminEmail,
+  isViewOnly = false, onLogActivity, onServerChange, adminEmail,
 }: Props) {
 
 
   const [showAssignTask, setShowAssignTask] = useState(false);
   const [viewDetailsId,  setViewDetailsId]  = useState<string | null>(null);
+  const [editId,         setEditId]         = useState<string | null>(null);
   const [search,         setSearch]         = useState('');
 
   /* ── Assign Task wizard ── */
@@ -1064,6 +1666,7 @@ export default function DriversManagement({
   const [taskPickupTime,  setTaskPickupTime]  = useState('');
   const [taskEta,         setTaskEta]         = useState('');
   const [taskErrors,      setTaskErrors]      = useState<Record<string, string>>({});
+  const [taskBadDates,    setTaskBadDates]    = useState<BadDates>({ pickup: false, delivery: false });
 
   /* Quick-add layered over the Assign Task modal — the wizard stays mounted
      underneath, so anything already typed survives the round trip. */
@@ -1097,7 +1700,17 @@ export default function DriversManagement({
     setTaskFrom(''); setTaskTo('');
     setTaskCompany(''); setTaskDate(''); setTaskPickedUpDate(''); setTaskRemarks('');
     setTaskPickupLocation(''); setTaskPickupTime(''); setTaskEta('');
-    setTaskErrors({});
+    setTaskErrors({}); setTaskBadDates({ pickup: false, delivery: false });
+  };
+
+  /* Live date check as the admin types or picks — shows the inline error straight away */
+  const setTaskDateField = (which: 'pickup' | 'delivery', v: string, bad?: boolean) => {
+    const nextBad  = { ...taskBadDates, [which]: !!bad };
+    const pickup   = which === 'pickup'   ? v : taskPickedUpDate;
+    const delivery = which === 'delivery' ? v : taskDate;
+    setTaskBadDates(nextBad);
+    if (which === 'pickup') setTaskPickedUpDate(v); else setTaskDate(v);
+    setTaskErrors((p) => ({ ...p, pickedUpDate: '', date: '', eta: '', ...dateErrors(pickup, delivery, nextBad, false) }));
   };
 
   /* ── Step 1: Assignment info ── */
@@ -1116,41 +1729,11 @@ export default function DriversManagement({
   const handleNextStep = () => { if (validateStep1()) { setTaskErrors({}); setTaskStep(2); } };
 
   const handleAssignTask = () => {
-    const e: Record<string, string> = {};
-    if (!taskDate)                  e.date         = 'Select a delivery date.';
-    if (!taskPickedUpDate)          e.pickedUpDate = 'Select a picked up date.';
-    if (!taskPickupTime)            e.pickupTime   = 'Select a pick up time.';
-    if (!taskEta)                   e.eta          = 'Select an ETA.';
-
-    /* ── Past-date / past-time guard ── */
-    if (taskDate) {
-      const selDate = isoToDate(taskDate);
-      const todayMidnight = new Date(); todayMidnight.setHours(0, 0, 0, 0);
-      if (selDate < todayMidnight) {
-        e.date = 'Delivery date cannot be in the past.';
-      } else {
-        /* If today, validate that times are in the future */
-        const isToday = selDate.getTime() === todayMidnight.getTime();
-        if (isToday) {
-          const now = new Date();
-          if (taskPickupTime && time24ToDate(selDate, taskPickupTime) <= now)
-            e.pickupTime = "Pickup time must be in the future for today's date.";
-          if (taskEta && time24ToDate(selDate, taskEta) <= now)
-            e.eta = "ETA must be in the future for today's date.";
-        }
-      }
-    }
-
-    /* ── ETA must not precede pickup — both are zero-padded 24-hour "HH:MM",
-       so a plain string compare orders them correctly.
-
-       This only applies when pickup and delivery fall on the SAME day. Across
-       different days the comparison is meaningless: a pickup at 14:00 on the 19th
-       and an arrival at 08:00 on the 21st is perfectly valid, but a raw time
-       compare would reject it. Same-day behaviour is unchanged. ── */
-    const sameDay = !!taskPickedUpDate && !!taskDate && taskPickedUpDate === taskDate;
-    if (sameDay && taskPickupTime && taskEta && !e.eta && taskEta < taskPickupTime)
-      e.eta = 'ETA cannot be earlier than the pick up time.';
+    /* Same rules as the live check, re-run on submit (typed dates skip the calendar's limits) */
+    const e = scheduleErrors({
+      pickup: taskPickedUpDate, delivery: taskDate, pickupTime: taskPickupTime, eta: taskEta,
+      remarks: taskRemarks, bad: taskBadDates,
+    });
 
     if (Object.keys(e).length) { setTaskErrors(e); return; }
 
@@ -1265,21 +1848,10 @@ export default function DriversManagement({
     });
   };
 
-  const handleCancel = (id: string) => {
-    const a = assignments.find((x) => x.id === id)!;
-    setAssignments((p) => p.filter((x) => x.id !== id));
-    setCancelled((p) => [...p, { ...a, taskStatus: 'Cancelled' as const }]);
-    setDrivers((p) => p.map((d) => d.id === a.driverId ? { ...d, status: 'Pending' as const } : d));
-    setTrucks((p)  => p.map((t) => t.plateNumber === a.truckPlate ? { ...t, status: 'Available' } : t));
-    onLogActivity?.({
-      type: 'task_cancelled',
-      driverName: a.driverName,
-      truckPlate: a.truckPlate,
-      assignmentId: id,
-      destination: a.destination,
-      company: a.company,
-    });
-  };
+  /* Goes through the cancel_assignment() database function, not the auto-save: it refuses
+     unless the delivery is still 'Assigned', frees the driver + truck, and writes the
+     audit-log entry itself. The screen reloads afterwards (onServerChange). */
+  const handleCancel = (id: string) => onServerChange(() => cancelAssignment(id));
 
   const sq = search.trim().toLowerCase();
   /* Only show assignments whose driver still exists — hides cards for deleted drivers */
@@ -1325,7 +1897,7 @@ export default function DriversManagement({
           {!isViewOnly && (
             <button onClick={() => setShowAssignTask(true)}
               className="flex items-center gap-3 px-6 py-3.5 bg-primary text-white rounded-xl hover:bg-primary/90 transition-all shadow-md hover:shadow-lg active:scale-[0.98] text-sm font-semibold">
-              <ClipboardList className="w-5 h-5" /> Assign Task
+              <Plus className="w-5 h-5" /> Dispatch Truck
             </button>
           )}
         </div>
@@ -1337,11 +1909,11 @@ export default function DriversManagement({
           <ClipboardList className="w-14 h-14 mx-auto mb-4 text-muted-foreground/30" />
           <p className="font-semibold text-foreground mb-1">No Active Assignments</p>
           <p className="text-sm text-muted-foreground mb-5">
-            Click <strong>Assign Task</strong> to dispatch a driver and truck.
+            Click <strong>Dispatch Truck</strong> to dispatch a driver and truck.
           </p>
           <button onClick={() => setShowAssignTask(true)}
             className="px-5 py-2.5 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 transition-colors">
-            + Assign Task
+            + Dispatch Truck
           </button>
         </div>
       ) : visibleAssignments.length === 0 ? (
@@ -1398,12 +1970,12 @@ export default function DriversManagement({
                     <div className="flex items-start gap-2 min-w-0">
                       <MapPin className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0 mt-1" />
                       <div className="min-w-0">
-                        <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Route</p>
+                        <p className="text-[12px] font-semibold text-muted-foreground uppercase tracking-wide">Route</p>
                         <p className="text-sm text-foreground truncate"><Highlight text={a.destination} query={search} /></p>
                       </div>
                     </div>
                     <div className="text-right flex-shrink-0">
-                      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Delivery date</p>
+                      <p className="text-[12px] font-semibold text-muted-foreground uppercase tracking-wide">Delivery date</p>
                       <p className="text-sm text-foreground whitespace-nowrap">{a.deliveryDate}</p>
                     </div>
                   </div>
@@ -1426,7 +1998,7 @@ export default function DriversManagement({
                       <div className="bg-amber-500 h-full transition-all"
                         style={{ width: `${total ? (inReview / total) * 100 : 0}%` }} />
                     </div>
-                    <div className="flex items-center gap-3 mt-1.5 text-[10px] text-muted-foreground">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-[12px] text-muted-foreground">
                       <span className="inline-flex items-center gap-1">
                         <Check className="w-3 h-3 text-green-600" />{approved} approved
                       </span>
@@ -1502,7 +2074,7 @@ export default function DriversManagement({
       {/* ════ MODALS ════ */}
 
       {showAssignTask && (
-        <ModalShell title="Assign Task" onClose={resetAssignTask}>
+        <ModalShell title="Dispatch Truck" onClose={resetAssignTask}>
           <StepProgress step={taskStep} />
 
           {/* ══════════ STEP 1 — Assignment ══════════ */}
@@ -1541,6 +2113,16 @@ export default function DriversManagement({
                   </div>
                 </div>
 
+                {/* Truck preview — only once a truck is picked */}
+                {(() => {
+                  const t = trucks.find((x) => x.id === taskTruckId);
+                  return t ? (
+                    <div className="rounded-xl border border-border bg-white p-3">
+                      <TruckSummary truck={t} typeFirst />
+                    </div>
+                  ) : null;
+                })()}
+
                 {/* Route — From / To */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
@@ -1549,7 +2131,7 @@ export default function DriversManagement({
                       value={taskFrom}
                       onChange={(v) => { setTaskFrom(v); setTaskErrors((p) => ({ ...p, from: '' })); }}
                       options={addressBook.from}
-                      placeholder="e.g. Makati City"
+                      placeholder="e.g. Origin city or municipality"
                       hasError={!!taskErrors.from}
                       icon={<MapPin className="w-3.5 h-3.5" />}
                     />
@@ -1561,7 +2143,7 @@ export default function DriversManagement({
                       value={taskTo}
                       onChange={(v) => { setTaskTo(v); setTaskErrors((p) => ({ ...p, to: '' })); }}
                       options={addressBook.to}
-                      placeholder="e.g. Pasig City"
+                      placeholder="e.g. Destination city or municipality"
                       hasError={!!taskErrors.to}
                       icon={<Navigation className="w-3.5 h-3.5" />}
                     />
@@ -1625,14 +2207,14 @@ export default function DriversManagement({
                   <div>
                     <FieldLabel required>Picked Up Date</FieldLabel>
                     <DateField value={taskPickedUpDate}
-                      onChange={(v) => { setTaskPickedUpDate(v); setTaskErrors((p) => ({ ...p, pickedUpDate: '', eta: '' })); }}
+                      onChange={(v, bad) => setTaskDateField('pickup', v, bad)}
                       hasError={!!taskErrors.pickedUpDate}
                       minIso={todayIso()}
-                      maxIso={taskDate || undefined}
+                      maxIso={taskDate || oneYearAheadIso()}
                     />
                     {taskErrors.pickedUpDate
                       ? <p className="text-xs text-red-500 mt-1">{taskErrors.pickedUpDate}</p>
-                      : <p className="text-[11px] text-muted-foreground mt-1.5">Planned pickup date</p>}
+                      : <p className="text-[12px] text-muted-foreground mt-1.5">Planned pickup date</p>}
                   </div>
                   <div>
                     <FieldLabel required>Pick Up Time</FieldLabel>
@@ -1650,13 +2232,14 @@ export default function DriversManagement({
                   <div>
                     <FieldLabel required>Delivery Date</FieldLabel>
                     <DateField value={taskDate}
-                      onChange={(v) => { setTaskDate(v); setTaskErrors((p) => ({ ...p, date: '', eta: '' })); }}
+                      onChange={(v, bad) => setTaskDateField('delivery', v, bad)}
                       hasError={!!taskErrors.date}
                       minIso={taskPickedUpDate && taskPickedUpDate > todayIso() ? taskPickedUpDate : todayIso()}
+                      maxIso={oneYearAheadIso()}
                     />
                     {taskErrors.date
                       ? <p className="text-xs text-red-500 mt-1">{taskErrors.date}</p>
-                      : <p className="text-[11px] text-muted-foreground mt-1.5">Target delivery date</p>}
+                      : <p className="text-[12px] text-muted-foreground mt-1.5">Target delivery date</p>}
                   </div>
                   <div>
                     <FieldLabel required>ETA</FieldLabel>
@@ -1666,17 +2249,22 @@ export default function DriversManagement({
                     />
                     {taskErrors.eta
                       ? <p className="text-xs text-red-500 mt-1">{taskErrors.eta}</p>
-                      : <p className="text-[11px] text-muted-foreground mt-1.5">Estimated Time of Arrival</p>}
+                      : <p className="text-[12px] text-muted-foreground mt-1.5">Estimated Time of Arrival</p>}
                   </div>
                 </div>
 
                 {/* Remarks */}
                 <div>
                   <FieldLabel hint="(optional)">Remarks</FieldLabel>
-                  <textarea value={taskRemarks} onChange={(e) => setTaskRemarks(e.target.value)}
+                  <textarea value={taskRemarks} maxLength={TEXT_MAX}
+                    onChange={(e) => { setTaskRemarks(e.target.value); setTaskErrors((p) => ({ ...p, remarks: '' })); }}
                     placeholder="Any special instructions…" rows={3}
-                    className={`${fieldBase} ${fieldTone(false)} resize-none`}
+                    className={`${fieldBase} ${fieldTone(!!taskErrors.remarks)} resize-none break-words`}
                   />
+                  <div className="flex items-start justify-between gap-2 mt-1">
+                    {taskErrors.remarks ? <p className="text-xs text-red-500">{taskErrors.remarks}</p> : <span />}
+                    <CharCount value={taskRemarks} />
+                  </div>
                 </div>
               </div>
 
@@ -1686,9 +2274,10 @@ export default function DriversManagement({
                   className="px-5 py-2.5 border border-border rounded-[10px] hover:bg-accent transition-colors text-sm font-medium text-foreground inline-flex items-center gap-1.5">
                   <ArrowLeft className="w-4 h-4" /> Back
                 </button>
-                <button onClick={handleAssignTask}
-                  className="flex-1 px-5 py-2.5 bg-[#1DBF73] text-white rounded-[10px] hover:bg-[#19a865] transition-all shadow-sm hover:shadow active:scale-[0.99] text-sm font-semibold inline-flex items-center justify-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4" /> Assign Task
+                {/* Blocked while a date is invalid — the error is shown under the field */}
+                <button onClick={handleAssignTask} disabled={!!(taskErrors.pickedUpDate || taskErrors.date)}
+                  className="flex-1 px-5 py-2.5 bg-[#1DBF73] text-white rounded-[10px] hover:bg-[#19a865] transition-all shadow-sm hover:shadow active:scale-[0.99] text-sm font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
+                  <CheckCircle2 className="w-4 h-4" /> Dispatch Truck
                 </button>
               </div>
             </div>
@@ -1720,7 +2309,9 @@ export default function DriversManagement({
         <ViewDetailsModal
           assignment={viewDetailsAssign}
           driver={viewDetailsDriver}
+          truck={viewDetailsAssign ? trucks.find((t) => t.id === viewDetailsAssign.truckId) ?? null : null}
           onClose={() => setViewDetailsId(null)}
+          onEdit={() => { setEditId(viewDetailsId); setViewDetailsId(null); }}
           onApproveDoc={handleApproveDoc}
           onRejectDoc={handleRejectDoc}
           onComplete={handleComplete}
@@ -1728,6 +2319,21 @@ export default function DriversManagement({
           onSimulateLate={handleSimulateLate}
           isViewOnly={isViewOnly}
           adminEmail={adminEmail}
+        />
+      )}
+
+      {/* Edit — Back returns to View Details; a successful save reopens it with the new details */}
+      {editId && (
+        <EditAssignmentModal
+          key={editId}
+          assignment={assignments.find((a) => a.id === editId) ?? null}
+          drivers={drivers}
+          trucks={trucks}
+          assignments={assignments}
+          addressBook={addressBook}
+          onClose={() => { setViewDetailsId(editId); setEditId(null); }}
+          onSaved={(id) => { setEditId(null); setViewDetailsId(id); }}
+          onServerChange={onServerChange}
         />
       )}
     </div>

@@ -82,6 +82,9 @@ export interface Assignment {
   /* Set the moment the driver's app first displays this assignment — lets
      admin see whether a driver has actually seen a freshly assigned task. */
   driverAcknowledgedAt?: string;
+  /* When the delivery was created — ISO timestamp from assignments.created_at (read-only,
+     never written back). Used by the Deliveries table to sort and filter by time. */
+  createdAt?: string;
 }
 
 export interface CompletedTask extends Assignment {
@@ -99,6 +102,8 @@ export interface LocalDriver {
   rating: number;
   pin?: string;
   shift?: string;
+  /* Set only on records in the Archived tab (archive_driver() database function) */
+  archivedAt?: string;
 }
 
 export interface LocalTruck {
@@ -107,6 +112,8 @@ export interface LocalTruck {
   status: 'Available' | 'Assigned';
   classification?: string;
   capacity?: string;
+  /* Set only on records in the Archived tab (archive_truck() database function) */
+  archivedAt?: string;
 }
 
 export interface TeamMember {
@@ -166,9 +173,12 @@ export type AdminActivityType =
   | 'task_assigned'
   | 'task_completed'
   | 'task_cancelled'
+  | 'task_edited'
   | 'doc_approved'
   | 'doc_rejected'
   | 'driver_deleted'
+  | 'driver_archived'
+  | 'truck_archived'
   | 'member_added'
   | 'member_removed';
 
@@ -187,6 +197,9 @@ export interface AdminActivityEntry {
   company?: string;
   memberName?: string;
   memberEmail?: string;
+  /* task_edited only — written by the edit_assignment() database function */
+  reason?: string;
+  changes?: Record<string, { old: string | null; new: string | null }>;
 }
 
 export type AdminActivityInput = Omit<AdminActivityEntry, 'id' | 'timestamp'>;

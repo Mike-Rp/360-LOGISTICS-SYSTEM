@@ -5,6 +5,8 @@ import {
 } from 'lucide-react';
 import type { LocalDriver, LocalTruck } from '../../data/assignmentTypes';
 import { normaliseMobile } from '../../lib/db';
+import { TRUCK_CLASSIFICATIONS, formatCapacity } from '../../data/truckTypes';
+import TruckImage from '../TruckImage';
 
 /* ── Helpers ── */
 const generatePin = () => String(Math.floor(1000 + Math.random() * 9000));
@@ -39,16 +41,8 @@ export function findDuplicateDriver(
 }
 
 /* ── Truck Classification & Capacity Options ── */
-export const TRUCK_CLASSIFICATIONS = [
-  { value: 'Pickup Truck',      desc: 'Light cargo, small deliveries'     },
-  { value: 'Closed Van',        desc: 'Enclosed, weather-protected cargo'  },
-  { value: 'Wing Van',          desc: 'Side-opening, easy loading'         },
-  { value: 'Boom Truck',        desc: 'Crane-equipped for heavy lifts'     },
-  { value: 'Semi-Trailer',      desc: 'Long-haul, high-volume cargo'       },
-  { value: 'Refrigerated Van',  desc: 'Temperature-controlled cargo'       },
-  { value: 'Flatbed Truck',     desc: 'Open bed, oversized freight'        },
-  { value: 'Tanker',            desc: 'Liquid or bulk dry cargo'           },
-];
+/* Truck types, pictures and capacities now live in data/truckTypes.ts (shared by every screen) */
+export { TRUCK_CLASSIFICATIONS, formatCapacity };
 
 export const TRUCK_CAPACITIES = [
   'Up to 500 kg',
@@ -61,13 +55,14 @@ export const TRUCK_CAPACITIES = [
 ];
 
 /* ── Modal Shell — `layer` lifts it above an already-open modal ── */
-function ModalShell({ title, onClose, layer = false, children, footer }: {
-  title: string; onClose: () => void; layer?: boolean; children: React.ReactNode; footer?: React.ReactNode;
+/* `wide` is only used by Register Truck (grid + details panel side by side) */
+function ModalShell({ title, onClose, layer = false, wide = false, children, footer }: {
+  title: string; onClose: () => void; layer?: boolean; wide?: boolean; children: React.ReactNode; footer?: React.ReactNode;
 }) {
   return (
     <div className={`fixed inset-0 flex items-center justify-center p-4 ${layer ? 'z-[70]' : 'z-50'}`}>
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200">
+      <div className={`relative bg-white rounded-2xl shadow-2xl w-full ${wide ? 'max-w-2xl' : 'max-w-md'} flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200`}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-border flex-shrink-0">
           <h3 className="text-lg font-semibold text-foreground">{title}</h3>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-accent transition-colors text-muted-foreground">
@@ -289,7 +284,7 @@ export function RegisterDriverModal({ drivers = [], setDrivers, onClose, onCreat
 /* ═══════════════════════════════════════════════════════
    Register Truck Modal  (3-step wizard)
    ═══════════════════════════════════════════════════════ */
-const TRUCK_STEP_NAMES = ['Plate number', 'Classification', 'Capacity & review'] as const;
+const TRUCK_STEP_NAMES = ['Plate number', 'Classification', 'Review'] as const;
 
 export function RegisterTruckModal({ trucks, setTrucks, onClose, onCreated, layer = false }: {
   trucks: LocalTruck[];
@@ -304,10 +299,13 @@ export function RegisterTruckModal({ trucks, setTrucks, onClose, onCreated, laye
   const [plateError,          setPlateError]          = useState('');
   const [truckClassification, setTruckClassification] = useState('');
   const [classError,          setClassError]          = useState('');
-  const [truckCapacity,       setTruckCapacity]       = useState('');
-  const [capacityError,       setCapacityError]       = useState('');
   const [truckRegistered,     setTruckRegistered]     = useState(false);
-  const plateNumRef = useRef<HTMLInputElement>(null);
+  const plateNumRef     = useRef<HTMLInputElement>(null);
+  const plateLettersRef = useRef<HTMLInputElement>(null);
+
+  /* Capacity is derived from the chosen type — nothing for the admin to pick */
+  const selectedClass = TRUCK_CLASSIFICATIONS.find((c) => c.value === truckClassification) ?? null;
+  const truckCapacity = selectedClass ? formatCapacity(selectedClass.capacityMinKg, selectedClass.capacityMaxKg) : '';
 
   const handlePlateLetters = (v: string) => {
     const c = v.replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 3);
@@ -316,6 +314,29 @@ export function RegisterTruckModal({ trucks, setTrucks, onClose, onCreated, laye
   };
   const handlePlateNumbers = (v: string) => {
     setPlateNumbers(v.replace(/[^0-9]/g, '').slice(0, 4)); setPlateError('');
+  };
+
+  /* Pasting a whole plate ("ABC 8473", "abc8473", "ABC-8473") into either box fills both.
+     Text without both letters and digits pastes normally. */
+  const handlePlatePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const text    = e.clipboardData.getData('text');
+    const letters = text.replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 3);
+    const digits  = text.replace(/[^0-9]/g, '').slice(0, 4);
+    if (!letters || !digits) return;
+    e.preventDefault();
+    setPlateLetters(letters);
+    setPlateNumbers(digits);
+    setPlateError('');
+    plateNumRef.current?.focus();
+  };
+
+  /* Backspace in an empty numbers box goes back to the end of the letters box */
+  const handleNumbersKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Backspace' || plateNumbers !== '') return;
+    e.preventDefault();
+    const el = plateLettersRef.current;
+    el?.focus();
+    el?.setSelectionRange(el.value.length, el.value.length);
   };
 
   const handleNext = () => {
@@ -340,7 +361,7 @@ export function RegisterTruckModal({ trucks, setTrucks, onClose, onCreated, laye
   };
 
   const handleRegisterTruck = () => {
-    if (!truckCapacity) { setCapacityError('Please select the payload capacity.'); return; }
+    if (!selectedClass) { setClassError('Please select a truck classification.'); setStep(2); return; }
     const plate = `${plateLetters} ${plateNumbers}`;
     const newTruck: LocalTruck = {
       id: `T${String(Date.now()).slice(-5)}`,
@@ -395,6 +416,7 @@ export function RegisterTruckModal({ trucks, setTrucks, onClose, onCreated, laye
       title="Register New Truck"
       onClose={onClose}
       layer={layer}
+      wide
       footer={!truckRegistered ? wizardFooter : undefined}
     >
       {!truckRegistered ? (
@@ -410,19 +432,22 @@ export function RegisterTruckModal({ trucks, setTrucks, onClose, onCreated, laye
               <p className="text-xs text-muted-foreground mb-3">
                 Format: 3 letters + 3–4 numbers (e.g. ABC 8473)
               </p>
-              <div className="flex items-center gap-2">
+              {/* Full width, letters box a little narrower; a plain gap stands in for the space in "ABC 8473" */}
+              <div className="grid grid-cols-[2fr_3fr] gap-3">
                 <input
-                  type="text" value={plateLetters}
+                  ref={plateLettersRef} type="text" value={plateLetters}
                   onChange={(e) => handlePlateLetters(e.target.value)}
-                  placeholder="ABC" maxLength={3}
-                  className={`w-28 px-4 py-3 rounded-xl border text-center tracking-[0.25em] uppercase font-mono text-lg focus:outline-none focus:ring-2 focus:ring-primary/30 ${plateError ? 'border-red-400 bg-red-50' : 'border-border bg-white'}`}
+                  onPaste={handlePlatePaste}
+                  placeholder="ABC" maxLength={3} aria-label="Plate letters"
+                  className={`w-full min-w-0 px-4 py-3 rounded-xl border text-center tracking-[0.25em] uppercase font-mono text-lg placeholder:tracking-normal placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-primary/30 ${plateError ? 'border-red-400 bg-red-50' : 'border-border bg-white'}`}
                 />
-                <span className="text-xl text-muted-foreground select-none">–</span>
                 <input
                   ref={plateNumRef} type="text" inputMode="numeric" value={plateNumbers}
                   onChange={(e) => handlePlateNumbers(e.target.value)}
-                  placeholder="8473" maxLength={4}
-                  className={`w-32 px-4 py-3 rounded-xl border text-center tracking-[0.25em] font-mono text-lg focus:outline-none focus:ring-2 focus:ring-primary/30 ${plateError ? 'border-red-400 bg-red-50' : 'border-border bg-white'}`}
+                  onPaste={handlePlatePaste}
+                  onKeyDown={handleNumbersKeyDown}
+                  placeholder="8473" maxLength={4} aria-label="Plate numbers"
+                  className={`w-full min-w-0 px-4 py-3 rounded-xl border text-center tracking-[0.25em] font-mono text-lg placeholder:tracking-normal placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-primary/30 ${plateError ? 'border-red-400 bg-red-50' : 'border-border bg-white'}`}
                 />
               </div>
               {(plateLetters || plateNumbers) && (
@@ -445,12 +470,16 @@ export function RegisterTruckModal({ trucks, setTrucks, onClose, onCreated, laye
                   <Package className="w-4 h-4 text-primary/70" /> Truck classification <span className="text-red-500">*</span>
                 </span>
               </label>
-              <div className="grid grid-cols-2 gap-2">
+              {/* Grid + details panel side by side, same height (the card rows stretch evenly to fill it).
+                  Below 640px the panel stacks under the grid and nothing is stretched. */}
+              <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_14rem] gap-4 items-start sm:items-stretch">
+              {/* Equal-height cards (auto-rows-fr), name centred vertically; the description lives in the panel */}
+              <div className="grid grid-cols-2 auto-rows-fr gap-2">
                 {TRUCK_CLASSIFICATIONS.map((c) => (
                   <button
                     key={c.value}
                     onClick={() => { setTruckClassification(c.value); setClassError(''); }}
-                    className={`relative px-3 py-3 rounded-xl border text-left transition-all ${
+                    className={`relative min-h-[3.25rem] px-3 py-3 rounded-xl border text-left flex items-center transition-all ${
                       truckClassification === c.value
                         ? 'border-primary bg-blue-50 ring-2 ring-primary/20'
                         : classError
@@ -463,65 +492,73 @@ export function RegisterTruckModal({ trucks, setTrucks, onClose, onCreated, laye
                         <Check className="w-2.5 h-2.5 text-white" />
                       </span>
                     )}
-                    <p className="text-xs font-semibold text-foreground leading-tight pr-5">{c.value}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5 leading-tight">{c.desc}</p>
+                    <p className="text-xs font-semibold text-foreground leading-tight pr-5 break-words min-w-0">{c.value}</p>
                   </button>
                 ))}
+              </div>
+
+              {/* Details panel */}
+              <div className="rounded-xl border border-border bg-muted/20 p-3 flex flex-col">
+                {selectedClass ? (
+                  <div>
+                    {/* Whole truck, 4:3 like the image; capped on phones so the stacked picture doesn't take over */}
+                    <TruckImage src={selectedClass.fullImageSrc} alt={selectedClass.value}
+                      className="w-full max-w-[12rem] sm:max-w-full mx-auto aspect-[4/3] rounded-lg bg-white" />
+                    <p className="text-sm font-semibold text-foreground mt-3 break-words">{selectedClass.value}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5 break-words">{selectedClass.desc}</p>
+                    <p className="text-[12px] text-muted-foreground uppercase tracking-wide mt-2">{selectedClass.capacityLabel}</p>
+                    <p className="text-sm font-medium text-foreground break-words">{truckCapacity}</p>
+                  </div>
+                ) : (
+                  <div className="flex-1 flex flex-col items-center justify-center text-center py-10 px-2">
+                    <Truck className="w-10 h-10 text-muted-foreground/40 mb-2" />
+                    <p className="text-xs text-muted-foreground">Select a truck type to see its details.</p>
+                  </div>
+                )}
+              </div>
               </div>
               {classError && <p className="text-xs text-red-500 mt-2">{classError}</p>}
             </div>
           )}
 
-          {/* ── Step 3: Capacity + Review ── */}
+          {/* ── Step 3: Review (read-only receipt) ── */}
           {step === 3 && (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-1.5">
-                  <span className="flex items-center gap-1.5">
-                    <Weight className="w-4 h-4 text-primary/70" /> Payload capacity <span className="text-red-500">*</span>
-                  </span>
-                </label>
-                <div className="relative">
-                  <select
-                    value={truckCapacity}
-                    onChange={(e) => { setTruckCapacity(e.target.value); setCapacityError(''); }}
-                    className={`w-full px-4 py-3 rounded-xl border text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 appearance-none bg-white ${
-                      capacityError ? 'border-red-400 bg-red-50' : 'border-border'
-                    } ${truckCapacity ? 'text-foreground' : 'text-muted-foreground'}`}
-                  >
-                    <option value="">Select payload capacity…</option>
-                    {TRUCK_CAPACITIES.map((cap) => (
-                      <option key={cap} value={cap}>{cap}</option>
-                    ))}
-                  </select>
-                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-                </div>
-                {capacityError && <p className="text-xs text-red-500 mt-1.5">{capacityError}</p>}
+            <div className="rounded-xl border border-border overflow-hidden">
+              <div className="px-4 py-2.5 bg-muted/30 border-b border-border flex items-center gap-1.5">
+                <ClipboardList className="w-3.5 h-3.5 text-muted-foreground" />
+                <span className="text-xs font-semibold text-muted-foreground">Review</span>
               </div>
 
-              {/* Review summary */}
-              <div className="rounded-xl border border-border overflow-hidden">
-                <div className="px-4 py-2.5 bg-muted/30 border-b border-border flex items-center gap-1.5">
-                  <ClipboardList className="w-3.5 h-3.5 text-muted-foreground" />
-                  <span className="text-xs font-semibold text-muted-foreground">Review</span>
+              {selectedClass && (
+                <div className="flex items-center gap-4 px-4 py-3 border-b border-border">
+                  <TruckImage src={selectedClass.fullImageSrc} alt={selectedClass.value}
+                    className="w-24 h-[4.5rem] sm:w-32 sm:h-24 flex-shrink-0 rounded-lg bg-white border border-border" />
+                  <div className="min-w-0 break-words">
+                    <p className="text-sm font-semibold text-foreground">{selectedClass.value}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{selectedClass.desc}</p>
+                  </div>
                 </div>
-                <div className="divide-y divide-border">
-                  <div className="flex items-center justify-between px-4 py-2.5">
-                    <span className="text-xs text-muted-foreground">Plate number</span>
-                    <span className="text-xs font-mono font-semibold text-foreground">{plateLetters} {plateNumbers}</span>
-                  </div>
-                  <div className="flex items-center justify-between px-4 py-2.5">
-                    <span className="text-xs text-muted-foreground">Classification</span>
-                    <span className="text-xs font-medium text-foreground">{truckClassification}</span>
-                  </div>
-                  <div className="flex items-center justify-between px-4 py-2.5">
-                    <span className="text-xs text-muted-foreground">Payload capacity</span>
-                    <span className={`text-xs font-medium ${truckCapacity ? 'text-foreground' : 'text-muted-foreground italic'}`}>
-                      {truckCapacity || 'Not selected'}
-                    </span>
-                  </div>
+              )}
+
+              <div className="divide-y divide-border">
+                <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+                  <span className="text-xs text-muted-foreground">Plate number</span>
+                  <span className="text-xs font-mono font-semibold text-foreground text-right min-w-0 break-words">{plateLetters} {plateNumbers}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+                  <span className="text-xs text-muted-foreground">Classification</span>
+                  <span className="text-xs font-medium text-foreground text-right min-w-0 break-words">{truckClassification}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+                  <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+                    <Weight className="w-3.5 h-3.5" /> {selectedClass?.capacityLabel ?? 'Payload capacity'}
+                  </span>
+                  <span className="text-xs font-medium text-foreground text-right min-w-0 break-words">{truckCapacity}</span>
                 </div>
               </div>
+              <p className="px-4 py-2 bg-muted/20 border-t border-border text-[12px] text-muted-foreground">
+                Capacity is set automatically from the truck type.
+              </p>
             </div>
           )}
         </div>

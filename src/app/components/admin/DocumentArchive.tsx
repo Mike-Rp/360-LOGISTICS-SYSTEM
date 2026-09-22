@@ -124,7 +124,7 @@ function GroupRow({
               <Hi text={group.assignmentId} q={q} />
             </span>
             {group.isCompleted && (
-              <span className="text-[10px] px-1.5 py-0.5 bg-purple-50 text-purple-700 border border-purple-200 rounded-full font-medium leading-none">Done</span>
+              <span className="text-[12px] px-1.5 py-0.5 bg-purple-50 text-purple-700 border border-purple-200 rounded-full font-medium leading-none">Done</span>
             )}
           </div>
         </td>
@@ -153,17 +153,17 @@ function GroupRow({
               {group.docs.length} doc{group.docs.length !== 1 ? 's' : ''}
             </span>
             {approved > 0 && (
-              <span className="text-[11px] px-2 py-0.5 bg-green-50 text-green-700 border border-green-200 rounded-full font-medium">
+              <span className="text-[12px] px-2 py-0.5 bg-green-50 text-green-700 border border-green-200 rounded-full font-medium">
                 {approved} approved
               </span>
             )}
             {pending > 0 && (
-              <span className="text-[11px] px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-full font-medium">
+              <span className="text-[12px] px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-full font-medium">
                 {pending} pending
               </span>
             )}
             {rejected > 0 && (
-              <span className="text-[11px] px-2 py-0.5 bg-red-50 text-red-700 border border-red-200 rounded-full font-medium">
+              <span className="text-[12px] px-2 py-0.5 bg-red-50 text-red-700 border border-red-200 rounded-full font-medium">
                 {rejected} rejected
               </span>
             )}
@@ -179,16 +179,16 @@ function GroupRow({
 
               {/* Sub-header: DOCUMENT · STATUS · REASON/NOTES · FILE */}
               <div className="flex items-center gap-3 px-4 py-1.5 bg-muted/40 border-b border-border/40">
-                <div className="flex-1 min-w-0 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
+                <div className="flex-1 min-w-0 text-[12px] font-semibold text-muted-foreground uppercase tracking-wide">
                   Document
                 </div>
-                <div className="w-24 flex-shrink-0 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
+                <div className="w-24 flex-shrink-0 text-[12px] font-semibold text-muted-foreground uppercase tracking-wide">
                   Status
                 </div>
-                <div className="w-44 flex-shrink-0 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
+                <div className="w-44 flex-shrink-0 text-[12px] font-semibold text-muted-foreground uppercase tracking-wide">
                   Remarks
                 </div>
-                <div className="w-16 flex-shrink-0 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide text-right">
+                <div className="w-16 flex-shrink-0 text-[12px] font-semibold text-muted-foreground uppercase tracking-wide text-right">
                   File
                 </div>
               </div>
@@ -294,7 +294,7 @@ function GroupCard({
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="font-bold font-mono text-sm text-foreground"><Hi text={group.assignmentId} q={q} /></span>
             {group.isCompleted && (
-              <span className="text-[10px] px-1.5 py-0.5 bg-purple-50 text-purple-700 border border-purple-200 rounded-full font-medium leading-none">Done</span>
+              <span className="text-[12px] px-1.5 py-0.5 bg-purple-50 text-purple-700 border border-purple-200 rounded-full font-medium leading-none">Done</span>
             )}
           </div>
           <p className="text-xs text-muted-foreground mt-0.5 truncate">
@@ -302,13 +302,13 @@ function GroupCard({
           </p>
           <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
             {approved > 0 && (
-              <span className="text-[11px] px-2 py-0.5 bg-green-50 text-green-700 border border-green-200 rounded-full font-medium">{approved} approved</span>
+              <span className="text-[12px] px-2 py-0.5 bg-green-50 text-green-700 border border-green-200 rounded-full font-medium">{approved} approved</span>
             )}
             {pending > 0 && (
-              <span className="text-[11px] px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-full font-medium">{pending} pending</span>
+              <span className="text-[12px] px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-full font-medium">{pending} pending</span>
             )}
             {rejected > 0 && (
-              <span className="text-[11px] px-2 py-0.5 bg-red-50 text-red-700 border border-red-200 rounded-full font-medium">{rejected} rejected</span>
+              <span className="text-[12px] px-2 py-0.5 bg-red-50 text-red-700 border border-red-200 rounded-full font-medium">{rejected} rejected</span>
             )}
           </div>
         </div>
@@ -445,21 +445,23 @@ export default function DocumentArchive({ assignments, completed }: Props) {
       {/* Filter chips */}
       <div className="flex items-center gap-2 flex-wrap">
         {([
-          { key: 'all',      label: 'All'      },
-          { key: 'pending',  label: 'Pending'  },
-          { key: 'approved', label: 'Approved' },
-          { key: 'rejected', label: 'Rejected' },
-        ] as { key: DocFilter; label: string }[]).map(({ key, label }) => (
+          /* badge = count colour on an unselected tab; badgeOn = on the selected green tab
+             (white pill + coloured text so it stays readable on green) */
+          { key: 'all',      label: 'All',      badge: 'bg-gray-100 text-gray-600',   badgeOn: 'bg-white text-gray-700'  },
+          { key: 'pending',  label: 'Pending',  badge: 'bg-amber-100 text-amber-700', badgeOn: 'bg-white text-amber-700' },
+          { key: 'approved', label: 'Approved', badge: 'bg-green-100 text-green-700', badgeOn: 'bg-white text-green-700' },
+          { key: 'rejected', label: 'Rejected', badge: 'bg-red-100 text-red-700',     badgeOn: 'bg-white text-red-700'   },
+        ] as { key: DocFilter; label: string; badge: string; badgeOn: string }[]).map(({ key, label, badge, badgeOn }) => (
           <button key={key} onClick={() => setFilter(key)}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium border transition-all ${
               filter === key
                 ? 'bg-primary text-white border-primary'
-                : 'bg-white text-foreground border-border hover:bg-accent'
+                : 'bg-white text-foreground border-border hover:bg-gray-50'
             }`}
           >
             {label}
             <span className={`text-xs rounded-full px-1.5 min-w-[18px] text-center ${
-              filter === key ? 'bg-white/20 text-white' : 'bg-muted text-muted-foreground'
+              filter === key ? badgeOn : badge
             }`}>
               {counts[key]}
             </span>

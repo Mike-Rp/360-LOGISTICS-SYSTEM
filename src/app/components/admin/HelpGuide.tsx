@@ -530,7 +530,7 @@ export default function HelpGuide() {
                       <topic.icon className="w-5 h-5" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">{topic.category}</span>
+                      <span className="text-[12px] font-medium text-muted-foreground uppercase tracking-wider">{topic.category}</span>
                       <p className="text-sm font-semibold text-foreground leading-tight mt-0.5 group-hover:text-primary transition-colors">{topic.title}</p>
                     </div>
                     <div className="flex-shrink-0 text-muted-foreground group-hover:text-primary transition-colors mt-0.5">

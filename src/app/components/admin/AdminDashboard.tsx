@@ -31,6 +31,9 @@ interface Props {
   setNotifications: React.Dispatch<React.SetStateAction<AppNotification[]>>;
   activityLog: AdminActivityEntry[];
   onLogActivity: (entry: AdminActivityInput) => void;
+  onServerChange: (action: () => Promise<void>) => Promise<void>;
+  archivedDrivers: LocalDriver[];
+  archivedTrucks: LocalTruck[];
   activeNav: NavItem;
   setActiveNav: React.Dispatch<React.SetStateAction<NavItem>>;
   onLogout: () => void;
@@ -47,7 +50,7 @@ export default function AdminDashboard({
   assignments, setAssignments, completed, setCompleted,
   cancelled, setCancelled,
   notifications, setNotifications,
-  activityLog, onLogActivity,
+  activityLog, onLogActivity, onServerChange, archivedDrivers, archivedTrucks,
   activeNav, setActiveNav,
   onLogout, isViewOnly, adminRole, savingToDb,
   onResetAll, isOperationManager, adminEmail,
@@ -97,6 +100,7 @@ export default function AdminDashboard({
             setCancelled={setCancelled}
             isViewOnly={isViewOnly}
             onLogActivity={onLogActivity}
+            onServerChange={onServerChange}
             adminEmail={adminEmail}
           />
         );
@@ -119,6 +123,9 @@ export default function AdminDashboard({
             adminRole={adminRole}
             savingToDb={savingToDb}
             onLogActivity={onLogActivity}
+            onServerChange={onServerChange}
+            archivedDrivers={archivedDrivers}
+            archivedTrucks={archivedTrucks}
           />
         );
       default:

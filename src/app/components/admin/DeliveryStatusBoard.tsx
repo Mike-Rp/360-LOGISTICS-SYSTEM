@@ -113,7 +113,7 @@ export default function DeliveryStatusBoard({ assignments, completed, cancelled,
                     {cfg.label}
                   </span>
                 </div>
-                <span className="text-[10px] text-muted-foreground">{pct}% of total</span>
+                <span className="text-[12px] text-muted-foreground">{pct}% of total</span>
               </div>
 
               {/* Bottom accent bar */}
