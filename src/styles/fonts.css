@@ -1,0 +1,11 @@
+/* ── App font — the ONE place it is set ──────────────────────────────────────
+   Self-hosted DM Sans (@fontsource-variable/dm-sans): bundled with the app, so it
+   works offline. Variable font = every weight 100–1000 in one file, so font-normal,
+   font-medium, font-semibold and font-bold keep working.
+   To revert to the system font: empty this file. */
+@import '@fontsource-variable/dm-sans';
+
+/* Tailwind v4 default sans font — used by the base styles for the whole page */
+@theme {
+  --font-sans: "DM Sans Variable", "DM Sans", system-ui, sans-serif;
+}

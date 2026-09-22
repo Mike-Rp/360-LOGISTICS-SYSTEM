@@ -12,9 +12,14 @@ import AccountsPanel from './AccountsPanel';
 import SettingsPanel from './SettingsPanel';
 import HelpPanel from './HelpPanel';
 import WorkspaceSettingsPanel from './WorkspaceSettingsPanel';
+import DashboardHome from './dashboard/DashboardHome';
 import type { Assignment, CompletedTask, LocalDriver, LocalTruck, AppNotification, AdminRole, AdminActivityEntry, AdminActivityInput } from '../../data/assignmentTypes';
 
 type NavItem = 'Dashboard' | 'Monitor' | 'Deliveries' | 'Documents' | 'Reports' | 'Accounts';
+
+/* Dashboard redesign switch — true = new dashboard (dashboard/DashboardHome.tsx),
+   false = the original KPICards + DeliveryStatusBoard + Charts. Nothing else changes. */
+const USE_NEW_DASHBOARD = true;
 
 interface Props {
   drivers: LocalDriver[];
@@ -61,6 +66,9 @@ export default function AdminDashboard({
   const [helpOpen,      setHelpOpen]      = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
 
+  /* Dashboard "Dispatch Truck" → go to Monitor and open its existing Dispatch Truck form */
+  const [dispatchOnOpen, setDispatchOnOpen] = useState(false);
+
   /* Display name is stored the same way SettingsPanel's profile section already
      persists it — read once at mount, this component remounts on login/logout. */
   const adminName = localStorage.getItem('360_display_name') ?? undefined;
@@ -73,6 +81,19 @@ export default function AdminDashboard({
   const renderContent = () => {
     switch (activeNav) {
       case 'Dashboard':
+        if (USE_NEW_DASHBOARD) {
+          return (
+            <DashboardHome
+              drivers={drivers} trucks={trucks}
+              assignments={assignments} completed={completed} cancelled={cancelled}
+              notifications={notifications}
+              adminName={adminName}
+              isViewOnly={isViewOnly}
+              onNavigate={(page) => setActiveNav(page)}
+              onDispatch={() => { setDispatchOnOpen(true); setActiveNav('Monitor'); }}
+            />
+          );
+        }
         return (
           <>
             <KPICards drivers={drivers} trucks={trucks} assignments={assignments} completed={completed} />
@@ -102,6 +123,8 @@ export default function AdminDashboard({
             onLogActivity={onLogActivity}
             onServerChange={onServerChange}
             adminEmail={adminEmail}
+            openDispatchOnMount={dispatchOnOpen}
+            onDispatchOpened={() => setDispatchOnOpen(false)}
           />
         );
       case 'Deliveries':

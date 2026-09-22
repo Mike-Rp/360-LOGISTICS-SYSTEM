@@ -34,7 +34,7 @@ function Highlight({ text, query }: { text: string; query: string }) {
   );
 }
 import {
-  DOCUMENT_TYPES, taskStatusConfig, DEMO_ADMIN_EMAIL,
+  DOCUMENT_TYPES, taskStatusConfig, availabilityConfig, DEMO_ADMIN_EMAIL,
   type Assignment, type CompletedTask, type LocalDriver, type LocalTruck,
   type TaskStatus, type DocStatus, type AdminActivityInput, type AssignmentDoc,
 } from '../../data/assignmentTypes';
@@ -650,21 +650,20 @@ function CharCount({ value, max = TEXT_MAX }: { value: string; max?: number }) {
 }
 
 /* ─── Helpers ─────────────────────────────────────── */
-const driverStatusColor = (s: string) =>
-  ({ Assigned: 'bg-blue-100 text-blue-700 border-blue-200',
-     Pending:  'bg-amber-100 text-amber-700 border-amber-200',
-     Complete: 'bg-green-100 text-green-700 border-green-200',
-  }[s] ?? 'bg-gray-100 text-gray-700 border-gray-200');
+/* Driver availability as shown on screen: stored 'Assigned' = On Delivery;
+   'Pending' and 'Complete' both mean not on a delivery = Available (display only) */
+const driverAvailability = (s: string) =>
+  s === 'Assigned' ? availabilityConfig.onDelivery : availabilityConfig.available;
 
 /* Colored dot + label (no emoji circles) */
-/* `acknowledged` only matters while status is 'Assigned' — it shows gray
-   instead of the usual green until the driver's app has actually loaded the
-   task, so admin can tell a fresh assignment hasn't been seen yet. */
+/* `acknowledged` only matters while status is 'Assigned' — it shows a lighter
+   purple instead of the usual purple until the driver's app has actually loaded
+   the task, so admin can tell a fresh assignment hasn't been seen yet. */
 function StatusBadge({ status, size = 'sm', acknowledged = true }: { status: TaskStatus; size?: 'sm' | 'xs'; acknowledged?: boolean }) {
   const cfg = taskStatusConfig[status];
   const unseen = status === 'Assigned' && !acknowledged;
-  const badge  = unseen ? 'bg-gray-100 text-gray-500 border-gray-200' : cfg.badge;
-  const dot    = unseen ? 'bg-gray-400' : cfg.dot;
+  const badge  = unseen ? 'bg-purple-50 text-purple-600 border-purple-200' : cfg.badge;
+  const dot    = unseen ? 'bg-purple-300' : cfg.dot;
   return (
     <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border font-medium ${badge} ${size === 'xs' ? 'text-xs' : 'text-xs'}`}>
       <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dot}`} />
@@ -934,8 +933,8 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
             )}
           </div>
           <div className="flex items-center gap-1.5 flex-shrink-0">
-            <span className={`text-xs px-2.5 py-1 rounded-full border ${driverStatusColor(driver.status)}`}>
-              {driver.status}
+            <span className={`text-xs px-2.5 py-1 rounded-full border ${driverAvailability(driver.status).badge}`}>
+              {driverAvailability(driver.status).label}
             </span>
             <button onClick={onClose} aria-label="Close"
               className="p-1.5 rounded-lg hover:bg-accent transition-colors text-muted-foreground">
@@ -1635,6 +1634,9 @@ interface Props {
   /* Runs a database-function change (edit / cancel), then reloads — see App.tsx */
   onServerChange: (action: () => Promise<void>) => Promise<void>;
   adminEmail?: string | null;
+  /* Dashboard "Dispatch Truck": open this screen's Dispatch Truck form once on arrival */
+  openDispatchOnMount?: boolean;
+  onDispatchOpened?: () => void;
 }
 
 /* ─── Main Component ───────────────────────────────── */
@@ -1642,10 +1644,17 @@ export default function DriversManagement({
   drivers, setDrivers, trucks, setTrucks,
   assignments, setAssignments, completed, setCompleted, setCancelled,
   isViewOnly = false, onLogActivity, onServerChange, adminEmail,
+  openDispatchOnMount = false, onDispatchOpened,
 }: Props) {
 
 
   const [showAssignTask, setShowAssignTask] = useState(false);
+
+  useEffect(() => {
+    if (!openDispatchOnMount) return;
+    if (!isViewOnly) setShowAssignTask(true);
+    onDispatchOpened?.();
+  }, [openDispatchOnMount]); // eslint-disable-line react-hooks/exhaustive-deps
   const [viewDetailsId,  setViewDetailsId]  = useState<string | null>(null);
   const [editId,         setEditId]         = useState<string | null>(null);
   const [search,         setSearch]         = useState('');

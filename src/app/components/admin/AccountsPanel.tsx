@@ -5,6 +5,7 @@ import {
   Package, Weight, Trash2, AlertTriangle, Archive,
 } from 'lucide-react';
 import type { LocalDriver, LocalTruck, AdminRole, AdminActivityInput, Assignment } from '../../data/assignmentTypes';
+import { availabilityConfig } from '../../data/assignmentTypes';
 import { RegisterDriverModal, RegisterTruckModal } from './RegisterModals';
 import TruckImage from '../TruckImage';
 import ConfirmPasswordDialog from './ConfirmPasswordDialog';
@@ -54,7 +55,7 @@ function StatusTabs({ value, onChange, activeCount, archivedCount }: {
 /* ── Helpers ── */
 const generatePin = () => String(Math.floor(1000 + Math.random() * 9000));
 
-/* "Assigned" = driver has an active task → Unavailable; everything else → Available */
+/* "Assigned" = driver has an active task → On Delivery; everything else → Available */
 const isAvailable = (status: string) => status !== 'Assigned';
 
 /* ── PIN Cell — hold eye to reveal, auto-hides on release/mouse-leave ── */
@@ -226,8 +227,8 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                 <span>{drivers.filter((d) => isAvailable(d.status)).length} Available</span>
               </div>
               <div className="flex items-center gap-1.5 text-muted-foreground">
-                <span className="w-2 h-2 rounded-full bg-red-400 inline-block" />
-                <span>{drivers.filter((d) => !isAvailable(d.status)).length} Unavailable</span>
+                <span className="w-2 h-2 rounded-full bg-blue-500 inline-block" />
+                <span>{drivers.filter((d) => !isAvailable(d.status)).length} On Delivery</span>
               </div>
             </div>
             )}
@@ -328,14 +329,14 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                         )}
                       </div>
 
-                      {/* Available / Unavailable badge */}
+                      {/* Available / On Delivery badge */}
                       <span className={`inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-medium w-fit ${
                         avail
-                          ? 'bg-green-100 text-green-700 border-green-200'
-                          : 'bg-red-100 text-red-600 border-red-200'
+                          ? availabilityConfig.available.badge
+                          : availabilityConfig.onDelivery.badge
                       }`}>
-                        <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${avail ? 'bg-green-500' : 'bg-red-400'}`} />
-                        {avail ? 'Available' : 'Unavailable'}
+                        <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${avail ? availabilityConfig.available.dot : availabilityConfig.onDelivery.dot}`} />
+                        {avail ? availabilityConfig.available.label : availabilityConfig.onDelivery.label}
                       </span>
 
                       {/* PIN */}
@@ -382,11 +383,11 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                         </div>
                         <span className={`flex-shrink-0 inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-medium ${
                           avail
-                            ? 'bg-green-100 text-green-700 border-green-200'
-                            : 'bg-red-100 text-red-600 border-red-200'
+                            ? availabilityConfig.available.badge
+                            : availabilityConfig.onDelivery.badge
                         }`}>
-                          <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${avail ? 'bg-green-500' : 'bg-red-400'}`} />
-                          {avail ? 'Available' : 'Unavailable'}
+                          <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${avail ? availabilityConfig.available.dot : availabilityConfig.onDelivery.dot}`} />
+                          {avail ? availabilityConfig.available.label : availabilityConfig.onDelivery.label}
                         </span>
                       </div>
 
@@ -435,7 +436,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
           {driverView === 'active' && (
           <p className="text-xs text-muted-foreground flex items-center gap-1.5">
             <Shield className="w-3.5 h-3.5" />
-            Status is <strong className="text-red-500">Unavailable</strong> when the driver has an active task. Hold the eye icon to reveal a PIN.
+            Status is <strong className="text-blue-600">On Delivery</strong> when the driver has an active task. Hold the eye icon to reveal a PIN.
           </p>
           )}
         </div>
@@ -454,8 +455,8 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                 <span>{trucks.filter((t) => t.status === 'Available').length} Available</span>
               </div>
               <div className="flex items-center gap-1.5 text-muted-foreground">
-                <Truck className="w-4 h-4 text-red-400" />
-                <span>{trucks.filter((t) => t.status === 'Assigned').length} Unavailable</span>
+                <Truck className="w-4 h-4 text-blue-500" />
+                <span>{trucks.filter((t) => t.status === 'Assigned').length} On Delivery</span>
               </div>
             </div>
             )}
@@ -555,9 +556,9 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                       )}
                     </div>
                     {/* Status */}
-                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-medium w-fit ${t.status === 'Available' ? 'bg-green-100 text-green-700 border-green-200' : 'bg-red-100 text-red-600 border-red-200'}`}>
-                      <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${t.status === 'Available' ? 'bg-green-500' : 'bg-red-400'}`} />
-                      {t.status === 'Available' ? 'Available' : 'Unavailable'}
+                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-medium w-fit ${t.status === 'Available' ? availabilityConfig.available.badge : availabilityConfig.onDelivery.badge}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${t.status === 'Available' ? availabilityConfig.available.dot : availabilityConfig.onDelivery.dot}`} />
+                      {t.status === 'Available' ? availabilityConfig.available.label : availabilityConfig.onDelivery.label}
                     </span>
                     {!isViewOnly && (
                       <button
@@ -585,9 +586,9 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                         <p className="font-mono font-semibold text-foreground tracking-wider truncate">{t.plateNumber}</p>
                         <p className="text-xs text-muted-foreground">{t.id}</p>
                       </div>
-                      <span className={`flex-shrink-0 inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-medium ${t.status === 'Available' ? 'bg-green-100 text-green-700 border-green-200' : 'bg-red-100 text-red-600 border-red-200'}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${t.status === 'Available' ? 'bg-green-500' : 'bg-red-400'}`} />
-                        {t.status === 'Available' ? 'Available' : 'Unavailable'}
+                      <span className={`flex-shrink-0 inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-medium ${t.status === 'Available' ? availabilityConfig.available.badge : availabilityConfig.onDelivery.badge}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${t.status === 'Available' ? availabilityConfig.available.dot : availabilityConfig.onDelivery.dot}`} />
+                        {t.status === 'Available' ? availabilityConfig.available.label : availabilityConfig.onDelivery.label}
                       </span>
                     </div>
                     <div className="grid grid-cols-2 gap-3 mt-2.5 pt-2.5 border-t border-border/60 text-xs">

@@ -89,7 +89,7 @@ const TOPICS: Topic[] = [
     tags: ['monitor', 'track', 'status', 'real-time'],
     steps: [
       { title: 'Open Monitor', body: 'Each active assignment shows as a card: truck plate, driver, route, and status badge.' },
-      { title: 'Status badge colours', body: 'Assigned (green) · Picked Up (blue) · In Transit (amber) · Delivered (gray) · Failed/Issue (red).' },
+      { title: 'Status badge colours', body: 'Assigned (purple — light purple until the driver opens it) · Picked Up (light blue) · In Transit (blue) · Delivered (green) · Failed/Issue (red) · Cancelled (gray).' },
       { title: 'View details', body: 'Click "View Details" on any card for the full trip record: documents, photos, timestamps, delay notes.' },
       { title: 'Search & filter', body: 'Use the search bar to filter by plate, driver name, route, client, or status.', tip: 'The board refreshes automatically every 12 seconds.' },
     ],
