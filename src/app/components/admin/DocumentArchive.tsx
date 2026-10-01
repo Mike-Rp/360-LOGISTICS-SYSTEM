@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useLayoutEffect, useEffect, useRef } from 'react';
 import {
   FileText, X, CheckCircle2, Clock, XCircle,
   Truck, User, Eye, Search, Calendar, Package,
@@ -12,6 +12,10 @@ interface Props {
   completed:       CompletedTask[];
   setAssignments?: React.Dispatch<React.SetStateAction<Assignment[]>>;
   isViewOnly?:     boolean;
+  search:         string;
+  onSearchChange: (value: string) => void;
+  notificationTarget?: { assignmentId: string; docType?: string } | null;
+  onNotificationTargetHandled?: () => void;
 }
 
 type DocFilter = 'all' | 'pending' | 'approved' | 'rejected';
@@ -86,7 +90,7 @@ interface DocGroup {
 
 /* ── Accordion row ── */
 function GroupRow({
-  group, filter, search, open, onToggle, onPreview,
+  group, filter, search, open, onToggle, onPreview, highlightDoc,
 }: {
   group:     DocGroup;
   filter:    DocFilter;
@@ -94,6 +98,7 @@ function GroupRow({
   open:      boolean;
   onToggle:  () => void;
   onPreview: (url: string, type: string) => void;
+  highlightDoc?: string | null;
 }) {
   const q = search.trim().toLowerCase();
 
@@ -201,7 +206,12 @@ function GroupRow({
                 return (
                   <div
                     key={`${group.assignmentId}-${doc.type}`}
+                    data-notification-document=""
+                    data-assignment-id={group.assignmentId}
+                    data-doc-type={doc.type}
+                    tabIndex={-1}
                     className={`flex items-center gap-3 px-4 py-2 ${!isLast ? 'border-b border-border/30' : ''} ${
+                      highlightDoc === `${group.assignmentId}|${doc.type}` ? 'bg-primary/10 ring-2 ring-inset ring-primary/40' :
                       doc.docStatus === 'rejected' ? 'bg-red-50/40'
                       : doc.docStatus === 'approved' ? 'bg-green-50/20'
                       : 'bg-amber-50/15'
@@ -264,7 +274,7 @@ function GroupRow({
 
 /* ── Mobile card (replaces GroupRow's table markup below `sm`) ── */
 function GroupCard({
-  group, filter, search, open, onToggle, onPreview,
+  group, filter, search, open, onToggle, onPreview, highlightDoc,
 }: {
   group:     DocGroup;
   filter:    DocFilter;
@@ -272,6 +282,7 @@ function GroupCard({
   open:      boolean;
   onToggle:  () => void;
   onPreview: (url: string, type: string) => void;
+  highlightDoc?: string | null;
 }) {
   const q = search.trim().toLowerCase();
 
@@ -320,7 +331,8 @@ function GroupCard({
           {visibleDocs.map((doc) => {
             const cfg = STATUS_CFG[doc.docStatus];
             return (
-              <div key={`${group.assignmentId}-${doc.type}`} className="flex items-center gap-2 px-4 py-2.5">
+              <div key={`${group.assignmentId}-${doc.type}`} data-notification-document="" data-assignment-id={group.assignmentId} data-doc-type={doc.type} tabIndex={-1}
+                className={`flex items-center gap-2 px-4 py-2.5 ${highlightDoc === `${group.assignmentId}|${doc.type}` ? 'bg-primary/10 ring-2 ring-inset ring-primary/40' : ''}`}>
                 <div className="w-5 h-5 bg-primary/10 rounded flex items-center justify-center flex-shrink-0">
                   <FileText className="w-3 h-3 text-primary" />
                 </div>
@@ -354,11 +366,14 @@ function GroupCard({
 }
 
 /* ── Main export ── */
-export default function DocumentArchive({ assignments, completed }: Props) {
+export default function DocumentArchive({ assignments, completed, search, onSearchChange, notificationTarget, onNotificationTargetHandled }: Props) {
   const [filter,  setFilter]  = useState<DocFilter>('all');
   const [preview, setPreview] = useState<{ url: string; type: string } | null>(null);
-  const [search,  setSearch]  = useState('');
   const [openIds, setOpenIds] = useState<Set<string>>(new Set());
+  const [highlightDoc, setHighlightDoc] = useState<string | null>(null);
+  const [missingTarget, setMissingTarget] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const previousSearch = useRef(search);
 
   const toggle = (id: string) =>
     setOpenIds(prev => {
@@ -367,7 +382,7 @@ export default function DocumentArchive({ assignments, completed }: Props) {
       return next;
     });
 
-  const q = search.trim().toLowerCase();
+  const q = notificationTarget ? '' : search.trim().toLowerCase();
 
   const { groups, counts } = useMemo(() => {
     const all: DocGroup[] = [];
@@ -406,11 +421,53 @@ export default function DocumentArchive({ assignments, completed }: Props) {
   }, [assignments, completed, q]);
 
   const visibleGroups = groups.filter(g =>
-    filter === 'all' || g.docs.some(d => d.docStatus === filter)
+    notificationTarget || filter === 'all' || g.docs.some(d => d.docStatus === filter)
   );
 
   const { page: currentPage, setPage, pageItems: pageGroups } = usePagination(visibleGroups);
+  useLayoutEffect(() => {
+    if (previousSearch.current !== search && !notificationTarget) setPage(1);
+    previousSearch.current = search;
+  }, [search, setPage, notificationTarget]);
   const pageArea = useStablePageHeight(currentPage, visibleGroups.length, 10, `${search}|${filter}`);
+
+  useEffect(() => {
+    if (!notificationTarget) return;
+    const assignment = [...assignments, ...completed].find(a => a.id === notificationTarget.assignmentId);
+    const doc = assignment?.documents.find(d => d.type === notificationTarget.docType && d.uploaded);
+    if (!assignment || !doc) {
+      setMissingTarget(true);
+      onNotificationTargetHandled?.();
+      return;
+    }
+    setMissingTarget(false);
+    if (search) onSearchChange('');
+    if (filter !== 'all') setFilter('all');
+    setOpenIds(previous => previous.has(assignment.id) ? previous : new Set(previous).add(assignment.id));
+    const index = groups.findIndex(group => group.assignmentId === assignment.id);
+    if (index >= 0) setPage(Math.floor(index / 10) + 1);
+  }, [notificationTarget?.assignmentId, notificationTarget?.docType, assignments, completed]);
+
+  useEffect(() => {
+    if (!notificationTarget || search || filter !== 'all') return;
+    const assignment = [...assignments, ...completed].find(a => a.id === notificationTarget.assignmentId);
+    const doc = assignment?.documents.find(d => d.type === notificationTarget.docType && d.uploaded);
+    if (!doc || !openIds.has(notificationTarget.assignmentId)) return;
+    const item = [...(rootRef.current?.querySelectorAll<HTMLElement>('[data-notification-document]') ?? [])]
+      .find(element => element.dataset.assignmentId === notificationTarget.assignmentId && element.dataset.docType === notificationTarget.docType && element.getClientRects().length > 0);
+    if (!item) return;
+    item.scrollIntoView({ block: 'center' });
+    item.focus({ preventScroll: true });
+    setHighlightDoc(`${notificationTarget.assignmentId}|${notificationTarget.docType}`);
+    if (doc.fileUrl && doc.fileUrl !== '[image-data-stripped]') setPreview({ url: doc.fileUrl, type: doc.type });
+    onNotificationTargetHandled?.();
+  }, [notificationTarget, search, filter, currentPage, openIds, assignments, completed, onNotificationTargetHandled]);
+
+  useEffect(() => {
+    if (!highlightDoc) return;
+    const timer = window.setTimeout(() => setHighlightDoc(null), 3000);
+    return () => window.clearTimeout(timer);
+  }, [highlightDoc]);
 
   const allOpen = pageGroups.length > 0 && pageGroups.every(g => openIds.has(g.assignmentId));
   const toggleAll = () => {
@@ -428,27 +485,15 @@ export default function DocumentArchive({ assignments, completed }: Props) {
   const emptyFilter = !emptyAll && visibleGroups.length === 0;
 
   return (
-    <div className="space-y-4">
+    <div ref={rootRef} className="space-y-4">
+
+      {missingTarget && <p role="status" className="rounded-lg border border-border bg-white px-4 py-3 text-sm text-muted-foreground">This item is no longer available.</p>}
 
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 className="text-2xl font-semibold text-foreground">Document Archive</h2>
           <p className="text-sm text-muted-foreground mt-0.5">Click any assignment row to expand its documents.</p>
-        </div>
-        <div className="flex items-center gap-1.5 border border-border rounded-xl px-3 py-2 bg-white shadow-sm min-w-[220px]">
-          <Search className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-          <input
-            value={search}
-            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-            placeholder="Search driver, truck, assignment…"
-            className="text-sm bg-transparent focus:outline-none placeholder:text-muted-foreground/60 flex-1 min-w-0"
-          />
-          {search && (
-            <button onClick={() => { setSearch(''); setPage(1); }} className="text-muted-foreground hover:text-foreground">
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
         </div>
       </div>
 
@@ -500,7 +545,7 @@ export default function DocumentArchive({ assignments, completed }: Props) {
           </p>
           <p className="text-sm text-muted-foreground mt-1">Try a different search term or filter.</p>
           {q && (
-            <button onClick={() => { setSearch(''); setPage(1); }}
+            <button onClick={() => onSearchChange('')}
               className="mt-3 px-4 py-2 bg-muted text-foreground rounded-lg text-sm hover:bg-muted/80 transition-colors">
               Clear Search
             </button>
@@ -540,6 +585,7 @@ export default function DocumentArchive({ assignments, completed }: Props) {
                     open={openIds.has(group.assignmentId)}
                     onToggle={() => toggle(group.assignmentId)}
                     onPreview={(url, type) => setPreview({ url, type })}
+                    highlightDoc={highlightDoc}
                   />
                 ))}
               </tbody>
@@ -557,6 +603,7 @@ export default function DocumentArchive({ assignments, completed }: Props) {
                 open={openIds.has(group.assignmentId)}
                 onToggle={() => toggle(group.assignmentId)}
                 onPreview={(url, type) => setPreview({ url, type })}
+                highlightDoc={highlightDoc}
               />
             ))}
           </div>

@@ -1,16 +1,16 @@
 import { useState, useRef, useEffect } from 'react';
 import {
-  User, ChevronDown, Bell, BellOff, Settings, HelpCircle, LogOut,
-  Truck, CheckCheck, Trash2, X, Users,
+  User, ChevronDown, Bell, BellOff, CalendarDays, Search, ArrowLeft, Settings, HelpCircle, LogOut,
+  Truck, CheckCheck, X, Users,
   FileText, AlertTriangle, AlertCircle,
 } from 'lucide-react';
-import type { AppNotification } from '../../data/assignmentTypes';
+import { parseStoredTimestamp, type AppNotification } from '../../data/assignmentTypes';
 import { Popover, PopoverTrigger, PopoverContent } from '../ui/popover';
 
 interface Props {
   notifications: AppNotification[];
   setNotifications: React.Dispatch<React.SetStateAction<AppNotification[]>>;
-  onNavigate: (page: string) => void;
+  onNavigate: (page: string, target: { assignmentId: string; docType?: string }) => void;
   onLogout: () => void;
   onOpenSettings: () => void;
   onOpenHelp: () => void;
@@ -19,6 +19,9 @@ interface Props {
   adminEmail?: string | null;
   adminName?: string;
   onOpenWorkspaceSettings?: () => void;
+  searchPlaceholder?: string;
+  searchValue: string;
+  onSearchChange: (value: string) => void;
 }
 
 const NOTIF_ICON: Record<AppNotification['type'], React.ElementType> = {
@@ -35,6 +38,11 @@ const NOTIF_NAV: Record<AppNotification['type'], string> = {
   issue_report:  'Monitor',
 };
 
+const manilaDateFull = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
+const manilaDateShort = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', weekday: 'short', month: 'short', day: 'numeric' });
+const manilaDateCompact = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric' });
+const manilaDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' });
+
 function fmtTimestamp(ts: string): string {
   try {
     const d = new Date(ts);
@@ -48,9 +56,21 @@ function fmtTimestamp(ts: string): string {
 export default function Header({
   notifications, setNotifications, onNavigate, onLogout, onOpenSettings, onOpenHelp, notifEnabled,
   isOperationManager, adminEmail, adminName, onOpenWorkspaceSettings,
+  searchPlaceholder, searchValue, onSearchChange,
 }: Props) {
   const [bellOpen,    setBellOpen]    = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const mobileSearchRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => setSearchOpen(false), [searchPlaceholder]);
+  useEffect(() => { if (searchOpen) mobileSearchRef.current?.focus(); }, [searchOpen]);
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const accountRef = useRef<HTMLDivElement>(null);
   /* The account menu unmounts when a row is clicked, so Settings / Help hand focus to this
@@ -58,6 +78,21 @@ export default function Header({
   const accountBtnRef = useRef<HTMLButtonElement>(null);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
+  const fullDate = manilaDateFull.format(now);
+  const shortDate = manilaDateShort.format(now);
+  const compactDate = manilaDateCompact.format(now);
+  const today = manilaDay.format(now);
+  const yesterday = manilaDay.format(new Date(now.getTime() - 86_400_000));
+  const notificationGroups = [
+    { label: 'Today', items: [] as AppNotification[] },
+    { label: 'Yesterday', items: [] as AppNotification[] },
+    { label: 'Earlier', items: [] as AppNotification[] },
+  ];
+  for (const notification of notifications.slice(0, 12)) {
+    const date = parseStoredTimestamp(notification.timestamp);
+    const day = date ? manilaDay.format(date) : '';
+    notificationGroups[day === today ? 0 : day === yesterday ? 1 : 2].items.push(notification);
+  }
 
   /* Bell panel's open/outside-click/positioning is handled by Popover itself
      now (see below) — only the account menu still needs a manual listener. */
@@ -72,11 +107,35 @@ export default function Header({
   const markAllRead = () =>
     setNotifications((p) => p.map((n) => ({ ...n, read: true })));
 
-  const clearAll = () => setNotifications([]);
-
   return (
-    <header className="bg-white border-b border-border px-4 sm:px-6 py-3.5">
-      <div className="flex items-center justify-end gap-3 pl-10 lg:pl-0">
+    <header className="relative bg-white border-b border-border px-4 sm:px-6 py-3.5">
+      <div className="flex min-w-0 items-center justify-end gap-2 sm:gap-3">
+
+        <div title={`${fullDate} · Asia/Manila (Philippine Time)`} aria-label={`Today in the Philippines: ${fullDate}`}
+          className="flex h-9 min-w-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-border bg-white px-2.5 text-sm font-semibold text-foreground shadow-sm sm:px-3">
+          <CalendarDays aria-hidden="true" className="hidden h-4 w-4 shrink-0 lg:block" />
+          <span className="hidden truncate lg:block">{fullDate}</span>
+          <span className="hidden truncate min-[360px]:block lg:hidden">{shortDate}</span>
+          <span className="truncate min-[360px]:hidden">{compactDate}</span>
+        </div>
+
+        {searchPlaceholder && (
+          <>
+            <div className="hidden h-9 min-w-0 items-center gap-2 rounded-full border border-border bg-white px-3 text-sm shadow-sm focus-within:border-primary lg:flex lg:w-48 xl:w-72">
+              <Search aria-hidden="true" className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <input value={searchValue} onChange={(event) => onSearchChange(event.target.value)}
+                onKeyDown={(event) => { if (event.key === 'Escape') onSearchChange(''); }}
+                aria-label={searchPlaceholder} placeholder={searchPlaceholder}
+                className="min-w-0 flex-1 truncate bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/60" />
+              {searchValue && <button type="button" onClick={() => onSearchChange('')} aria-label="Clear search" className="shrink-0 text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>}
+            </div>
+            <button type="button" onClick={() => setSearchOpen((open) => !open)}
+              aria-label={searchOpen ? 'Close search' : 'Open search'} aria-expanded={searchOpen}
+              className="fixed right-4 top-[calc(0.75rem+env(safe-area-inset-top))] z-40 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border bg-white text-muted-foreground shadow-sm hover:bg-accent sm:static sm:h-9 sm:w-9 lg:hidden">
+              <Search className="h-4 w-4" />
+            </button>
+          </>
+        )}
 
         {/* ── Bell button ── */}
         <Popover open={bellOpen} onOpenChange={setBellOpen}>
@@ -84,7 +143,7 @@ export default function Header({
             <button
               onClick={() => setAccountOpen(false)}
               title={notifEnabled ? 'Notifications' : 'Notifications muted'}
-              className="relative w-9 h-9 flex items-center justify-center rounded-full hover:bg-accent transition-colors"
+              className="relative w-9 h-9 shrink-0 flex items-center justify-center rounded-full hover:bg-accent transition-colors"
             >
               {notifEnabled
                 ? <Bell className="w-5 h-5 text-muted-foreground" />
@@ -105,110 +164,73 @@ export default function Header({
             className="w-[min(400px,calc(100vw-1rem))] bg-white border border-border rounded-2xl shadow-xl p-0 overflow-hidden"
           >
               {/* Panel header */}
-              <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-                <div className="flex items-center gap-2">
-                  <Bell className="w-4 h-4 text-green-500 flex-shrink-0" />
-                  <h3 className="text-sm font-semibold text-foreground">Notifications</h3>
-                  {unreadCount > 0 && (
-                    <span className="min-w-[20px] h-[20px] bg-green-500 text-white text-[12px] font-bold rounded-full flex items-center justify-center px-1 leading-none">
-                      {unreadCount > 99 ? '99+' : unreadCount}
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  {unreadCount > 0 && (
-                    <button
-                      onClick={markAllRead}
-                      className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors"
-                    >
-                      <CheckCheck className="w-3.5 h-3.5" /> Mark all read
-                    </button>
-                  )}
-                  {notifications.length > 0 && (
-                    <button
-                      onClick={clearAll}
-                      className="flex items-center gap-1 text-xs text-red-500 hover:text-red-600 transition-colors"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" /> Clear all
-                    </button>
-                  )}
-                </div>
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-white px-4 py-3">
+                <h3 className="text-sm font-semibold text-foreground">Notifications</h3>
+                <button type="button" onClick={markAllRead} disabled={unreadCount === 0}
+                  className="inline-flex min-h-9 items-center gap-1 text-xs font-medium text-primary transition-colors hover:text-primary/80 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-default disabled:opacity-50">
+                  <CheckCheck className="h-3.5 w-3.5" /> Mark all as read
+                </button>
               </div>
 
               {/* Notification list */}
-              <div className="max-h-72 overflow-y-auto">
+              <div className="max-h-72 overflow-x-hidden overflow-y-auto overscroll-contain">
                 {notifications.length === 0 ? (
-                  <div className="py-10 text-center">
-                    <Bell className="w-8 h-8 text-muted-foreground/25 mx-auto mb-2" />
+                  <div className="px-4 py-8 text-center">
                     <p className="text-sm text-muted-foreground">No notifications yet</p>
                   </div>
                 ) : (
-                  <div className="divide-y divide-border/60">
-                    {notifications.slice(0, 12).map((n) => {
-                      const Icon    = NOTIF_ICON[n.type];
-                      const navPage = NOTIF_NAV[n.type];
-                      return (
-                        <div
-                          key={n.id}
-                          className={`relative group flex items-start gap-3 px-4 py-3 transition-colors hover:bg-accent/40 ${!n.read ? 'bg-primary/[0.03]' : ''}`}
-                        >
-                          {/* Type icon — gray rounded square */}
-                          <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0 mt-0.5">
-                            <Icon className="w-4 h-4 text-gray-500" />
-                          </div>
-
-                          {/* Content */}
-                          <div className="flex-1 min-w-0 pr-6">
-                            {/* Truck icon + plate in teal */}
-                            <div className="flex items-center gap-1 mb-0.5">
-                              <Truck className="w-3 h-3 text-teal-600 flex-shrink-0" />
-                              <span className="text-[12px] font-semibold text-teal-600 font-mono tracking-wide">{n.truckPlate}</span>
-                            </div>
-                            {/* Description */}
-                            <p className={`text-xs leading-snug ${!n.read ? 'font-medium text-foreground' : 'text-foreground/80'}`}>
-                              {n.message}
-                            </p>
-                            {/* Timestamp + nav link */}
-                            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                              <p className="text-[12px] text-muted-foreground">{fmtTimestamp(n.timestamp)}</p>
-                              <button
-                                onClick={() => { onNavigate(navPage); setBellOpen(false); }}
-                                className="text-[12px] text-teal-600 hover:text-teal-700 font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap"
-                              >
-                                Go to {navPage} →
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* X dismiss button — appears on hover */}
-                          <button
-                            onClick={() => setNotifications((p) => p.filter((x) => x.id !== n.id))}
-                            className="absolute top-2.5 right-3 w-5 h-5 rounded-full bg-white border border-border flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50 hover:border-red-200"
-                          >
-                            <X className="w-3 h-3 text-muted-foreground hover:text-red-500" />
-                          </button>
+                  <div>
+                    {notificationGroups.filter((group) => group.items.length > 0).map((group) => (
+                      <section key={group.label} aria-label={`${group.label} notifications`}>
+                        <h4 className="border-b border-border/60 bg-muted/20 px-4 pb-1.5 pt-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{group.label}</h4>
+                        <div className="divide-y divide-border/60">
+                          {group.items.map((n) => {
+                            const Icon = NOTIF_ICON[n.type];
+                            const navPage = NOTIF_NAV[n.type];
+                            const identifier = n.truckPlate || n.assignmentId;
+                            const prefix = `[${n.truckPlate}] `;
+                            const message = n.message.startsWith(prefix) ? n.message.slice(prefix.length) : n.message;
+                            const actionLabel = n.type === 'doc_upload' ? 'Review' : 'View shipment';
+                            const actionAria = n.type === 'doc_upload' ? `Review ${n.docType ?? 'document'} for ${identifier}` : `View shipment for ${identifier}`;
+                            const openDestination = () => {
+                              setNotifications((previous) => previous.some((item) => item.id === n.id && !item.read)
+                                ? previous.map((item) => item.id === n.id ? { ...item, read: true } : item)
+                                : previous);
+                              onNavigate(navPage, { assignmentId: n.assignmentId, docType: n.type === 'doc_upload' ? n.docType : undefined });
+                              setBellOpen(false);
+                            };
+                            return (
+                              <div key={n.id} className={`flex min-w-0 items-start gap-2 px-4 py-3 transition-colors hover:bg-accent/30 ${n.read ? 'bg-white' : 'bg-primary/[0.035]'}`}>
+                                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" aria-hidden="true" style={{ visibility: n.read ? 'hidden' : 'visible' }} />
+                                {!n.read && <span className="sr-only">Unread notification</span>}
+                                <Icon aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex min-w-0 items-start justify-between gap-2">
+                                    <span className="min-w-0 break-words text-sm font-semibold text-foreground">{identifier}</span>
+                                    <button type="button" onClick={openDestination} aria-label={actionAria}
+                                      className="hidden min-h-8 shrink-0 items-center whitespace-nowrap text-xs font-medium text-primary hover:text-primary/80 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:inline-flex">
+                                      {actionLabel} →
+                                    </button>
+                                  </div>
+                                  <p className="break-words text-sm leading-snug text-foreground/90">{message}</p>
+                                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+                                    <span className="text-xs text-muted-foreground">{fmtTimestamp(n.timestamp)}</span>
+                                    <button type="button" onClick={openDestination} aria-label={actionAria}
+                                      className="inline-flex min-h-8 items-center text-xs font-medium text-primary hover:text-primary/80 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:hidden">
+                                      {actionLabel} →
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
-                      );
-                    })}
+                      </section>
+                    ))}
                   </div>
                 )}
               </div>
 
-              {/* Footer */}
-              <div className="border-t border-border">
-                {unreadCount === 0 && notifications.length > 0 ? (
-                  <p className="w-full py-2.5 text-xs font-medium text-muted-foreground text-center">
-                    All caught up!
-                  </p>
-                ) : (
-                  <button
-                    onClick={() => { onOpenSettings(); setBellOpen(false); }}
-                    className="w-full py-2.5 text-xs font-medium text-primary hover:bg-accent/50 transition-colors"
-                  >
-                    View all activity
-                  </button>
-                )}
-              </div>
           </PopoverContent>
         </Popover>
 
@@ -217,12 +239,12 @@ export default function Header({
           <button
             ref={accountBtnRef}
             onClick={() => { setAccountOpen((v) => !v); setBellOpen(false); }}
-            className="flex items-center gap-2.5 px-3 py-1.5 rounded-full border border-border hover:bg-accent transition-colors"
+            className="flex min-w-0 max-w-[calc(100vw-9rem)] shrink-0 items-center gap-2.5 rounded-full border border-border px-3 py-1.5 transition-colors hover:bg-accent sm:max-w-none"
           >
             <div className="w-7 h-7 bg-black rounded-full flex items-center justify-center flex-shrink-0">
               <User className="w-4 h-4 text-white" />
             </div>
-            <span className="text-sm font-medium text-foreground">{adminName ?? 'Admin User'}</span>
+            <span className="min-w-0 truncate text-sm font-medium text-foreground">{adminName ?? 'Admin User'}</span>
             <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform duration-150 ${accountOpen ? 'rotate-180' : ''}`} />
           </button>
 
@@ -283,6 +305,21 @@ export default function Header({
         </div>
 
       </div>
+      {searchPlaceholder && searchOpen && (
+        <div className="absolute inset-x-0 top-full z-50 border-b border-border bg-white p-3 shadow-lg lg:hidden">
+          <div className="flex min-w-0 items-center gap-2">
+            <button type="button" onClick={() => setSearchOpen(false)} aria-label="Close search" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border text-muted-foreground"><ArrowLeft className="h-4 w-4" /></button>
+            <div className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-xl border border-border px-3 focus-within:border-primary">
+              <Search aria-hidden="true" className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <input ref={mobileSearchRef} value={searchValue} onChange={(event) => onSearchChange(event.target.value)}
+                onKeyDown={(event) => { if (event.key === 'Escape') { onSearchChange(''); setSearchOpen(false); } }}
+                aria-label={searchPlaceholder} placeholder={searchPlaceholder}
+                className="min-w-0 flex-1 truncate bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/60" />
+              {searchValue && <button type="button" onClick={() => { onSearchChange(''); mobileSearchRef.current?.focus(); }} aria-label="Clear search" className="shrink-0 text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>}
+            </div>
+          </div>
+        </div>
+      )}
     </header>
   );
 }

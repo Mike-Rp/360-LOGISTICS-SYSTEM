@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useLayoutEffect } from 'react';
 import {
   Users, Truck, Plus, Eye, EyeOff, RefreshCw,
   CheckCircle2, Shield, KeyRound, Phone,
@@ -103,6 +103,7 @@ interface Props {
   onServerChange: (action: () => Promise<void>) => Promise<void>;
   archivedDrivers?: LocalDriver[];
   archivedTrucks?: LocalTruck[];
+  search: string;
 }
 
 const ROLE_LABEL: Record<string, string> = {
@@ -113,18 +114,30 @@ const ROLE_LABEL: Record<string, string> = {
 
 type TabView = 'Drivers' | 'Trucks';
 
-export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, assignments = [], isViewOnly = false, onResetAll, adminRole, savingToDb, onLogActivity, onServerChange, archivedDrivers = [], archivedTrucks = [] }: Props) {
+export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, assignments = [], isViewOnly = false, onResetAll, adminRole, savingToDb, onLogActivity, onServerChange, archivedDrivers = [], archivedTrucks = [], search }: Props) {
   const [tab, setTab] = useState<TabView>('Drivers');
   const [driverView, setDriverView] = useState<'active' | 'archived'>('active');
   const [truckView,  setTruckView]  = useState<'active' | 'archived'>('active');
-  const activeDriversPage = usePagination(drivers);
-  const archivedDriversPage = usePagination(archivedDrivers);
-  const activeTrucksPage = usePagination(trucks);
-  const archivedTrucksPage = usePagination(archivedTrucks);
-  const activeDriversArea = useStablePageHeight(activeDriversPage.page, drivers.length, 10, `${tab}|${driverView}`);
-  const archivedDriversArea = useStablePageHeight(archivedDriversPage.page, archivedDrivers.length, 10, `${tab}|${driverView}`);
-  const activeTrucksArea = useStablePageHeight(activeTrucksPage.page, trucks.length, 10, `${tab}|${truckView}`);
-  const archivedTrucksArea = useStablePageHeight(archivedTrucksPage.page, archivedTrucks.length, 10, `${tab}|${truckView}`);
+  const query = search.trim().toLowerCase();
+  const matches = (fields: (string | undefined)[]) => !query || fields.some((field) => field?.toLowerCase().includes(query));
+  const visibleDrivers = tab === 'Drivers' && driverView === 'active' ? drivers.filter((driver) => matches([driver.name, driver.id, driver.phone])) : drivers;
+  const visibleArchivedDrivers = tab === 'Drivers' && driverView === 'archived' ? archivedDrivers.filter((driver) => matches([driver.name, driver.id, driver.phone])) : archivedDrivers;
+  const visibleTrucks = tab === 'Trucks' && truckView === 'active' ? trucks.filter((truck) => matches([truck.plateNumber, truck.id, truck.classification, truck.capacity])) : trucks;
+  const visibleArchivedTrucks = tab === 'Trucks' && truckView === 'archived' ? archivedTrucks.filter((truck) => matches([truck.plateNumber, truck.id, truck.classification, truck.capacity])) : archivedTrucks;
+  const activeDriversPage = usePagination(visibleDrivers);
+  const archivedDriversPage = usePagination(visibleArchivedDrivers);
+  const activeTrucksPage = usePagination(visibleTrucks);
+  const archivedTrucksPage = usePagination(visibleArchivedTrucks);
+  useLayoutEffect(() => {
+    activeDriversPage.setPage(1);
+    archivedDriversPage.setPage(1);
+    activeTrucksPage.setPage(1);
+    archivedTrucksPage.setPage(1);
+  }, [search]);
+  const activeDriversArea = useStablePageHeight(activeDriversPage.page, visibleDrivers.length, 10, `${tab}|${driverView}|${search}`);
+  const archivedDriversArea = useStablePageHeight(archivedDriversPage.page, visibleArchivedDrivers.length, 10, `${tab}|${driverView}|${search}`);
+  const activeTrucksArea = useStablePageHeight(activeTrucksPage.page, visibleTrucks.length, 10, `${tab}|${truckView}|${search}`);
+  const archivedTrucksArea = useStablePageHeight(archivedTrucksPage.page, visibleArchivedTrucks.length, 10, `${tab}|${truckView}|${search}`);
   const resetPages = () => {
     activeDriversPage.setPage(1);
     archivedDriversPage.setPage(1);
@@ -260,11 +273,11 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
 
           {/* Archived drivers — read-only, with the archive date */}
           {driverView === 'archived' && (
-            archivedDrivers.length === 0 ? (
+            visibleArchivedDrivers.length === 0 ? (
               <div className="bg-white rounded-2xl border border-dashed border-border p-12 text-center">
                 <Archive className="w-10 h-10 mx-auto mb-3 text-muted-foreground/40" />
-                <p className="font-medium text-foreground">No archived drivers</p>
-                <p className="text-sm text-muted-foreground mt-1">Archived drivers appear here with the date they were archived.</p>
+                <p className="font-medium text-foreground">{query ? 'No accounts found' : 'No archived drivers'}</p>
+                <p className="text-sm text-muted-foreground mt-1">{query ? 'Try a different search term.' : 'Archived drivers appear here with the date they were archived.'}</p>
               </div>
             ) : (
               <div className="bg-white rounded-2xl border border-border shadow-sm divide-y divide-border">
@@ -286,21 +299,21 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                   </div>
                 ))}
                 </div>
-                <PaginationFooter page={archivedDriversPage.page} totalItems={archivedDrivers.length}
+                <PaginationFooter page={archivedDriversPage.page} totalItems={visibleArchivedDrivers.length}
                   onPageChange={archivedDriversPage.setPage} singular="driver" plural="drivers" className="bg-muted/20" />
               </div>
             )
           )}
 
           {/* Empty state */}
-          {driverView === 'active' && (drivers.length === 0 ? (
+          {driverView === 'active' && (visibleDrivers.length === 0 ? (
             <div className="bg-white rounded-2xl border border-dashed border-border p-16 text-center">
               <div className="w-16 h-16 bg-muted/50 rounded-full flex items-center justify-center mx-auto mb-4">
                 <Users className="w-8 h-8 text-muted-foreground/40" />
               </div>
-              <p className="font-medium text-foreground mb-1">No Drivers Registered Yet</p>
-              <p className="text-sm text-muted-foreground mb-5">Register a driver to generate their login PIN.</p>
-              {!isViewOnly && (
+              <p className="font-medium text-foreground mb-1">{query ? 'No accounts found' : 'No Drivers Registered Yet'}</p>
+              <p className="text-sm text-muted-foreground mb-5">{query ? 'Try a different search term.' : 'Register a driver to generate their login PIN.'}</p>
+              {!query && !isViewOnly && (
                 <button onClick={() => setShowAddDriver(true)}
                   className="px-5 py-2.5 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 transition-colors">
                   + Register Driver
@@ -455,7 +468,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                 })}
               </div>
               </div>
-              <PaginationFooter page={activeDriversPage.page} totalItems={drivers.length}
+              <PaginationFooter page={activeDriversPage.page} totalItems={visibleDrivers.length}
                 onPageChange={activeDriversPage.setPage} singular="driver" plural="drivers"
                 className="border-t border-border bg-muted/20" />
             </div>
@@ -498,11 +511,11 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
 
           {/* Archived trucks — read-only, with the archive date */}
           {truckView === 'archived' && (
-            archivedTrucks.length === 0 ? (
+            visibleArchivedTrucks.length === 0 ? (
               <div className="bg-white rounded-2xl border border-dashed border-border p-12 text-center">
                 <Archive className="w-10 h-10 mx-auto mb-3 text-muted-foreground/40" />
-                <p className="font-medium text-foreground">No archived trucks</p>
-                <p className="text-sm text-muted-foreground mt-1">Archived trucks appear here with the date they were archived.</p>
+                <p className="font-medium text-foreground">{query ? 'No accounts found' : 'No archived trucks'}</p>
+                <p className="text-sm text-muted-foreground mt-1">{query ? 'Try a different search term.' : 'Archived trucks appear here with the date they were archived.'}</p>
               </div>
             ) : (
               <div className="bg-white rounded-2xl border border-border shadow-sm divide-y divide-border">
@@ -524,20 +537,20 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                   </div>
                 ))}
                 </div>
-                <PaginationFooter page={archivedTrucksPage.page} totalItems={archivedTrucks.length}
+                <PaginationFooter page={archivedTrucksPage.page} totalItems={visibleArchivedTrucks.length}
                   onPageChange={archivedTrucksPage.setPage} singular="truck" plural="trucks" className="bg-muted/20" />
               </div>
             )
           )}
 
-          {truckView === 'active' && (trucks.length === 0 ? (
+          {truckView === 'active' && (visibleTrucks.length === 0 ? (
             <div className="bg-white rounded-2xl border border-dashed border-border p-16 text-center">
               <div className="w-16 h-16 bg-muted/50 rounded-full flex items-center justify-center mx-auto mb-4">
                 <Truck className="w-8 h-8 text-muted-foreground/40" />
               </div>
-              <p className="font-medium text-foreground mb-1">No Trucks Registered Yet</p>
-              <p className="text-sm text-muted-foreground mb-5">Register trucks so they can be assigned to deliveries.</p>
-              {!isViewOnly && (
+              <p className="font-medium text-foreground mb-1">{query ? 'No accounts found' : 'No Trucks Registered Yet'}</p>
+              <p className="text-sm text-muted-foreground mb-5">{query ? 'Try a different search term.' : 'Register trucks so they can be assigned to deliveries.'}</p>
+              {!query && !isViewOnly && (
                 <button onClick={() => setShowAddTruck(true)}
                   className="px-5 py-2.5 bg-secondary text-white rounded-lg text-sm hover:bg-secondary/90 transition-colors">
                   + Register Truck
@@ -656,7 +669,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                 ))}
               </div>
               </div>
-              <PaginationFooter page={activeTrucksPage.page} totalItems={trucks.length}
+              <PaginationFooter page={activeTrucksPage.page} totalItems={visibleTrucks.length}
                 onPageChange={activeTrucksPage.setPage} singular="truck" plural="trucks"
                 className="border-t border-border bg-muted/20" />
             </div>

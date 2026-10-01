@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useLayoutEffect } from 'react';
 import {
   User, Truck, MapPin, Building2, Calendar, MessageSquare,
   Activity, X, ClipboardList, CheckCircle2,
@@ -13,7 +13,7 @@ import { RegisterDriverModal, RegisterTruckModal } from './RegisterModals';
 import { Popover, PopoverAnchor, PopoverContent } from '../ui/popover';
 import TruckImage from '../TruckImage';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
-import { truckSideImageFor } from '../../data/truckTypes';
+import { TRUCK_CLASSIFICATIONS, truckSideImageFor } from '../../data/truckTypes';
 import {
   verifyOwnPassword, editAssignment, cancelAssignment, AssignmentActionError,
   type AssignmentActionErrorCode, type AssignmentEdit,
@@ -1638,16 +1638,28 @@ interface Props {
   /* Dashboard "Dispatch Truck": open this screen's Dispatch Truck form once on arrival */
   openDispatchOnMount?: boolean;
   onDispatchOpened?: () => void;
+  search: string;
+  onSearchChange: (value: string) => void;
+  notificationTarget?: { assignmentId: string } | null;
+  onNotificationTargetHandled?: () => void;
 }
 
 const MONITOR_PAGE_SIZE = 6;
+const COMPLETED_PAGE_SIZE = 8;
+
+function formatCompletedAtDisplay(value: string) {
+  const match = value.trim().match(/^([A-Za-z]{3,9})\s+(\d{1,2})(?:,\s*(\d{4}))?(?:\s+at|,)?\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (!match) return value;
+  const [, month, day, year, hour, minute, period] = match;
+  return `${month.slice(0, 3)} ${Number(day)}${year ? `, ${year}` : ''} · ${Number(hour)}:${minute} ${period.toUpperCase()}`;
+}
 
 /* ─── Main Component ───────────────────────────────── */
 export default function DriversManagement({
   drivers, setDrivers, trucks, setTrucks,
   assignments, setAssignments, completed, setCompleted, setCancelled,
   isViewOnly = false, onLogActivity, onServerChange, adminEmail,
-  openDispatchOnMount = false, onDispatchOpened,
+  openDispatchOnMount = false, onDispatchOpened, search, onSearchChange, notificationTarget, onNotificationTargetHandled,
 }: Props) {
 
 
@@ -1659,8 +1671,19 @@ export default function DriversManagement({
     onDispatchOpened?.();
   }, [openDispatchOnMount]); // eslint-disable-line react-hooks/exhaustive-deps
   const [viewDetailsId,  setViewDetailsId]  = useState<string | null>(null);
+  const [missingTarget, setMissingTarget] = useState(false);
   const [editId,         setEditId]         = useState<string | null>(null);
-  const [search,         setSearch]         = useState('');
+  const [classificationFilter, setClassificationFilter] = useState('');
+  const [completedOpen, setCompletedOpen] = useState(false);
+
+  useEffect(() => {
+    if (!completedOpen) return;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setCompletedOpen(false);
+    };
+    window.addEventListener('keydown', onEscape);
+    return () => window.removeEventListener('keydown', onEscape);
+  }, [completedOpen]);
 
   /* ── Assign Task wizard ── */
   const [taskStep,        setTaskStep]        = useState<1 | 2>(1);
@@ -1866,53 +1889,164 @@ export default function DriversManagement({
   const handleCancel = (id: string) => onServerChange(() => cancelAssignment(id));
 
   const sq = search.trim().toLowerCase();
-  /* Only show assignments whose driver still exists — hides cards for deleted drivers */
+  /* Only show assignments with an active driver and truck. */
   const activeDriverIds = new Set(drivers.map((d) => d.id));
-  const validAssignments = assignments.filter((a) => activeDriverIds.has(a.driverId));
+  const activeTruckIds = new Set(trucks.map((t) => t.id));
+  const validAssignments = assignments.filter((a) => activeDriverIds.has(a.driverId) && activeTruckIds.has(a.truckId));
+  const matchingClassifications = classificationFilter
+    ? validAssignments.filter((a) => trucks.find((t) => t.id === a.truckId)?.classification === classificationFilter)
+    : validAssignments;
   const visibleAssignments = sq
-    ? validAssignments.filter((a) =>
+    ? matchingClassifications.filter((a) =>
         [a.truckPlate, a.id, a.driverName, a.destination, a.company, a.taskStatus].some((f) =>
           f.toLowerCase().includes(sq)
         )
       )
-    : validAssignments;
+    : matchingClassifications;
   const activePage = usePagination(visibleAssignments, MONITOR_PAGE_SIZE);
-  const completedPage = usePagination(completed, MONITOR_PAGE_SIZE);
-  const activePageArea = useStablePageHeight(activePage.page, visibleAssignments.length, MONITOR_PAGE_SIZE, search);
-  const completedPageArea = useStablePageHeight(completedPage.page, completed.length, MONITOR_PAGE_SIZE);
+  useLayoutEffect(() => { activePage.setPage(1); }, [search, activePage.setPage]);
+  useEffect(() => {
+    if (!notificationTarget) return;
+    const assignment = assignments.find(a => a.id === notificationTarget.assignmentId)
+      ?? completed.find(a => a.id === notificationTarget.assignmentId);
+    if (!assignment || !drivers.some(driver => driver.id === assignment.driverId)) {
+      setViewDetailsId(null);
+      setMissingTarget(true);
+    } else {
+      setMissingTarget(false);
+      setViewDetailsId(assignment.id);
+      setCompletedOpen(false);
+      setClassificationFilter('');
+      if (search) onSearchChange('');
+      activePage.setPage(1);
+    }
+    onNotificationTargetHandled?.();
+  }, [notificationTarget?.assignmentId]);
+  const recentCompleted = [...completed].reverse();
+  const completedPage = usePagination(recentCompleted, COMPLETED_PAGE_SIZE);
+  const activePageArea = useStablePageHeight(activePage.page, visibleAssignments.length, MONITOR_PAGE_SIZE, `${search}|${classificationFilter}`);
+  const completedPageArea = useStablePageHeight(completedPage.page, completed.length, COMPLETED_PAGE_SIZE);
 
-  const viewDetailsAssign = viewDetailsId ? assignments.find((a) => a.id === viewDetailsId) ?? null : null;
+  const viewDetailsAssign = viewDetailsId
+    ? assignments.find((a) => a.id === viewDetailsId) ?? completed.find((a) => a.id === viewDetailsId) ?? null
+    : null;
   const viewDetailsDriver = viewDetailsAssign ? drivers.find((d) => d.id === viewDetailsAssign.driverId) ?? null : null;
 
   /* ════════════ RENDER ════════════ */
   return (
     <div className="space-y-8">
 
+      {missingTarget && <p role="status" className="rounded-lg border border-border bg-white px-4 py-3 text-sm text-muted-foreground">This item is no longer available.</p>}
+
       {/* ── Header ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
+      <div className={'relative flex flex-col justify-between gap-4 2xl:flex-row 2xl:items-center ' + (completedOpen ? 'z-50' : '')}>
+        <div className="min-w-0 2xl:flex-1">
           <h2 className="text-2xl font-semibold text-foreground">Dispatch &amp; Drivers</h2>
           <p className="text-sm text-muted-foreground mt-1">Manage dispatch assignments, drivers, and delivery operations.</p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Search */}
-          <div className="flex items-center gap-1.5 border border-border rounded-xl px-3 py-2.5 bg-white shadow-sm min-w-[210px]">
-            <Search className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-            <input
-              value={search}
-              onChange={(e) => { setSearch(e.target.value); activePage.setPage(1); }}
-              placeholder="Search truck, driver, route…"
-              className="text-sm bg-transparent focus:outline-none placeholder:text-muted-foreground/60 flex-1 min-w-0"
-            />
-            {search && (
-              <button onClick={() => { setSearch(''); activePage.setPage(1); }} className="text-muted-foreground hover:text-foreground transition-colors">
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
+        <div className="grid w-full min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 xl:flex xl:flex-nowrap xl:items-center xl:justify-end 2xl:w-auto">
+          <div className="relative z-50 w-full min-w-0 sm:col-span-2 xl:w-auto">
+            <button type="button" onClick={() => setCompletedOpen((open) => !open)}
+              aria-expanded={completedOpen} aria-controls="recent-completed-panel" aria-haspopup="dialog"
+              className="relative z-50 inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-border bg-white px-3 text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-muted/30 xl:w-auto">
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-green-500" /> Recent Completed
+              <span className="rounded-full bg-green-500 px-2 py-0.5 text-xs text-white">{completed.length}</span>
+              <ChevronDown className={'h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-150 ' + (completedOpen ? 'rotate-180' : '')} />
+            </button>
+            <div aria-hidden="true" onClick={() => setCompletedOpen(false)}
+              className={'fixed inset-0 z-40 bg-black/20 transition-opacity duration-150 ' + (completedOpen ? 'visible opacity-100' : 'invisible pointer-events-none opacity-0')} />
+            <div id="recent-completed-panel" role="dialog" aria-label="Recent Completed Deliveries" aria-hidden={!completedOpen}
+              className={'fixed inset-x-0 bottom-0 z-50 max-h-[70vh] min-w-0 overflow-x-hidden overflow-y-auto rounded-t-2xl border border-border bg-white shadow-xl sm:rounded-2xl transition-all duration-150 sm:absolute sm:inset-x-0 sm:bottom-auto sm:top-full sm:mt-2 xl:left-auto xl:right-0 xl:w-[min(52rem,calc(100vw-2rem))] ' + (completedOpen ? 'visible translate-y-0 opacity-100' : 'invisible pointer-events-none -translate-y-1 opacity-0')}>
+              <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-border bg-white px-4 py-3">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <CheckCircle2 className="h-5 w-5 shrink-0 text-green-500" />
+                  <h3 className="font-semibold text-foreground">Recent Completed Deliveries</h3>
+                  <span className="rounded-full bg-green-500 px-2 py-0.5 text-xs text-white">{completed.length}</span>
+                </div>
+                <button type="button" onClick={() => setCompletedOpen(false)} aria-label="Close recent completed deliveries"
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted/50 hover:text-foreground">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              {completed.length === 0 ? (
+                <p className="px-4 py-10 text-center text-sm text-muted-foreground">No completed deliveries yet.</p>
+              ) : (
+                <>
+                  <div ref={completedPageArea}>
+                    <table className="hidden w-full table-fixed text-xs lg:table xl:text-sm">
+                      <colgroup>
+                        <col className="w-[17%]" /><col className="w-[15%]" /><col className="w-[19%]" />
+                        <col className="w-[16%]" /><col className="w-[14%]" /><col className="w-[19%]" />
+                      </colgroup>
+                      <thead>
+                        <tr className="border-b border-border bg-muted/30">
+                          {['TRUCK #', 'DRIVER', 'ROUTE', 'CUSTOMER', 'DELIVERY DATE', 'COMPLETED AT'].map((col) => (
+                            <th key={col} className="px-2 py-3 text-left text-xs font-semibold tracking-wide text-muted-foreground">{col}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {completedPage.pageItems.map((c) => (
+                          <tr key={c.id} className="border-b border-border/50 transition-colors hover:bg-muted/10">
+                            <td className="px-2 py-3 align-top [overflow-wrap:anywhere]">
+                              <div className="flex min-w-0 items-start gap-2">
+                                <Truck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#0d9488]" />
+                                <span className="min-w-0">
+                                  <span className="font-semibold text-[#0d9488]">{c.truckPlate}</span>
+                                  <span className="block text-xs text-muted-foreground">{c.id}{trucks.find((t) => t.id === c.truckId)?.classification && ` · ${trucks.find((t) => t.id === c.truckId)?.classification}`}</span>
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-2 py-3 align-top text-foreground [overflow-wrap:anywhere]">{c.driverName}</td>
+                            <td className="px-2 py-3 align-top text-foreground [overflow-wrap:anywhere]">{c.destination}</td>
+                            <td className="px-2 py-3 align-top text-foreground [overflow-wrap:anywhere]">{c.company}</td>
+                            <td className="px-2 py-3 align-top text-foreground [overflow-wrap:anywhere]">{c.deliveryDate}</td>
+                            <td className="px-2 py-3 align-top [overflow-wrap:anywhere]">
+                              <span className="inline-block max-w-full rounded-full border border-green-200 bg-green-100 px-2 py-1 text-xs text-green-700">{formatCompletedAtDisplay(c.completedAt)}</span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <div className="divide-y divide-border/50 lg:hidden">
+                      {completedPage.pageItems.map((c) => (
+                        <div key={c.id} className="grid min-w-0 grid-cols-[5.5rem_minmax(0,1fr)] gap-x-3 gap-y-2 px-4 py-3 text-sm [overflow-wrap:anywhere]">
+                          <span className="text-xs font-semibold text-muted-foreground">TRUCK #</span>
+                          <span className="inline-flex min-w-0 items-start gap-2 text-[#0d9488]"><Truck className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span className="min-w-0"><span className="font-semibold">{c.truckPlate}</span><span className="block text-xs text-muted-foreground">{c.id}{trucks.find((t) => t.id === c.truckId)?.classification && ` · ${trucks.find((t) => t.id === c.truckId)?.classification}`}</span></span></span>
+                          <span className="text-xs font-semibold text-muted-foreground">DRIVER</span><span className="min-w-0 text-foreground">{c.driverName}</span>
+                          <span className="text-xs font-semibold text-muted-foreground">ROUTE</span><span className="min-w-0 text-foreground">{c.destination}</span>
+                          <span className="text-xs font-semibold text-muted-foreground">CUSTOMER</span><span className="min-w-0 text-foreground">{c.company}</span>
+                          <span className="text-xs font-semibold text-muted-foreground">DELIVERY DATE</span><span className="min-w-0 text-foreground">{c.deliveryDate}</span>
+                          <span className="text-xs font-semibold text-muted-foreground">COMPLETED AT</span>
+                          <span className="min-w-0"><span className="inline-block max-w-full rounded-full border border-green-200 bg-green-100 px-2 py-1 text-xs text-green-700">{formatCompletedAtDisplay(c.completedAt)}</span></span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <PaginationFooter page={completedPage.page} totalItems={completed.length} pageSize={COMPLETED_PAGE_SIZE}
+                    onPageChange={completedPage.setPage} singular="delivery" plural="deliveries"
+                    className="border-t border-border bg-muted/20" />
+                </>
+              )}
+            </div>
+          </div>
+          <div className="relative w-full min-w-0 xl:w-48">
+            <select
+              aria-label="Truck Classification"
+              value={classificationFilter}
+              onChange={(e) => { setClassificationFilter(e.target.value); activePage.setPage(1); }}
+              className={`h-12 w-full min-w-0 appearance-none rounded-xl border bg-white py-2 pl-3 pr-10 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-primary ${classificationFilter ? 'border-primary' : 'border-border'}`}
+            >
+              <option value="">All Classifications</option>
+              {TRUCK_CLASSIFICATIONS.map((classification) => (
+                <option key={classification.value} value={classification.value}>{classification.value}</option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           </div>
           {!isViewOnly && (
             <button onClick={() => setShowAssignTask(true)}
-              className="flex items-center gap-3 px-6 py-3.5 bg-primary text-white rounded-xl hover:bg-primary/90 transition-all shadow-md hover:shadow-lg active:scale-[0.98] text-sm font-semibold">
+              className="flex h-12 w-full items-center justify-center gap-3 rounded-xl bg-primary px-6 text-sm font-semibold text-white shadow-md transition-all hover:bg-primary/90 hover:shadow-lg active:scale-[0.98] xl:w-auto">
               <Plus className="w-5 h-5" /> Dispatch Truck
             </button>
           )}
@@ -1920,7 +2054,7 @@ export default function DriversManagement({
       </div>
 
       {/* ── Main Board ── */}
-      {assignments.length === 0 ? (
+      {validAssignments.length === 0 && !classificationFilter ? (
         <div className="bg-white rounded-2xl border border-dashed border-border p-16 text-center">
           <ClipboardList className="w-14 h-14 mx-auto mb-4 text-muted-foreground/30" />
           <p className="font-semibold text-foreground mb-1">No Active Assignments</p>
@@ -1935,11 +2069,17 @@ export default function DriversManagement({
       ) : visibleAssignments.length === 0 ? (
         <div className="bg-white rounded-2xl border border-dashed border-border p-16 text-center">
           <Search className="w-12 h-12 mx-auto mb-3 text-muted-foreground/30" />
-          <p className="font-semibold text-foreground mb-1">No results for "{search}"</p>
-          <p className="text-sm text-muted-foreground">Try a different truck plate, driver name, or route.</p>
-          <button onClick={() => { setSearch(''); activePage.setPage(1); }} className="mt-4 px-4 py-2 bg-muted text-foreground rounded-lg text-sm hover:bg-muted/80 transition-colors">
-            Clear Search
-          </button>
+          {classificationFilter ? (
+            <p className="font-semibold text-foreground">No trucks found for this classification.</p>
+          ) : (
+            <>
+              <p className="font-semibold text-foreground mb-1">No results for "{search}"</p>
+              <p className="text-sm text-muted-foreground">Try a different truck plate, driver name, or route.</p>
+              <button onClick={() => onSearchChange('')} className="mt-4 px-4 py-2 bg-muted text-foreground rounded-lg text-sm hover:bg-muted/80 transition-colors">
+                Clear Search
+              </button>
+            </>
+          )}
         </div>
       ) : (
         <>
@@ -2042,54 +2182,6 @@ export default function DriversManagement({
           className="rounded-xl border border-border bg-white shadow-sm" />
         </div>
         </>
-      )}
-
-      {/* ── Completed Deliveries ── */}
-      {completed.length > 0 && (
-        <div className="space-y-4">
-          <div className="flex items-center gap-3">
-            <CheckCircle2 className="w-5 h-5 text-green-500" />
-            <h3 className="font-semibold text-foreground">Recent Completed Deliveries</h3>
-            <span className="bg-green-500 text-white text-xs rounded-full px-2 py-0.5">{completed.length}</span>
-          </div>
-          <div className="bg-white rounded-xl border border-border shadow-sm overflow-hidden">
-            <div ref={completedPageArea} className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-muted/30 border-b border-border">
-                    {['TRUCK #', 'DRIVER', 'ROUTE', 'CUSTOMER', 'DATE', 'COMPLETED AT'].map((col) => (
-                      <th key={col} className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground tracking-wide whitespace-nowrap">
-                        {col}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {completedPage.pageItems.map((c, i) => (
-                    <tr key={c.id} className={`hover:bg-muted/10 transition-colors ${i < completedPage.pageItems.length - 1 ? 'border-b border-border/50' : ''}`}>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <Truck className="w-3.5 h-3.5 text-[#0d9488]" />
-                          <span className="font-semibold text-[#0d9488]">{c.truckPlate}</span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-foreground">{c.driverName}</td>
-                      <td className="px-4 py-3 text-foreground">{c.destination}</td>
-                      <td className="px-4 py-3 text-foreground">{c.company}</td>
-                      <td className="px-4 py-3 text-foreground whitespace-nowrap">{c.deliveryDate}</td>
-                      <td className="px-4 py-3">
-                        <span className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded-full border border-green-200">{c.completedAt}</span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <PaginationFooter page={completedPage.page} totalItems={completed.length} pageSize={MONITOR_PAGE_SIZE}
-              onPageChange={completedPage.setPage} singular="delivery" plural="deliveries"
-              className="border-t border-border bg-muted/20" />
-          </div>
-        </div>
       )}
 
       {/* ════ MODALS ════ */}
@@ -2338,7 +2430,7 @@ export default function DriversManagement({
           onComplete={handleComplete}
           onCancel={handleCancel}
           onSimulateLate={handleSimulateLate}
-          isViewOnly={isViewOnly}
+          isViewOnly={isViewOnly || !assignments.some(a => a.id === viewDetailsId)}
           adminEmail={adminEmail}
         />
       )}

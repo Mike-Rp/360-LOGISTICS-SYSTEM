@@ -37,12 +37,11 @@ function countDelayed(assignments: Assignment[]): number {
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-/* The live summary line: "Wednesday, Sep 23 · 3 deliveries scheduled today · 1 delayed
+/* The live summary line: "3 deliveries scheduled today · 1 delayed
    · 2 documents waiting for review" — only the parts that apply. Used by this header
    and by the welcome banner (DashboardHome.tsx). */
 export function WelcomeSummary({ assignments, completed, onNavigate }: Pick<Props, 'assignments' | 'completed' | 'onNavigate'>) {
   const now = new Date();
-  const dateLabel = now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
 
   /* Delivery dates are stored as display text, e.g. "Sep 23, 2026" (isoToDisplay in
      DriversManagement.tsx) — build today's in the same format and compare. */
@@ -70,10 +69,9 @@ export function WelcomeSummary({ assignments, completed, onNavigate }: Pick<Prop
 
   return (
     <p className="text-sm text-muted-foreground mt-2">
-      {dateLabel}
       {parts.length === 0
-        ? " · No deliveries scheduled today. Everything's up to date."
-        : parts.map((p, i) => <span key={i}> · {p}</span>)}
+        ? "No deliveries scheduled today. Everything's up to date."
+        : parts.map((p, i) => <span key={i}>{i > 0 && ' · '}{p}</span>)}
     </p>
   );
 }

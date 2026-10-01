@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'react';
-import { MapPin, Package, CheckCircle2, Truck, Building2, Filter, Search, X } from 'lucide-react';
+import { MapPin, Package, CheckCircle2, Truck, Building2, Filter } from 'lucide-react';
 import type { Assignment, CompletedTask, LocalTruck, TaskStatus } from '../../data/assignmentTypes';
 import { taskStatusConfig } from '../../data/assignmentTypes';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
@@ -13,6 +13,7 @@ interface DeliveryTableProps {
   completed?: CompletedTask[];
   assignments?: Assignment[];
   trucks?: LocalTruck[];
+  search?: string;
   /* Cancelled assignments — shown under the "Cancelled" tab. */
   cancelled?: Assignment[];
 }
@@ -177,6 +178,7 @@ export default function DeliveryTable({
   assignments = [],
   trucks = [],
   cancelled = [],
+  search = '',
 }: DeliveryTableProps) {
 
   if (!fullView) {
@@ -185,7 +187,6 @@ export default function DeliveryTable({
 
   const [tab, setTab]       = useState<'active' | 'completed' | 'cancelled'>('active');
   const [period, setPeriod] = useState<FilterPeriod>('all');
-  const [search, setSearch] = useState('');
   const [remarksAssignment, setRemarksAssignment] = useState<Assignment | null>(null);
 
   const truckFor = (assignment: Assignment) =>
@@ -218,6 +219,7 @@ export default function DeliveryTable({
     completedPage.setPage(1);
     cancelledPage.setPage(1);
   };
+  useLayoutEffect(() => { resetPages(); }, [search]);
 
   /* A time range or search is narrowing the list */
   const filtering = !!q || period !== 'all';
@@ -240,22 +242,6 @@ export default function DeliveryTable({
             <p className="text-sm text-muted-foreground mt-0.5">View and manage current delivery assignments.</p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Search */}
-            <div className="flex items-center gap-1.5 border border-border rounded-lg px-2.5 py-1.5 bg-white w-full sm:w-auto sm:min-w-[200px]">
-              <Search className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
-              <input
-                value={search}
-                onChange={(e) => { setSearch(e.target.value); resetPages(); }}
-                placeholder="Search truck, driver, route…"
-                className="text-sm bg-transparent focus:outline-none placeholder:text-muted-foreground/60 flex-1 min-w-0"
-              />
-              {search && (
-                <button onClick={() => { setSearch(''); resetPages(); }} className="text-muted-foreground hover:text-foreground transition-colors">
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-
             {/* Tab */}
             <div className="flex flex-wrap max-w-full min-w-0 bg-muted/30 rounded-lg p-1 border border-border">
               <button onClick={() => { setTab('active'); resetPages(); }}

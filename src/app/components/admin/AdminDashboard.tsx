@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Sidebar from './Sidebar';
 import Header from './Header';
 import KPICards from './KPICards';
@@ -16,6 +16,23 @@ import DashboardHome from './dashboard/DashboardHome';
 import type { Assignment, CompletedTask, LocalDriver, LocalTruck, AppNotification, AdminRole, AdminActivityEntry, AdminActivityInput } from '../../data/assignmentTypes';
 
 type NavItem = 'Dashboard' | 'Monitor' | 'Deliveries' | 'Documents' | 'Reports' | 'Accounts';
+
+type NotificationTarget = { page: 'Documents' | 'Monitor'; assignmentId: string; docType?: string };
+
+function targetFromUrl(): NotificationTarget | null {
+  const params = new URLSearchParams(window.location.search);
+  const page = params.get('page');
+  const assignmentId = params.get('assignment') ?? '';
+  if ((page !== 'Documents' && page !== 'Monitor') || !params.has('assignment')) return null;
+  return { page, assignmentId, docType: params.get('document') ?? undefined };
+}
+
+const SEARCH_PLACEHOLDERS: Partial<Record<NavItem, string>> = {
+  Monitor: 'Search trucks, drivers, routes...',
+  Deliveries: 'Search deliveries...',
+  Documents: 'Search documents...',
+  Accounts: 'Search accounts...',
+};
 
 /* Dashboard redesign switch — true = new dashboard (dashboard/DashboardHome.tsx),
    false = the original KPICards + DeliveryStatusBoard + Charts. Nothing else changes. */
@@ -65,6 +82,96 @@ export default function AdminDashboard({
   const [settingsOpen,  setSettingsOpen]  = useState(false);
   const [helpOpen,      setHelpOpen]      = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [searchInput, setSearchInput] = useState({ page: activeNav, value: '' });
+  const [searchQuery, setSearchQuery] = useState({ page: activeNav, value: '' });
+  const [notificationTarget, setNotificationTarget] = useState<NotificationTarget | null>(targetFromUrl);
+  const [locationReady, setLocationReady] = useState(false);
+  const currentSearchInput = searchInput.page === activeNav ? searchInput.value : '';
+  const currentSearchQuery = searchQuery.page === activeNav ? searchQuery.value : '';
+
+  useEffect(() => {
+    setSearchInput({ page: activeNav, value: '' });
+    setSearchQuery({ page: activeNav, value: '' });
+  }, [activeNav]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSearchQuery({ page: activeNav, value: currentSearchInput }), 250);
+    return () => window.clearTimeout(timer);
+  }, [activeNav, currentSearchInput]);
+
+  const changeSearch = (value: string) => {
+    setSearchInput({ page: activeNav, value });
+    if (!value) setSearchQuery({ page: activeNav, value: '' });
+  };
+
+  useEffect(() => {
+    const restoreLocation = () => {
+      const target = targetFromUrl();
+      const page = new URLSearchParams(window.location.search).get('page');
+      setNotificationTarget(target);
+      if (page === 'Documents' || page === 'Monitor' || page === 'Dashboard' || page === 'Deliveries' || page === 'Reports' || page === 'Accounts') {
+        setActiveNav(page);
+      }
+    };
+    restoreLocation();
+    setLocationReady(true);
+    window.addEventListener('popstate', restoreLocation);
+    return () => window.removeEventListener('popstate', restoreLocation);
+  }, [setActiveNav]);
+
+  useEffect(() => {
+    if (!locationReady || notificationTarget) return;
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has('page') || url.searchParams.get('page') === activeNav) return;
+    url.searchParams.set('page', activeNav);
+    window.history.replaceState(window.history.state, '', url);
+  }, [activeNav, locationReady, notificationTarget]);
+
+  const navigateToNotification = (page: string, target: { assignmentId: string; docType?: string }) => {
+    if (page !== 'Documents' && page !== 'Monitor') return;
+    const previous = new URL(window.location.href);
+    previous.searchParams.set('page', activeNav);
+    previous.searchParams.delete('assignment');
+    previous.searchParams.delete('document');
+    window.history.replaceState(window.history.state, '', previous);
+    const next = new URL(previous);
+    next.searchParams.set('page', page);
+    next.searchParams.set('assignment', target.assignmentId);
+    if (target.docType) next.searchParams.set('document', target.docType);
+    window.history.pushState(null, '', next);
+    setNotificationTarget({ page, ...target });
+    setActiveNav(page);
+  };
+
+  const clearNotificationTarget = useCallback(() => {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('assignment');
+    url.searchParams.delete('document');
+    window.history.replaceState(window.history.state, '', url);
+    setNotificationTarget(null);
+  }, []);
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMobileMenuOpen(false);
+    };
+    const desktop = window.matchMedia('(min-width: 768px)');
+    const closeOnDesktop = () => {
+      if (desktop.matches) setMobileMenuOpen(false);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    desktop.addEventListener('change', closeOnDesktop);
+    closeOnDesktop();
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+      desktop.removeEventListener('change', closeOnDesktop);
+    };
+  }, [mobileMenuOpen]);
 
   /* Dashboard "Dispatch Truck" → go to Monitor and open its existing Dispatch Truck form */
   const [dispatchOnOpen, setDispatchOnOpen] = useState(false);
@@ -125,14 +232,18 @@ export default function AdminDashboard({
             adminEmail={adminEmail}
             openDispatchOnMount={dispatchOnOpen}
             onDispatchOpened={() => setDispatchOnOpen(false)}
+            search={currentSearchQuery}
+            onSearchChange={changeSearch}
+            notificationTarget={notificationTarget?.page === 'Monitor' ? notificationTarget : null}
+            onNotificationTargetHandled={clearNotificationTarget}
           />
         );
       case 'Deliveries':
         return (
-          <DeliveryTable fullView assignments={assignments} completed={completed} cancelled={cancelled} trucks={trucks} />
+          <DeliveryTable fullView assignments={assignments} completed={completed} cancelled={cancelled} trucks={trucks} search={currentSearchQuery} />
         );
       case 'Documents':
-        return <DocumentArchive assignments={assignments} completed={completed} setAssignments={setAssignments} isViewOnly={isViewOnly} />;
+        return <DocumentArchive assignments={assignments} completed={completed} setAssignments={setAssignments} isViewOnly={isViewOnly} search={currentSearchQuery} onSearchChange={changeSearch} notificationTarget={notificationTarget?.page === 'Documents' ? notificationTarget : null} onNotificationTargetHandled={clearNotificationTarget} />;
       case 'Reports':
         return <Reports assignments={assignments} completed={completed} cancelled={cancelled} />;
       case 'Accounts':
@@ -149,6 +260,7 @@ export default function AdminDashboard({
             onServerChange={onServerChange}
             archivedDrivers={archivedDrivers}
             archivedTrucks={archivedTrucks}
+            search={currentSearchQuery}
           />
         );
       default:
@@ -158,12 +270,12 @@ export default function AdminDashboard({
 
   return (
     <div className="flex h-screen bg-background overflow-hidden">
-      <Sidebar activeNav={activeNav} setActiveNav={setActiveNav} />
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <Sidebar activeNav={activeNav} setActiveNav={setActiveNav} mobileOpen={mobileMenuOpen} setMobileOpen={setMobileMenuOpen} />
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden pt-[calc(4rem+env(safe-area-inset-top))] md:pt-0">
         <Header
           notifications={notifications}
           setNotifications={setNotifications}
-          onNavigate={(page) => setActiveNav(page as NavItem)}
+          onNavigate={navigateToNotification}
           onLogout={onLogout}
           onOpenSettings={() => setSettingsOpen(true)}
           onOpenHelp={() => setHelpOpen(true)}
@@ -172,8 +284,11 @@ export default function AdminDashboard({
           adminEmail={adminEmail}
           adminName={adminName}
           onOpenWorkspaceSettings={() => setWorkspaceOpen(true)}
+          searchPlaceholder={SEARCH_PLACEHOLDERS[activeNav]}
+          searchValue={currentSearchInput}
+          onSearchChange={changeSearch}
         />
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6">
+        <main className={`min-w-0 flex-1 p-4 sm:p-6 ${mobileMenuOpen ? 'overflow-hidden' : 'overflow-y-auto'}`}>
           <div className="max-w-[1600px] mx-auto space-y-4 sm:space-y-6">{renderContent()}</div>
         </main>
       </div>
