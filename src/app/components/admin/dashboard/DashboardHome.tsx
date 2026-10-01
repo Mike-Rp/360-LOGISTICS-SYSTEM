@@ -54,7 +54,6 @@ export default function DashboardHome({
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 sm:gap-6">
         <DeliveryOverviewChart
           assignments={assignments} completed={completed} cancelled={cancelled}
-          onViewAll={() => onNavigate('Deliveries')}
         />
         <RecentActivityTable notifications={notifications} completed={completed} />
         <DriversFleetCards drivers={drivers} trucks={trucks} assignments={assignments} onViewAll={() => onNavigate('Accounts')} />

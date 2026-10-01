@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { LayoutDashboard, Package, FileText, BarChart3, UserCog, MonitorCheck, Menu, X } from 'lucide-react';
+import { LayoutDashboard, Package, FileText, BarChart3, UserCog, Route, Menu, X } from 'lucide-react';
 import imgLogo from 'figma:asset/5e73e3c08e898d68c86717993c6e7442d03e9ac4.png';
 
 type NavItem = 'Dashboard' | 'Monitor' | 'Deliveries' | 'Documents' | 'Reports' | 'Accounts';
@@ -9,9 +9,9 @@ interface SidebarProps {
   setActiveNav: (nav: NavItem) => void;
 }
 
-const navItems: { name: NavItem; icon: React.ElementType }[] = [
+const navItems: { name: NavItem; label?: string; icon: React.ElementType }[] = [
   { name: 'Dashboard',  icon: LayoutDashboard },
-  { name: 'Monitor',    icon: MonitorCheck    },
+  { name: 'Monitor',    label: 'Dispatch', icon: Route },
   { name: 'Deliveries', icon: Package         },
   { name: 'Documents',  icon: FileText        },
   { name: 'Reports',    icon: BarChart3       },
@@ -54,7 +54,7 @@ export default function Sidebar({ activeNav, setActiveNav }: SidebarProps) {
             }`}
           >
             <Icon className="w-5 h-5 flex-shrink-0" />
-            <span className="font-medium text-sm">{item.name}</span>
+            <span className="font-medium text-sm">{item.label ?? item.name}</span>
           </button>
         );
       })}

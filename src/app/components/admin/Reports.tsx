@@ -1,11 +1,16 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { flushSync } from 'react-dom';
 import {
   FileDown, TrendingUp, Package, AlertTriangle,
   X, Eye, Printer, Clock, Truck,
   User, MapPin, Building2, Timer, AlarmClock,
 } from 'lucide-react';
-import type { Assignment, CompletedTask, DelayReport } from '../../data/assignmentTypes';
+import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import type { Assignment, CompletedTask, TaskStatus } from '../../data/assignmentTypes';
 import { parseStoredTimestamp } from '../../data/assignmentTypes';
+import { PaginationFooter, usePagination } from './Pagination';
+
+const REPORT_PAGE_SIZE = 8;
 
 /* ─── Types ───────────────────────────────────────── */
 interface WeeklyRow {
@@ -174,6 +179,32 @@ function PreviewModal({
   const weeklyRows  = buildWeeklyRows(assignments, completed);
   const delayRows   = buildDelayRows(assignments, completed);
   const monthlyRows = buildMonthlyRows(completed);
+  const weeklyPage = usePagination(weeklyRows, REPORT_PAGE_SIZE);
+  const monthlyPage = usePagination(monthlyRows, REPORT_PAGE_SIZE);
+  const delayPage = usePagination(delayRows, REPORT_PAGE_SIZE);
+  const selectedPage = reportKey === 'weekly' ? weeklyPage : reportKey === 'monthly' ? monthlyPage : delayPage;
+  const selectedCount = reportKey === 'weekly' ? weeklyRows.length : reportKey === 'monthly' ? monthlyRows.length : delayRows.length;
+  const [printing, setPrinting] = useState(false);
+  const selectedDataKey = JSON.stringify(reportKey === 'weekly' ? weeklyRows : reportKey === 'monthly' ? monthlyRows : delayRows);
+  useEffect(() => { selectedPage.setPage(1); }, [reportKey, selectedDataKey]);
+  useEffect(() => {
+    const showAllForPrint = () => flushSync(() => setPrinting(true));
+    const restorePage = () => setPrinting(false);
+    window.addEventListener('beforeprint', showAllForPrint);
+    window.addEventListener('afterprint', restorePage);
+    return () => {
+      window.removeEventListener('beforeprint', showAllForPrint);
+      window.removeEventListener('afterprint', restorePage);
+    };
+  }, []);
+  const visibleWeeklyRows = printing ? weeklyRows : weeklyPage.pageItems;
+  const visibleMonthlyRows = printing ? monthlyRows : monthlyPage.pageItems;
+  const visibleDelayRows = printing ? delayRows : delayPage.pageItems;
+  const tableLayout = 'block w-full min-w-0 xl:table xl:table-fixed print:table print:table-fixed';
+  const tableHead = 'hidden xl:table-header-group print:table-header-group';
+  const tableBody = 'block xl:table-row-group print:table-row-group';
+  const tableRow = 'block mx-3 my-3 rounded-lg border border-border xl:table-row xl:m-0 xl:rounded-none xl:border-x-0 xl:border-t-0 print:table-row print:m-0 print:border-0';
+  const tableCell = 'flex min-w-0 items-start gap-2 px-3 py-2 text-xs break-words before:w-24 before:shrink-0 before:text-[11px] before:font-medium before:text-muted-foreground before:content-[attr(data-label)] xl:table-cell xl:px-2 xl:py-3 xl:before:hidden print:table-cell print:before:hidden';
 
   const today = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
@@ -226,9 +257,9 @@ function PreviewModal({
   const handlePrint = () => window.print();
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white rounded-xl sm:rounded-2xl shadow-2xl w-full max-w-5xl max-h-[94vh] sm:max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
+      <div className={`relative min-w-0 max-w-full bg-white rounded-xl sm:rounded-2xl shadow-2xl w-full xl:max-w-6xl max-h-[94vh] sm:max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-200 ${selectedCount > REPORT_PAGE_SIZE ? 'h-[94vh] sm:h-[90vh]' : ''}`}>
 
         {/* Header */}
         <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-border flex-shrink-0">
@@ -291,58 +322,61 @@ function PreviewModal({
         </div>
 
         {/* Table */}
-        <div className="flex-1 overflow-auto">
+        <div className="min-w-0 flex-1 overflow-y-auto">
           {/* ── Weekly Table ── */}
           {reportKey === 'weekly' && (
             weeklyRows.length === 0
               ? <EmptyTable message="No deliveries yet. Assignments will appear here once created." />
               : (
-                <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-muted/40 border-b border-border z-10">
+                <table className={`${tableLayout} text-sm`}>
+                  <colgroup className="hidden xl:table-column-group print:table-column-group">
+                    {[8, 11, 9, 18, 16, 9, 8, 8, 13].map((width, i) => <col key={i} style={{ width: `${width}%` }} />)}
+                  </colgroup>
+                  <thead className={`${tableHead} sticky top-0 bg-muted/40 border-b border-border z-10`}>
                     <tr>
                       {['Date','Driver','Truck #','Route','Client','Pickup Time','ETA','ATA','Status'].map((h) => (
-                        <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground tracking-wide whitespace-nowrap">{h}</th>
+                        <th key={h} className="text-left px-2 py-3 text-[11px] leading-tight font-semibold text-muted-foreground tracking-wide break-words">{h}</th>
                       ))}
                     </tr>
                   </thead>
-                  <tbody>
-                    {weeklyRows.map((r, i) => (
-                      <tr key={i} className="border-b border-border/40 hover:bg-muted/10 transition-colors">
-                        <td className="px-4 py-3 whitespace-nowrap text-muted-foreground text-xs">{r.date}</td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-1.5">
+                  <tbody className={tableBody}>
+                    {visibleWeeklyRows.map((r, i) => (
+                      <tr key={i} className={`${tableRow} border-b border-border/40 hover:bg-muted/10 transition-colors`}>
+                        <td data-label="Date" className={`${tableCell} text-muted-foreground`}>{r.date}</td>
+                        <td data-label="Driver" className={tableCell}>
+                          <div className="flex min-w-0 items-start gap-1.5">
                             <User className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
-                            <span className="whitespace-nowrap">{r.driver}</span>
+                            <span className="min-w-0 break-words">{r.driver}</span>
                           </div>
                         </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-1.5">
+                        <td data-label="Truck #" className={tableCell}>
+                          <div className="flex min-w-0 items-start gap-1.5">
                             <Truck className="w-3.5 h-3.5 text-[#0d9488] flex-shrink-0" />
-                            <span className="font-semibold text-[#0d9488] whitespace-nowrap">{r.truck}</span>
+                            <span className="min-w-0 break-words font-semibold text-[#0d9488]">{r.truck}</span>
                           </div>
                         </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-1.5">
+                        <td data-label="Route" className={tableCell}>
+                          <div className="flex min-w-0 items-start gap-1.5">
                             <MapPin className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
-                            <span className="whitespace-nowrap">{r.route}</span>
+                            <span className="min-w-0 break-words">{r.route}</span>
                           </div>
                         </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-1.5">
+                        <td data-label="Client" className={tableCell}>
+                          <div className="flex min-w-0 items-start gap-1.5">
                             <Building2 className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
-                            <span className="whitespace-nowrap">{r.client}</span>
+                            <span className="min-w-0 break-words">{r.client}</span>
                           </div>
                         </td>
-                        <td className="px-4 py-3 whitespace-nowrap">
-                          <div className="flex items-center gap-1"><Clock className="w-3 h-3 text-muted-foreground" />{r.pickupTime}</div>
+                        <td data-label="Pickup Time" className={tableCell}>
+                          <div className="flex min-w-0 items-start gap-1"><Clock className="w-3 h-3 shrink-0 text-muted-foreground" /><span className="min-w-0 break-words">{r.pickupTime}</span></div>
                         </td>
-                        <td className="px-4 py-3 whitespace-nowrap">
-                          <div className="flex items-center gap-1"><Timer className="w-3 h-3 text-muted-foreground" />{r.eta}</div>
+                        <td data-label="ETA" className={tableCell}>
+                          <div className="flex min-w-0 items-start gap-1"><Timer className="w-3 h-3 shrink-0 text-muted-foreground" /><span className="min-w-0 break-words">{r.eta}</span></div>
                         </td>
-                        <td className="px-4 py-3 whitespace-nowrap">
-                          <div className="flex items-center gap-1"><AlarmClock className="w-3 h-3 text-muted-foreground" />{r.ata}</div>
+                        <td data-label="ATA" className={tableCell}>
+                          <div className="flex min-w-0 items-start gap-1"><AlarmClock className="w-3 h-3 shrink-0 text-muted-foreground" /><span className="min-w-0 break-words">{r.ata}</span></div>
                         </td>
-                        <td className="px-4 py-3">
+                        <td data-label="Status" className={tableCell}>
                           <span className={`text-xs px-2 py-0.5 rounded-full border font-medium whitespace-nowrap ${
                             r.status === 'On Time' || r.status === 'Completed'
                               ? 'bg-green-100 text-green-700 border-green-200'
@@ -367,36 +401,39 @@ function PreviewModal({
             monthlyRows.length === 0
               ? <EmptyTable message="No completed deliveries yet. Monthly summary will appear here once deliveries are completed." />
               : (
-                <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-muted/40 border-b border-border z-10">
+                <table className={`${tableLayout} text-sm`}>
+                  <colgroup className="hidden xl:table-column-group print:table-column-group">
+                    {[22, 16, 16, 14, 14, 18].map((width, i) => <col key={i} style={{ width: `${width}%` }} />)}
+                  </colgroup>
+                  <thead className={`${tableHead} sticky top-0 bg-muted/40 border-b border-border z-10`}>
                     <tr>
                       {['Month','Total Deliveries','On-Time','Delayed','Cancelled','Completion Rate'].map((h) => (
-                        <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground tracking-wide whitespace-nowrap">{h}</th>
+                        <th key={h} className="text-left px-2 py-3 text-xs font-semibold text-muted-foreground tracking-wide break-words">{h}</th>
                       ))}
                     </tr>
                   </thead>
-                  <tbody>
-                    {monthlyRows.map((r, i) => (
-                      <tr key={i} className="border-b border-border/40 hover:bg-muted/10 transition-colors">
-                        <td className="px-4 py-4 font-semibold text-foreground">{r.week}</td>
-                        <td className="px-4 py-4">
+                  <tbody className={tableBody}>
+                    {visibleMonthlyRows.map((r, i) => (
+                      <tr key={i} className={`${tableRow} border-b border-border/40 hover:bg-muted/10 transition-colors`}>
+                        <td data-label="Month" className={`${tableCell} font-semibold text-foreground`}>{r.week}</td>
+                        <td data-label="Total Deliveries" className={tableCell}>
                           <span className="text-blue-700 font-bold">{r.total}</span>
                         </td>
-                        <td className="px-4 py-4">
-                          <div className="flex items-center gap-1.5">
+                        <td data-label="On-Time" className={tableCell}>
+                          <div className="flex min-w-0 items-center gap-1.5">
                             <span className="font-semibold text-green-600">{r.onTime}</span>
-                            <div className="flex-1 bg-gray-100 rounded-full h-1.5 w-16">
+                            <div className="min-w-0 flex-1 bg-gray-100 rounded-full h-1.5 w-16">
                               <div className="bg-green-500 h-1.5 rounded-full" style={{ width: `${(r.onTime / Math.max(r.total,1)) * 100}%` }} />
                             </div>
                           </div>
                         </td>
-                        <td className="px-4 py-4">
+                        <td data-label="Delayed" className={tableCell}>
                           <span className={`font-semibold ${r.delayed > 0 ? 'text-red-600' : 'text-green-600'}`}>{r.delayed}</span>
                         </td>
-                        <td className="px-4 py-4">
+                        <td data-label="Cancelled" className={tableCell}>
                           <span className={`font-semibold ${r.cancelled > 0 ? 'text-gray-600' : 'text-green-600'}`}>{r.cancelled}</span>
                         </td>
-                        <td className="px-4 py-4">
+                        <td data-label="Completion Rate" className={tableCell}>
                           <span className={`text-sm font-bold px-2 py-0.5 rounded-full ${
                             parseFloat(r.rate) >= 90 ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
                           }`}>{r.rate}</span>
@@ -404,13 +441,13 @@ function PreviewModal({
                       </tr>
                     ))}
                     {monthlyRows.length > 1 && (
-                      <tr className="bg-muted/30 font-semibold border-t-2 border-border">
-                        <td className="px-4 py-3 text-foreground">Total</td>
-                        <td className="px-4 py-3 text-blue-700 font-bold">{monthlySummary.total}</td>
-                        <td className="px-4 py-3 text-green-600 font-bold">{monthlySummary.onTime}</td>
-                        <td className="px-4 py-3 text-red-600 font-bold">{monthlySummary.delayed}</td>
-                        <td className="px-4 py-3 text-gray-600 font-bold">{monthlySummary.cancelled}</td>
-                        <td className="px-4 py-3">
+                      <tr className={`${tableRow} bg-muted/30 font-semibold border-t-2 border-border`}>
+                        <td data-label="Month" className={`${tableCell} text-foreground`}>Total</td>
+                        <td data-label="Total Deliveries" className={`${tableCell} text-blue-700 font-bold`}>{monthlySummary.total}</td>
+                        <td data-label="On-Time" className={`${tableCell} text-green-600 font-bold`}>{monthlySummary.onTime}</td>
+                        <td data-label="Delayed" className={`${tableCell} text-red-600 font-bold`}>{monthlySummary.delayed}</td>
+                        <td data-label="Cancelled" className={`${tableCell} text-gray-600 font-bold`}>{monthlySummary.cancelled}</td>
+                        <td data-label="Completion Rate" className={tableCell}>
                           <span className="text-sm font-bold px-2 py-0.5 rounded-full bg-green-100 text-green-700">
                             {monthlySummary.total > 0
                               ? `${((monthlySummary.onTime / monthlySummary.total) * 100).toFixed(1)}%`
@@ -429,42 +466,45 @@ function PreviewModal({
             delayRows.length === 0
               ? <EmptyTable message="No delay reports yet. Incidents will appear here when drivers report delays." />
               : (
-                <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-muted/40 border-b border-border z-10">
+                <table className={`${tableLayout} text-sm`}>
+                  <colgroup className="hidden xl:table-column-group print:table-column-group">
+                    {[7, 10, 8, 13, 11, 8, 9, 11, 15, 8].map((width, i) => <col key={i} style={{ width: `${width}%` }} />)}
+                  </colgroup>
+                  <thead className={`${tableHead} sticky top-0 bg-muted/40 border-b border-border z-10`}>
                     <tr>
                       {['Date','Driver','Truck #','Route','Client','Scheduled','Reported At','Issue Type','Reason for Delay','Status'].map((h) => (
-                        <th key={h} className="text-left px-3 py-3 text-xs font-semibold text-muted-foreground tracking-wide whitespace-nowrap">{h}</th>
+                        <th key={h} className="text-left px-2 py-3 text-[11px] leading-tight font-semibold text-muted-foreground tracking-wide break-words">{h}</th>
                       ))}
                     </tr>
                   </thead>
-                  <tbody>
-                    {delayRows.map((r, i) => (
-                      <tr key={i} className="border-b border-border/40 hover:bg-muted/10 transition-colors">
-                        <td className="px-3 py-3 whitespace-nowrap text-xs text-muted-foreground">{r.date}</td>
-                        <td className="px-3 py-3">
-                          <div className="flex items-center gap-1.5">
+                  <tbody className={tableBody}>
+                    {visibleDelayRows.map((r, i) => (
+                      <tr key={i} className={`${tableRow} border-b border-border/40 hover:bg-muted/10 transition-colors`}>
+                        <td data-label="Date" className={`${tableCell} text-muted-foreground`}>{r.date}</td>
+                        <td data-label="Driver" className={tableCell}>
+                          <div className="flex min-w-0 items-start gap-1.5">
                             <User className="w-3 h-3 text-muted-foreground flex-shrink-0" />
-                            <span className="whitespace-nowrap text-xs">{r.driver}</span>
+                            <span className="min-w-0 break-words text-xs">{r.driver}</span>
                           </div>
                         </td>
-                        <td className="px-3 py-3">
-                          <span className="font-semibold text-[#0d9488] text-xs whitespace-nowrap">{r.truck}</span>
+                        <td data-label="Truck #" className={tableCell}>
+                          <span className="min-w-0 break-words font-semibold text-[#0d9488] text-xs">{r.truck}</span>
                         </td>
-                        <td className="px-3 py-3 whitespace-nowrap text-xs">{r.route}</td>
-                        <td className="px-3 py-3 whitespace-nowrap text-xs">{r.client}</td>
-                        <td className="px-3 py-3 whitespace-nowrap">
-                          <div className="flex items-center gap-1 text-xs"><Clock className="w-3 h-3 text-muted-foreground" />{r.scheduledTime}</div>
+                        <td data-label="Route" className={tableCell}><span className="min-w-0 break-words">{r.route}</span></td>
+                        <td data-label="Client" className={tableCell}><span className="min-w-0 break-words">{r.client}</span></td>
+                        <td data-label="Scheduled" className={tableCell}>
+                          <div className="flex min-w-0 items-start gap-1 text-xs"><Clock className="w-3 h-3 shrink-0 text-muted-foreground" /><span className="min-w-0 break-words">{r.scheduledTime}</span></div>
                         </td>
-                        <td className="px-3 py-3 whitespace-nowrap">
-                          <div className="flex items-center gap-1 text-xs text-red-500"><Clock className="w-3 h-3" />{r.reportedAt}</div>
+                        <td data-label="Reported At" className={tableCell}>
+                          <div className="flex min-w-0 items-start gap-1 text-xs text-red-500"><Clock className="w-3 h-3 shrink-0" /><span className="min-w-0 break-words">{r.reportedAt}</span></div>
                         </td>
-                        <td className="px-3 py-3">
+                        <td data-label="Issue Type" className={tableCell}>
                           <DelayTypeBadge type={r.type} />
                         </td>
-                        <td className="px-3 py-3 text-xs text-foreground max-w-[220px]">
-                          {r.reason}
+                        <td data-label="Reason for Delay" className={`${tableCell} text-foreground`}>
+                          <span className="min-w-0 break-words">{r.reason}</span>
                         </td>
-                        <td className="px-3 py-3">
+                        <td data-label="Status" className={tableCell}>
                           <span className={`text-xs px-2 py-0.5 rounded-full border font-medium whitespace-nowrap ${
                             r.status === 'Resolved'
                               ? 'bg-green-100 text-green-700 border-green-200'
@@ -479,12 +519,16 @@ function PreviewModal({
           )}
         </div>
 
+        <PaginationFooter page={selectedPage.page} totalItems={selectedCount} pageSize={REPORT_PAGE_SIZE}
+          onPageChange={selectedPage.setPage} singular="record" plural="records"
+          className="border-t border-border bg-muted/10" />
+
         {/* Footer */}
         <div className="px-4 sm:px-6 py-4 border-t border-border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 flex-shrink-0 bg-muted/10">
           <p className="text-xs text-muted-foreground">
-            {reportKey === 'weekly'  && `${weeklyRows.length} record${weeklyRows.length !== 1 ? 's' : ''} shown`}
-            {reportKey === 'monthly' && `${monthlyRows.length} month${monthlyRows.length !== 1 ? 's' : ''} shown`}
-            {reportKey === 'delay'   && `${delayRows.length} incident${delayRows.length !== 1 ? 's' : ''} shown`}
+            {reportKey === 'weekly'  && `${weeklyRows.length} record${weeklyRows.length !== 1 ? 's' : ''} total`}
+            {reportKey === 'monthly' && `${monthlyRows.length} month${monthlyRows.length !== 1 ? 's' : ''} total`}
+            {reportKey === 'delay'   && `${delayRows.length} incident${delayRows.length !== 1 ? 's' : ''} total`}
           </p>
           <div className="flex items-center gap-2 flex-wrap">
             <button onClick={onClose}
@@ -506,70 +550,92 @@ function PreviewModal({
   );
 }
 
-/* ─── Delay Reason Breakdown (live) ───────────────── */
-function DelayBreakdown({ delayRows }: { delayRows: DelayRow[] }) {
-  const typeOrder = ['Pickup Delay','Delivery Delay','Client Issue','Weather','Document Issue','Vehicle Issue'];
-  const colors: Record<string, string> = {
-    'Pickup Delay':   'bg-amber-400',
-    'Delivery Delay': 'bg-red-400',
-    'Client Issue':   'bg-purple-400',
-    'Weather':        'bg-blue-400',
-    'Document Issue': 'bg-gray-400',
-    'Vehicle Issue':  'bg-orange-400',
-  };
-  const counts = typeOrder
-    .map((type) => ({ type, count: delayRows.filter((d) => d.type === type).length }))
-    .filter((r) => r.count > 0)
-    .sort((a, b) => b.count - a.count);
-  const max = counts.length > 0 ? Math.max(...counts.map((c) => c.count)) : 1;
+/* The dashboard already uses these status colours; keep analytics in the same palette. */
+const STATUS_COLORS: Record<TaskStatus, string> = {
+  'Assigned': '#a855f7',
+  'Picked Up': '#38bdf8',
+  'In Transit': '#1d4ed8',
+  'Delivered': '#22c55e',
+  'Failed / Issue': '#ef4444',
+  'Cancelled': '#d1d5db',
+};
+const STATUS_ORDER: TaskStatus[] = [
+  'Assigned', 'Picked Up', 'In Transit', 'Delivered', 'Failed / Issue', 'Cancelled',
+];
+type DateRange = { start: string; end: string };
+type ReportEntry = { task: Assignment | CompletedTask; status: TaskStatus; day: string };
 
-  return (
-    <div className="bg-white rounded-xl border border-border shadow-sm p-5">
-      <h3 className="font-semibold text-foreground mb-4 flex items-center gap-2">
-        <AlertTriangle className="w-4 h-4 text-red-500" /> Delay Reason Breakdown
-      </h3>
-      {counts.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-6">
-          {/* Faded placeholder bar chart */}
-          <div className="flex items-end gap-2.5 h-16 mb-5 opacity-[0.15] select-none" aria-hidden="true">
-            {[65, 40, 85, 25, 55, 15, 70].map((h, i) => (
-              <div key={i} className="w-7 bg-gray-500 rounded-t" style={{ height: `${h}%` }} />
-            ))}
-          </div>
-          <p className="text-sm font-medium text-muted-foreground">No delay incidents yet</p>
-          <p className="text-xs text-muted-foreground/70 mt-1 text-center max-w-xs">
-            Reasons will break down here once delays start coming in.
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {counts.map(({ type, count }) => (
-            <div key={type} className="flex items-center gap-3">
-              <div className="w-32 flex-shrink-0">
-                <DelayTypeBadge type={type} />
-              </div>
-              <div className="flex-1 bg-gray-100 rounded-full h-2.5">
-                <div className={`${colors[type] ?? 'bg-gray-400'} h-2.5 rounded-full transition-all`}
-                  style={{ width: `${(count / max) * 100}%` }} />
-              </div>
-              <span className="text-sm font-semibold text-foreground w-6 text-right">{count}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+function manilaDay(date: Date): string {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(date).map(part => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function initialRange(): DateRange {
+  const end = manilaDay(new Date());
+  const startDate = new Date(`${end}T00:00:00Z`);
+  startDate.setUTCDate(startDate.getUTCDate() - 29);
+  return { start: startDate.toISOString().slice(0, 10), end };
+}
+
+function reportDay(value?: string): string | null {
+  const parsed = value ? parseStoredTimestamp(value) : null;
+  return parsed ? manilaDay(parsed) : null;
+}
+
+function bucketDate(day: string): Date {
+  return new Date(`${day}T00:00:00Z`);
+}
+
+function formatBucket(day: string, options: Intl.DateTimeFormatOptions): string {
+  return new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', ...options }).format(bucketDate(day));
+}
+
+function buildTrend(entries: ReportEntry[], range: DateRange) {
+  const first = bucketDate(range.start);
+  const last = bucketDate(range.end);
+  const span = Math.round((last.getTime() - first.getTime()) / 86_400_000) + 1;
+  const grouping = span <= 14 ? 'day' : span <= 120 ? 'week' : 'month';
+  const keyFor = (day: string) => {
+    if (grouping === 'day') return day;
+    if (grouping === 'month') return day.slice(0, 7);
+    const monday = bucketDate(day);
+    monday.setUTCDate(monday.getUTCDate() - (monday.getUTCDay() + 6) % 7);
+    return monday.toISOString().slice(0, 10);
+  };
+  const bars = new Map<string, { key: string; label: string; onTime: number; delayed: number }>();
+  for (const date = new Date(first); date <= last; date.setUTCDate(date.getUTCDate() + 1)) {
+    const key = keyFor(date.toISOString().slice(0, 10));
+    if (bars.has(key)) continue;
+    const label = grouping === 'month'
+      ? formatBucket(`${key}-01`, { month: 'short', year: '2-digit' })
+      : formatBucket(key, { month: 'short', day: 'numeric' });
+    bars.set(key, { key, label, onTime: 0, delayed: 0 });
+  }
+  for (const entry of entries) {
+    if (entry.status !== 'Delivered') continue;
+    const key = keyFor(entry.day);
+    const bar = bars.get(key)!;
+    if (entry.task.delayReports?.length) bar.delayed += 1;
+    else bar.onTime += 1;
+  }
+  return [...bars.values()].sort((a, b) => a.key.localeCompare(b.key));
 }
 
 /* ─── Props ───────────────────────────────────────── */
 interface ReportsProps {
   assignments: Assignment[];
   completed:   CompletedTask[];
+  cancelled:   Assignment[];
 }
 
 /* ─── Main Component ──────────────────────────────── */
-export default function Reports({ assignments, completed }: ReportsProps) {
+export default function Reports({ assignments, completed, cancelled }: ReportsProps) {
   const [previewKey, setPreviewKey] = useState<ReportKey | null>(null);
+  const [draftRange, setDraftRange] = useState<DateRange>(initialRange);
+  const [range, setRange] = useState<DateRange>(initialRange);
+  const [rangeError, setRangeError] = useState('');
 
   const handleExport = (reportKey: ReportKey) => {
     const weeklyRows  = buildWeeklyRows(assignments, completed);
@@ -593,20 +659,31 @@ export default function Reports({ assignments, completed }: ReportsProps) {
     }
   };
 
-  const delayRows      = buildDelayRows(assignments, completed);
-  const totalCompleted = completed.length;
-  const delayCount     = delayRows.length;
-  const activeCount    = assignments.length;
-  const onTimeCount    = totalCompleted - completed.filter((c) => (c.delayReports?.length ?? 0) > 0).length;
-  const totalForRate   = totalCompleted + activeCount;
+  const entries: ReportEntry[] = [
+    ...assignments.map(task => ({ task, status: task.taskStatus, day: reportDay(task.deliveryDate) })),
+    ...completed.map(task => ({ task, status: 'Delivered' as TaskStatus, day: reportDay(task.deliveryDate) })),
+    ...cancelled.map(task => ({ task, status: 'Cancelled' as TaskStatus, day: reportDay(task.deliveryDate) })),
+  ].filter((entry): entry is ReportEntry => !!entry.day && entry.day >= range.start && entry.day <= range.end);
+  const trend = buildTrend(entries, range);
+  const statusCounts = STATUS_ORDER.map(status => ({
+    status, count: entries.filter(entry => entry.status === status).length,
+    color: STATUS_COLORS[status],
+  }));
+  const delayEntries = entries.filter(entry => (entry.task.delayReports?.length ?? 0) > 0);
+  const reasonCounts = new Map<string, number>();
+  for (const entry of delayEntries) {
+    const reasons = new Set(entry.task.delayReports?.map(report => report.reason.trim() || 'Reason not provided') ?? []);
+    for (const reason of reasons) reasonCounts.set(reason, (reasonCounts.get(reason) ?? 0) + 1);
+  }
+  const reasons = [...reasonCounts].sort((a, b) => b[1] - a[1]);
 
   const reports: { key: ReportKey; title: string; desc: string; icon: typeof TrendingUp; color: string; badge: string }[] = [
     {
       key:   'weekly',
       title: 'Weekly Performance Report',
-      desc:  'All deliveries for the current week — driver, truck, route, client, scheduled & actual times, and status.',
+      desc:  'Driver, truck, route, client, scheduled and actual times, and status.',
       icon:  TrendingUp,
-      color: 'from-blue-500 to-blue-600',
+      color: 'bg-blue-600',
       badge: 'Weekly',
     },
     {
@@ -614,7 +691,7 @@ export default function Reports({ assignments, completed }: ReportsProps) {
       title: 'Monthly Delivery Summary',
       desc:  'Month-by-month breakdown of total deliveries, on-time rate, delays, and cancellations.',
       icon:  Package,
-      color: 'from-green-500 to-green-600',
+      color: 'bg-green-600',
       badge: 'Monthly',
     },
     {
@@ -622,70 +699,65 @@ export default function Reports({ assignments, completed }: ReportsProps) {
       title: 'Delay & Issues Report',
       desc:  'Detailed log of every delayed incident — cause, driver, route, issue type, and resolution status.',
       icon:  AlertTriangle,
-      color: 'from-red-500 to-red-600',
-      badge: 'Live',
+      color: 'bg-red-600',
+      badge: 'On demand',
     },
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 min-w-0">
+      <header>
+        <h2 className="text-2xl font-semibold text-foreground">Reports & Analytics</h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          Review delivery performance, identify operational issues, and generate reports.
+        </p>
+      </header>
 
-      {/* Header */}
-      <div>
-        <div className="flex items-center justify-between">
-          <h2 className="text-2xl font-semibold text-foreground">Reports & Analytics</h2>
-          <span className="text-xs text-muted-foreground bg-muted px-2.5 py-1 rounded-full">
-            All figures reflect live data
-          </span>
+      <section className="rounded-xl border border-border bg-white p-4 sm:p-5 shadow-sm">
+        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+          <div>
+            <h3 className="font-semibold text-foreground">Analytics date range</h3>
+            <p className="text-xs text-muted-foreground mt-1">Filter charts by scheduled delivery date.</p>
+          </div>
+          <div className="flex flex-col md:flex-row md:items-end gap-3 w-full lg:w-auto">
+            <label className="text-xs font-medium text-muted-foreground min-w-0 flex-1 lg:flex-none">
+              From
+              <input type="date" value={draftRange.start} max={draftRange.end}
+                onChange={event => { setDraftRange(value => ({ ...value, start: event.target.value })); setRangeError(''); }}
+                className="mt-1 block w-full min-w-0 rounded-lg border border-border bg-white px-3 py-2 text-sm text-foreground" />
+            </label>
+            <label className="text-xs font-medium text-muted-foreground min-w-0 flex-1 lg:flex-none">
+              To
+              <input type="date" value={draftRange.end} min={draftRange.start}
+                onChange={event => { setDraftRange(value => ({ ...value, end: event.target.value })); setRangeError(''); }}
+                className="mt-1 block w-full min-w-0 rounded-lg border border-border bg-white px-3 py-2 text-sm text-foreground" />
+            </label>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => { const reset = initialRange(); setDraftRange(reset); setRange(reset); setRangeError(''); }}
+                className="min-h-10 rounded-lg border border-border px-4 text-sm text-foreground hover:bg-muted">Reset</button>
+              <button type="button" onClick={() => {
+                if (!draftRange.start || !draftRange.end || draftRange.start > draftRange.end) {
+                  setRangeError('Choose a valid start and end date.'); return;
+                }
+                setRange(draftRange); setRangeError('');
+              }} className="min-h-10 rounded-lg bg-primary px-4 text-sm text-white hover:bg-primary/90">Apply</button>
+            </div>
+          </div>
         </div>
-        <p className="text-sm text-muted-foreground mt-1">Preview and export detailed operational reports</p>
-      </div>
+        {rangeError && <p role="alert" className="mt-2 text-xs text-red-600">{rangeError}</p>}
+      </section>
 
-      {/* Quick Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {/* Total Deliveries */}
-        <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-4 rounded-xl">
-          <p className="text-xs text-muted-foreground mb-1">Total deliveries</p>
-          <p className="text-2xl font-bold text-blue-600">{totalCompleted + activeCount}</p>
-          <p className="text-xs text-muted-foreground mt-1">All time</p>
+      <section className="space-y-4">
+        <div>
+          <h3 className="text-lg font-semibold text-foreground">Reports</h3>
+          <p className="text-sm text-muted-foreground">Preview and export detailed operational reports.</p>
         </div>
-
-        {/* On-Time Rate — neutral when no completed deliveries */}
-        <div className={`p-4 rounded-xl ${totalCompleted === 0 ? 'bg-gradient-to-br from-gray-50 to-gray-100' : 'bg-gradient-to-br from-green-50 to-green-100'}`}>
-          <p className="text-xs text-muted-foreground mb-1">On-time rate</p>
-          {totalCompleted === 0 ? (
-            <p className="text-2xl font-bold text-gray-400">—</p>
-          ) : (
-            <p className="text-2xl font-bold text-green-600">{((onTimeCount / totalCompleted) * 100).toFixed(1)}%</p>
-          )}
-          <p className="text-xs text-muted-foreground mt-1">
-            {totalCompleted === 0 ? 'No completed deliveries yet' : 'Of completed deliveries'}
-          </p>
-        </div>
-
-        {/* Delay Incidents — green when zero, red when positive */}
-        <div className={`p-4 rounded-xl ${delayCount === 0 ? 'bg-gradient-to-br from-green-50 to-emerald-50' : 'bg-gradient-to-br from-red-50 to-red-100'}`}>
-          <p className="text-xs text-muted-foreground mb-1">Delay incidents</p>
-          <p className={`text-2xl font-bold ${delayCount === 0 ? 'text-green-600' : 'text-red-600'}`}>{delayCount}</p>
-          <p className="text-xs text-muted-foreground mt-1">
-            {delayCount === 0 ? 'Total reported, none so far' : 'Total reported'}
-          </p>
-        </div>
-
-        {/* Active Deliveries */}
-        <div className="bg-gradient-to-br from-amber-50 to-amber-100 p-4 rounded-xl">
-          <p className="text-xs text-muted-foreground mb-1">Active deliveries</p>
-          <p className="text-2xl font-bold text-amber-600">{activeCount}</p>
-          <p className="text-xs text-muted-foreground mt-1">Currently assigned</p>
-        </div>
-      </div>
-
       {/* Report Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
         {reports.map(({ key, title, desc, icon: Icon, color, badge }) => (
           <div key={key} className="bg-white rounded-xl border border-border shadow-sm p-5 hover:shadow-md transition-shadow flex flex-col gap-4">
             <div className="flex items-start gap-4">
-              <div className={`bg-gradient-to-br ${color} p-3 rounded-xl flex-shrink-0`}>
+              <div className={`${color} p-3 rounded-xl flex-shrink-0`}>
                 <Icon className="w-5 h-5 text-white" />
               </div>
               <div className="flex-1 min-w-0">
@@ -696,7 +768,7 @@ export default function Reports({ assignments, completed }: ReportsProps) {
               </div>
             </div>
             <p className="text-sm text-muted-foreground leading-relaxed">{desc}</p>
-            <div className="flex items-center justify-end mt-auto pt-2 border-t border-border gap-2">
+            <div className="flex flex-wrap items-center justify-end mt-auto pt-2 border-t border-border gap-2">
               <button
                 onClick={() => setPreviewKey(key)}
                 className="flex items-center gap-1.5 px-3 py-2 border border-border bg-white text-foreground rounded-lg text-sm hover:bg-accent transition-colors"
@@ -706,17 +778,130 @@ export default function Reports({ assignments, completed }: ReportsProps) {
               <button
                 onClick={() => handleExport(key)}
                 title="Export CSV"
-                className="p-2 border border-border bg-white text-foreground rounded-lg hover:bg-accent transition-colors"
+                className="flex items-center gap-1.5 px-3 py-2 border border-border bg-white text-foreground rounded-lg text-sm hover:bg-accent transition-colors"
               >
-                <FileDown className="w-4 h-4" />
+                <FileDown className="w-3.5 h-3.5" /> Export
               </button>
             </div>
           </div>
         ))}
       </div>
+      </section>
 
-      {/* Delay Breakdown */}
-      <DelayBreakdown delayRows={delayRows} />
+      <section className="space-y-4">
+        <div>
+          <h3 className="text-lg font-semibold text-foreground">Analytics</h3>
+          <p className="text-sm text-muted-foreground">Key insights and trends based on your delivery data.</p>
+        </div>
+
+        <div className="rounded-xl border border-border bg-white p-4 sm:p-5 shadow-sm min-w-0">
+          <h4 className="font-semibold text-foreground">Delivery Performance Trend</h4>
+          <p className="text-sm text-muted-foreground mt-1">On-time and delayed deliveries over time.</p>
+          {!trend.some(bar => bar.onTime + bar.delayed > 0) ? (
+            <div className="flex min-h-56 items-center justify-center text-sm text-muted-foreground text-center">
+              No completed deliveries for this period.
+            </div>
+          ) : (
+            <>
+              <div className="mt-5 h-64 w-full min-w-0" role="img" aria-label="Stacked chart of on-time and delayed deliveries">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={trend} margin={{ top: 8, right: 8, left: -20, bottom: 8 }}>
+                    <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} interval="preserveStartEnd" minTickGap={20} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#64748b' }} />
+                    <Tooltip />
+                    <Bar dataKey="onTime" name="On-time" stackId="deliveries" fill="#22c55e" maxBarSize={44} />
+                    <Bar dataKey="delayed" name="Delayed" stackId="deliveries" fill="#ef4444" maxBarSize={44} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="mt-2 flex flex-wrap justify-center gap-4 text-xs text-muted-foreground">
+                <span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm bg-green-500" />On-time</span>
+                <span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm bg-red-500" />Delayed</span>
+              </div>
+              <p className="mt-2 text-center text-xs text-muted-foreground">
+                Uses the existing report definition: a completed delivery with a submitted delay report is delayed.
+              </p>
+            </>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+          <div className="rounded-xl border border-border bg-white p-4 sm:p-5 shadow-sm min-w-0">
+            <h4 className="font-semibold text-foreground">Delay Reason Breakdown</h4>
+            <p className="text-sm text-muted-foreground mt-1">Distribution of delayed deliveries by reason.</p>
+            {reasons.length === 0 ? (
+              <p className="py-12 text-center text-sm text-muted-foreground">No reported delays for this period.</p>
+            ) : (
+              <div className="mt-5 space-y-4">
+                {reasons.map(([reason, count]) => (
+                  <div key={reason}>
+                    <div className="flex items-start justify-between gap-3 text-sm">
+                      <span className="min-w-0 break-words font-medium text-foreground">{reason}</span>
+                      <span className="shrink-0 text-muted-foreground">{count} · {Math.round(count / delayEntries.length * 100)}%</span>
+                    </div>
+                    <div className="mt-1.5 h-2 rounded-full bg-muted">
+                      <div className="h-full rounded-full bg-amber-500" style={{ width: `${count / delayEntries.length * 100}%` }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-border bg-white p-4 sm:p-5 shadow-sm min-w-0">
+            <h4 className="font-semibold text-foreground">Delivery Status Breakdown</h4>
+            <p className="text-sm text-muted-foreground mt-1">Current status of assignments in the selected period.</p>
+            {entries.length === 0 ? (
+              <p className="py-12 text-center text-sm text-muted-foreground">No assignments for this period.</p>
+            ) : (
+              <div className="mt-4 flex flex-col sm:flex-row items-center gap-4">
+                <div className="relative h-48 w-48 shrink-0" role="img" aria-label="Delivery status donut chart">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={statusCounts.filter(item => item.count > 0)} dataKey="count" nameKey="status"
+                        cx="50%" cy="50%" innerRadius={62} outerRadius={88} stroke="#ffffff" strokeWidth={2}>
+                        {statusCounts.filter(item => item.count > 0).map(item => <Cell key={item.status} fill={item.color} />)}
+                      </Pie>
+                      <Tooltip />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                    <span className="text-2xl font-bold text-foreground">{entries.length}</span>
+                    <span className="text-xs text-muted-foreground">assignments</span>
+                  </div>
+                </div>
+                <div className="w-full min-w-0 space-y-2">
+                  {statusCounts.map(item => (
+                    <div key={item.status} className="flex items-center gap-2 text-xs sm:text-sm">
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />
+                      <span className="min-w-0 flex-1 text-foreground">{item.status}</span>
+                      <span className="shrink-0 font-medium text-foreground">{item.count}</span>
+                      <span className="w-9 shrink-0 text-right text-muted-foreground">{Math.round(item.count / entries.length * 100)}%</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section className="space-y-4">
+        <div>
+          <h3 className="text-lg font-semibold text-foreground">Recent Reports</h3>
+          <p className="text-sm text-muted-foreground">Recently generated and downloaded reports.</p>
+        </div>
+        <div className="rounded-xl border border-border bg-white shadow-sm">
+          <div className="hidden lg:grid grid-cols-6 gap-3 border-b border-border bg-muted/40 px-4 py-3 text-xs font-semibold text-muted-foreground">
+            <span>Report Name</span><span>Type</span><span>Date Range</span>
+            <span>Generated At</span><span>Generated By</span><span>Actions</span>
+          </div>
+          <p className="px-4 py-12 text-center text-sm text-muted-foreground">
+            Report history is unavailable. This system downloads reports without saving a generated-report record.
+          </p>
+        </div>
+      </section>
 
       {/* Preview Modal */}
       {previewKey && (

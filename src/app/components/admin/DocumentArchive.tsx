@@ -5,6 +5,7 @@ import {
   AlertCircle, ChevronDown, ChevronRight,
 } from 'lucide-react';
 import type { Assignment, CompletedTask, DocStatus } from '../../data/assignmentTypes';
+import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
 
 interface Props {
   assignments:     Assignment[];
@@ -408,10 +409,19 @@ export default function DocumentArchive({ assignments, completed }: Props) {
     filter === 'all' || g.docs.some(d => d.docStatus === filter)
   );
 
-  const allOpen = visibleGroups.length > 0 && visibleGroups.every(g => openIds.has(g.assignmentId));
+  const { page: currentPage, setPage, pageItems: pageGroups } = usePagination(visibleGroups);
+  const pageArea = useStablePageHeight(currentPage, visibleGroups.length, 10, `${search}|${filter}`);
+
+  const allOpen = pageGroups.length > 0 && pageGroups.every(g => openIds.has(g.assignmentId));
   const toggleAll = () => {
-    if (allOpen) setOpenIds(new Set());
-    else setOpenIds(new Set(visibleGroups.map(g => g.assignmentId)));
+    setOpenIds(prev => {
+      const next = new Set(prev);
+      for (const group of pageGroups) {
+        if (allOpen) next.delete(group.assignmentId);
+        else next.add(group.assignmentId);
+      }
+      return next;
+    });
   };
 
   const emptyAll    = counts.all === 0;
@@ -430,12 +440,12 @@ export default function DocumentArchive({ assignments, completed }: Props) {
           <Search className="w-4 h-4 text-muted-foreground flex-shrink-0" />
           <input
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             placeholder="Search driver, truck, assignment…"
             className="text-sm bg-transparent focus:outline-none placeholder:text-muted-foreground/60 flex-1 min-w-0"
           />
           {search && (
-            <button onClick={() => setSearch('')} className="text-muted-foreground hover:text-foreground">
+            <button onClick={() => { setSearch(''); setPage(1); }} className="text-muted-foreground hover:text-foreground">
               <X className="w-3.5 h-3.5" />
             </button>
           )}
@@ -452,7 +462,7 @@ export default function DocumentArchive({ assignments, completed }: Props) {
           { key: 'approved', label: 'Approved', badge: 'bg-green-100 text-green-700', badgeOn: 'bg-white text-green-700' },
           { key: 'rejected', label: 'Rejected', badge: 'bg-red-100 text-red-700',     badgeOn: 'bg-white text-red-700'   },
         ] as { key: DocFilter; label: string; badge: string; badgeOn: string }[]).map(({ key, label, badge, badgeOn }) => (
-          <button key={key} onClick={() => setFilter(key)}
+          <button key={key} onClick={() => { setFilter(key); setPage(1); }}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium border transition-all ${
               filter === key
                 ? 'bg-primary text-white border-primary'
@@ -490,7 +500,7 @@ export default function DocumentArchive({ assignments, completed }: Props) {
           </p>
           <p className="text-sm text-muted-foreground mt-1">Try a different search term or filter.</p>
           {q && (
-            <button onClick={() => setSearch('')}
+            <button onClick={() => { setSearch(''); setPage(1); }}
               className="mt-3 px-4 py-2 bg-muted text-foreground rounded-lg text-sm hover:bg-muted/80 transition-colors">
               Clear Search
             </button>
@@ -498,7 +508,7 @@ export default function DocumentArchive({ assignments, completed }: Props) {
         </div>
       ) : (
         <div className="bg-white rounded-2xl border border-border shadow-sm overflow-hidden">
-          {/* Desktop/tablet table */}
+          <div ref={pageArea}>
           <div className="hidden sm:block overflow-x-auto">
             <table className="w-full text-sm border-collapse">
               <thead>
@@ -521,7 +531,7 @@ export default function DocumentArchive({ assignments, completed }: Props) {
                 </tr>
               </thead>
               <tbody>
-                {visibleGroups.map((group) => (
+                {pageGroups.map((group) => (
                   <GroupRow
                     key={group.assignmentId}
                     group={group}
@@ -538,7 +548,7 @@ export default function DocumentArchive({ assignments, completed }: Props) {
 
           {/* Mobile card list */}
           <div className="sm:hidden p-3 space-y-3">
-            {visibleGroups.map((group) => (
+            {pageGroups.map((group) => (
               <GroupCard
                 key={group.assignmentId}
                 group={group}
@@ -550,19 +560,20 @@ export default function DocumentArchive({ assignments, completed }: Props) {
               />
             ))}
           </div>
+          </div>
 
           {/* Footer */}
-          <div className="px-4 py-2.5 border-t border-border bg-muted/20 flex items-center justify-between">
-            <p className="text-xs text-muted-foreground">
-              <span className="font-semibold text-foreground">{visibleGroups.length}</span> assignment{visibleGroups.length !== 1 ? 's' : ''}
-              {filter !== 'all' && <> · <span className="capitalize">{filter}</span> filter active</>}
-            </p>
+          <PaginationFooter page={currentPage} totalItems={visibleGroups.length} onPageChange={setPage}
+            singular="assignment" plural="assignments" className="border-t border-border bg-muted/20">
             {filter !== 'all' && (
-              <button onClick={() => setFilter('all')} className="text-xs text-primary hover:underline font-medium">
-                Show all
-              </button>
+              <>
+                <span className="text-xs text-muted-foreground"><span className="capitalize">{filter}</span> filter active</span>
+                <button onClick={() => { setFilter('all'); setPage(1); }} className="text-xs text-primary hover:underline font-medium">
+                  Show all
+                </button>
+              </>
             )}
-          </div>
+          </PaginationFooter>
         </div>
       )}
 

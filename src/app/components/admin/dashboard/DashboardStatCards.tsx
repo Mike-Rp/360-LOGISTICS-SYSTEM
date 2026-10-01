@@ -5,7 +5,7 @@ import { parseStoredTimestamp } from '../../../data/assignmentTypes';
 interface Props {
   assignments: Assignment[];
   completed: CompletedTask[];
-  onNavigate: (page: 'Documents') => void;
+  onNavigate: (page: 'Deliveries' | 'Documents') => void;
 }
 
 /* Same rule as KPICards.tsx countDelayed() — copied unchanged so the number matches
@@ -62,6 +62,7 @@ export default function DashboardStatCards({ assignments, completed, onNavigate 
     {
       label: 'Completed Deliveries', value: completed.length, icon: CheckCircle,
       detail: completed.length > 0 ? `All time · ${countCompletedToday(completed)} today` : 'No completions yet',
+      headerLink: () => onNavigate('Deliveries'),
     },
     {
       label: 'Delayed Deliveries', value: delayed, icon: AlertTriangle, alert: delayed > 0,
@@ -76,11 +77,17 @@ export default function DashboardStatCards({ assignments, completed, onNavigate 
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-      {cards.map(({ label, value, icon: Icon, detail, alert, link }) => (
+      {cards.map(({ label, value, icon: Icon, detail, alert, link, headerLink }) => (
         <div key={label} className="bg-white rounded-2xl border border-border shadow-sm px-5 py-4">
-          <div className="flex items-center gap-2">
+          <div className={`flex items-center ${headerLink ? '-mx-1 gap-1' : 'gap-2'}`}>
             <Icon className={`w-4 h-4 flex-shrink-0 ${alert ? 'text-amber-600' : 'text-foreground'}`} />
             <p className="text-sm font-medium text-foreground">{label}</p>
+            {headerLink && (
+              <button onClick={headerLink}
+                className="ml-auto inline-flex shrink-0 items-center gap-1 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
+                View all <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
           {/* items-start: the number stays on the same line in every card even when the
               supporting text on the right wraps to two lines */}

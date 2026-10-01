@@ -210,26 +210,27 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
 
                 <div className="space-y-2.5">
                   <label className="text-base font-semibold text-foreground block">Mobile Number</label>
-                  <div className={`flex items-center rounded-2xl border overflow-hidden focus-within:ring-2 focus-within:ring-primary/30 transition-all ${
+                  <div className={`flex w-full max-w-full min-w-0 items-center rounded-2xl border overflow-hidden focus-within:ring-2 focus-within:ring-primary/30 transition-all ${
                     driverError?.type === 'mobile' || driverError?.type === 'mobile_and_pin' ? 'border-red-400 bg-red-50' : 'border-[#e5e7eb] bg-[#f9fafb]'
                   }`}>
                     {/* Country prefix badge */}
-                    <span className="px-4 py-4 bg-gray-100 border-r border-[#e5e7eb] text-base font-bold text-foreground select-none whitespace-nowrap flex-shrink-0">
+                    <span className="shrink-0 px-2 sm:px-4 py-4 bg-gray-100 border-r border-[#e5e7eb] text-base font-bold text-foreground select-none whitespace-nowrap">
                       +63
                     </span>
                     {/* 10-digit input starting with 9 */}
                     <input
                       type="tel"
                       inputMode="numeric"
+                      autoComplete="off"
                       value={mobile}
                       onChange={(e) => handleMobile(e.target.value)}
                       placeholder="9XX XXX XXXX"
                       maxLength={10}
                       onKeyDown={(e) => e.key === 'Enter' && handleDriverLogin()}
-                      className="flex-1 px-4 py-4 bg-transparent text-base text-foreground placeholder:text-muted-foreground focus:outline-none tracking-wider"
+                      className="min-w-0 flex-1 px-2 sm:px-4 py-4 bg-transparent text-sm sm:text-base text-foreground placeholder:text-muted-foreground focus:outline-none tracking-wider"
                     />
                     {/* Character counter */}
-                    <span className={`px-4 text-sm font-semibold tabular-nums flex-shrink-0 ${
+                    <span className={`shrink-0 px-2 sm:px-4 text-xs sm:text-sm font-semibold tabular-nums ${
                       mobile.length === 10 ? 'text-green-600' : 'text-muted-foreground'
                     }`}>
                       {mobile.length}/10
@@ -243,14 +244,14 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
 
                 <div className="space-y-2.5">
                   <label className="text-base font-semibold text-foreground block">4-Digit PIN</label>
-                  <div className="flex justify-center gap-4">
+                  <div className="flex w-full max-w-full justify-center gap-2 sm:gap-4">
                     {pin.map((digit, i) => (
                       <input
                         key={i} ref={pinRefs[i]}
                         type="password" inputMode="numeric" maxLength={1} value={digit}
                         onChange={(e) => handlePin(i, e.target.value)}
                         onKeyDown={(e) => handlePinKey(i, e)}
-                        className={`w-[64px] h-[60px] text-center text-2xl font-bold border-0 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all ${
+                        className={`min-w-0 w-full max-w-[64px] flex-1 h-[60px] text-center text-2xl font-bold border-0 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all ${
                           driverError?.type === 'pin' || driverError?.type === 'mobile_and_pin'
                             ? 'bg-red-100 ring-2 ring-red-300'
                             : digit ? 'bg-primary/20 text-primary' : 'bg-[#e5e7eb]'

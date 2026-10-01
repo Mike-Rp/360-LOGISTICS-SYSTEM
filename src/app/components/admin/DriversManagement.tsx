@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import {
   User, Truck, MapPin, Building2, Calendar, MessageSquare,
   Activity, X, ClipboardList, CheckCircle2,
-  FileText, Check, XCircle, Eye, AlertTriangle, Clock,
+  FileText, Check, XCircle, AlertTriangle, Clock,
   Package, Trash2, ChevronDown, ChevronUp, ZoomIn,
   Navigation, Timer, AlarmClock, Camera, Search,
   Plus, ArrowLeft, ArrowRight, ChevronLeft, ChevronRight,
@@ -12,6 +12,7 @@ import {
 import { RegisterDriverModal, RegisterTruckModal } from './RegisterModals';
 import { Popover, PopoverAnchor, PopoverContent } from '../ui/popover';
 import TruckImage from '../TruckImage';
+import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
 import { truckSideImageFor } from '../../data/truckTypes';
 import {
   verifyOwnPassword, editAssignment, cancelAssignment, AssignmentActionError,
@@ -1639,6 +1640,8 @@ interface Props {
   onDispatchOpened?: () => void;
 }
 
+const MONITOR_PAGE_SIZE = 6;
+
 /* ─── Main Component ───────────────────────────────── */
 export default function DriversManagement({
   drivers, setDrivers, trucks, setTrucks,
@@ -1873,6 +1876,10 @@ export default function DriversManagement({
         )
       )
     : validAssignments;
+  const activePage = usePagination(visibleAssignments, MONITOR_PAGE_SIZE);
+  const completedPage = usePagination(completed, MONITOR_PAGE_SIZE);
+  const activePageArea = useStablePageHeight(activePage.page, visibleAssignments.length, MONITOR_PAGE_SIZE, search);
+  const completedPageArea = useStablePageHeight(completedPage.page, completed.length, MONITOR_PAGE_SIZE);
 
   const viewDetailsAssign = viewDetailsId ? assignments.find((a) => a.id === viewDetailsId) ?? null : null;
   const viewDetailsDriver = viewDetailsAssign ? drivers.find((d) => d.id === viewDetailsAssign.driverId) ?? null : null;
@@ -1884,8 +1891,8 @@ export default function DriversManagement({
       {/* ── Header ── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-semibold text-foreground">Truck and Drivers Management</h2>
-          <p className="text-sm text-muted-foreground mt-1">Manage and monitor your driver fleet</p>
+          <h2 className="text-2xl font-semibold text-foreground">Dispatch &amp; Drivers</h2>
+          <p className="text-sm text-muted-foreground mt-1">Manage dispatch assignments, drivers, and delivery operations.</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {/* Search */}
@@ -1893,12 +1900,12 @@ export default function DriversManagement({
             <Search className="w-4 h-4 text-muted-foreground flex-shrink-0" />
             <input
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => { setSearch(e.target.value); activePage.setPage(1); }}
               placeholder="Search truck, driver, route…"
               className="text-sm bg-transparent focus:outline-none placeholder:text-muted-foreground/60 flex-1 min-w-0"
             />
             {search && (
-              <button onClick={() => setSearch('')} className="text-muted-foreground hover:text-foreground transition-colors">
+              <button onClick={() => { setSearch(''); activePage.setPage(1); }} className="text-muted-foreground hover:text-foreground transition-colors">
                 <X className="w-3.5 h-3.5" />
               </button>
             )}
@@ -1930,7 +1937,7 @@ export default function DriversManagement({
           <Search className="w-12 h-12 mx-auto mb-3 text-muted-foreground/30" />
           <p className="font-semibold text-foreground mb-1">No results for "{search}"</p>
           <p className="text-sm text-muted-foreground">Try a different truck plate, driver name, or route.</p>
-          <button onClick={() => setSearch('')} className="mt-4 px-4 py-2 bg-muted text-foreground rounded-lg text-sm hover:bg-muted/80 transition-colors">
+          <button onClick={() => { setSearch(''); activePage.setPage(1); }} className="mt-4 px-4 py-2 bg-muted text-foreground rounded-lg text-sm hover:bg-muted/80 transition-colors">
             Clear Search
           </button>
         </div>
@@ -1941,8 +1948,11 @@ export default function DriversManagement({
               <span className="font-semibold text-foreground">{visibleAssignments.length}</span> result{visibleAssignments.length !== 1 ? 's' : ''} for "<span className="font-semibold text-foreground">{search}</span>"
             </p>
           )}
+        <div className="space-y-3">
+        <div ref={activePageArea}>
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {visibleAssignments.map((a) => {
+          {activePage.pageItems.map((a) => {
+            const truck    = trucks.find((t) => t.id === a.truckId);
             const total    = a.documents.length;
             const approved = a.documents.filter((d) => d.docStatus === 'approved').length;
             /* Uploaded but not yet approved — amber. Rejected sits here too:
@@ -1955,51 +1965,46 @@ export default function DriversManagement({
                   sq ? 'border-yellow-400 bg-yellow-50/30' : 'border-border bg-white'
                 }`}
               >
-                <div className="p-5">
-                  {/* Row 1 — truck identity + status */}
-                  <div className="flex items-start gap-3">
-                    <div className="w-11 h-11 bg-[#0d9488]/10 rounded-full flex items-center justify-center flex-shrink-0 border-[0.5px] border-[#0d9488]/25">
-                      <Truck className="w-5 h-5 text-[#0d9488]" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-lg font-bold text-foreground leading-tight truncate">
+                <div className="p-4 sm:p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-base sm:text-lg font-bold leading-tight text-foreground break-words">{truck?.classification || 'Truck'}</h3>
+                      <p className="mt-1 w-fit max-w-full rounded-md bg-muted/70 px-2 py-0.5 text-base font-semibold text-foreground break-words">
                         <Highlight text={a.truckPlate} query={search} />
-                      </h3>
-                      <p className="text-xs text-muted-foreground truncate"><Highlight text={a.id} query={search} /></p>
-                      <p className="text-sm text-foreground mt-1 flex items-center gap-1.5 truncate">
-                        <User className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
-                        <Highlight text={a.driverName} query={search} />
                       </p>
+                      <p className="mt-1 text-xs text-muted-foreground break-words"><Highlight text={a.id} query={search} /></p>
                     </div>
-                    <StatusBadge status={a.taskStatus} acknowledged={!!a.driverAcknowledgedAt} />
+                    <div className="ml-auto shrink-0"><StatusBadge status={a.taskStatus} acknowledged={!!a.driverAcknowledgedAt} /></div>
                   </div>
 
-                  {/* Row 2 — route + labelled delivery date */}
-                  <div className="flex items-start justify-between gap-3 mt-4">
-                    <div className="flex items-start gap-2 min-w-0">
-                      <MapPin className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0 mt-1" />
+                  <div className="mt-4 border-t border-border pt-4">
+                    <div className="grid grid-cols-1 gap-3 border-b border-border pb-3 sm:grid-cols-2 sm:gap-0">
                       <div className="min-w-0">
-                        <p className="text-[12px] font-semibold text-muted-foreground uppercase tracking-wide">Route</p>
-                        <p className="text-sm text-foreground truncate"><Highlight text={a.destination} query={search} /></p>
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Driver</p>
+                        <p className="mt-0.5 text-sm font-semibold text-foreground break-words"><Highlight text={a.driverName} query={search} /></p>
+                      </div>
+                      <div className="min-w-0 sm:border-l sm:border-border sm:pl-4">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Corporation</p>
+                        <p className="mt-0.5 text-sm text-foreground break-words"><Highlight text={a.company} query={search} /></p>
                       </div>
                     </div>
-                    <div className="text-right flex-shrink-0">
-                      <p className="text-[12px] font-semibold text-muted-foreground uppercase tracking-wide">Delivery date</p>
-                      <p className="text-sm text-foreground whitespace-nowrap">{a.deliveryDate}</p>
+                    <div className="grid grid-cols-1 gap-3 pt-3 sm:grid-cols-2 sm:gap-0">
+                      <div className="min-w-0">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Route</p>
+                        <p className="mt-0.5 text-sm text-foreground [overflow-wrap:anywhere]"><Highlight text={a.destination} query={search} /></p>
+                      </div>
+                      <div className="min-w-0 sm:border-l sm:border-border sm:pl-4">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Delivery date</p>
+                        <p className="mt-0.5 text-sm text-foreground break-words">{a.deliveryDate}</p>
+                      </div>
                     </div>
                   </div>
 
-                  {/* Row 3 — client */}
-                  <div className="flex items-center gap-2 text-sm mt-3 min-w-0">
-                    <Building2 className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
-                    <span className="text-foreground truncate"><Highlight text={a.company} query={search} /></span>
-                  </div>
-
-                  <div className="border-t border-border mt-4 pt-3">
+                  <div className="mt-4 rounded-lg bg-muted/40 p-3">
                     {/* Segmented document bar — green only ever means approved */}
                     <div className="flex items-center justify-between text-xs mb-1.5">
-                      <span className="text-muted-foreground">Documents</span>
-                      <span className="font-medium text-foreground">{approved}/{total} approved</span>
+                      <span className="font-medium text-foreground">Documents</span>
+                      <span className="font-medium text-foreground">{approved} of {total}</span>
                     </div>
                     <div className="w-full bg-gray-200 rounded-full h-1.5 flex overflow-hidden">
                       <div className="bg-green-500 h-full transition-all"
@@ -2021,16 +2026,20 @@ export default function DriversManagement({
                   </div>
                 </div>
 
-                {/* Single primary action */}
-                <div className="px-5 pb-5">
+                <div className="flex justify-end px-4 pb-4 sm:px-5 sm:pb-5">
                   <button onClick={() => setViewDetailsId(a.id)}
-                    className="w-full py-2.5 bg-[#10b981] text-white rounded-xl text-sm font-medium hover:bg-[#059669] transition-colors flex items-center justify-center gap-1.5">
-                    <Eye className="w-4 h-4" /> View details
+                    className="min-h-10 rounded-lg bg-[#10b981] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#059669]">
+                    View Shipment
                   </button>
                 </div>
               </div>
             );
           })}
+        </div>
+        </div>
+        <PaginationFooter page={activePage.page} totalItems={visibleAssignments.length} pageSize={MONITOR_PAGE_SIZE}
+          onPageChange={activePage.setPage} singular="assignment" plural="assignments"
+          className="rounded-xl border border-border bg-white shadow-sm" />
         </div>
         </>
       )}
@@ -2044,7 +2053,7 @@ export default function DriversManagement({
             <span className="bg-green-500 text-white text-xs rounded-full px-2 py-0.5">{completed.length}</span>
           </div>
           <div className="bg-white rounded-xl border border-border shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
+            <div ref={completedPageArea} className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-muted/30 border-b border-border">
@@ -2056,8 +2065,8 @@ export default function DriversManagement({
                   </tr>
                 </thead>
                 <tbody>
-                  {completed.map((c, i) => (
-                    <tr key={c.id} className={`hover:bg-muted/10 transition-colors ${i < completed.length - 1 ? 'border-b border-border/50' : ''}`}>
+                  {completedPage.pageItems.map((c, i) => (
+                    <tr key={c.id} className={`hover:bg-muted/10 transition-colors ${i < completedPage.pageItems.length - 1 ? 'border-b border-border/50' : ''}`}>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <Truck className="w-3.5 h-3.5 text-[#0d9488]" />
@@ -2076,6 +2085,9 @@ export default function DriversManagement({
                 </tbody>
               </table>
             </div>
+            <PaginationFooter page={completedPage.page} totalItems={completed.length} pageSize={MONITOR_PAGE_SIZE}
+              onPageChange={completedPage.setPage} singular="delivery" plural="deliveries"
+              className="border-t border-border bg-muted/20" />
           </div>
         </div>
       )}

@@ -129,12 +129,12 @@ export default function AdminDashboard({
         );
       case 'Deliveries':
         return (
-          <DeliveryTable fullView assignments={assignments} completed={completed} cancelled={cancelled} />
+          <DeliveryTable fullView assignments={assignments} completed={completed} cancelled={cancelled} trucks={trucks} />
         );
       case 'Documents':
         return <DocumentArchive assignments={assignments} completed={completed} setAssignments={setAssignments} isViewOnly={isViewOnly} />;
       case 'Reports':
-        return <Reports assignments={assignments} completed={completed} />;
+        return <Reports assignments={assignments} completed={completed} cancelled={cancelled} />;
       case 'Accounts':
         return (
           <AccountsPanel

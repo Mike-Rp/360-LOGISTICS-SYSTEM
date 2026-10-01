@@ -10,6 +10,7 @@ import { RegisterDriverModal, RegisterTruckModal } from './RegisterModals';
 import TruckImage from '../TruckImage';
 import ConfirmPasswordDialog from './ConfirmPasswordDialog';
 import { archiveDriver, archiveTruck, resetDriverPin, AssignmentActionError } from '../../lib/db';
+import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
 
 /* Plain-language text for the errors the archive / PIN database functions can return */
 const accountActionError = (err: unknown): string => {
@@ -116,6 +117,23 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
   const [tab, setTab] = useState<TabView>('Drivers');
   const [driverView, setDriverView] = useState<'active' | 'archived'>('active');
   const [truckView,  setTruckView]  = useState<'active' | 'archived'>('active');
+  const activeDriversPage = usePagination(drivers);
+  const archivedDriversPage = usePagination(archivedDrivers);
+  const activeTrucksPage = usePagination(trucks);
+  const archivedTrucksPage = usePagination(archivedTrucks);
+  const activeDriversArea = useStablePageHeight(activeDriversPage.page, drivers.length, 10, `${tab}|${driverView}`);
+  const archivedDriversArea = useStablePageHeight(archivedDriversPage.page, archivedDrivers.length, 10, `${tab}|${driverView}`);
+  const activeTrucksArea = useStablePageHeight(activeTrucksPage.page, trucks.length, 10, `${tab}|${truckView}`);
+  const archivedTrucksArea = useStablePageHeight(archivedTrucksPage.page, archivedTrucks.length, 10, `${tab}|${truckView}`);
+  const resetPages = () => {
+    activeDriversPage.setPage(1);
+    archivedDriversPage.setPage(1);
+    activeTrucksPage.setPage(1);
+    archivedTrucksPage.setPage(1);
+  };
+  const driverTableLayout = isViewOnly
+    ? { gridTemplateColumns: 'minmax(160px, 2fr) minmax(130px, 1.5fr) 120px 115px', minWidth: '610px' }
+    : { gridTemplateColumns: 'minmax(160px, 2fr) minmax(130px, 1.5fr) 120px 115px 190px', minWidth: '810px' };
 
   /* Success message after an archive / PIN change — hides itself after 4 s */
   const [toast, setToast] = useState<string | null>(null);
@@ -193,7 +211,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
         <div className="flex items-center flex-wrap gap-3">
           <div className="flex items-center bg-muted/40 border border-border rounded-xl p-1 gap-1">
             {(['Drivers', 'Trucks'] as TabView[]).map((t) => (
-              <button key={t} onClick={() => setTab(t)}
+              <button key={t} onClick={() => { setTab(t); resetPages(); }}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
                   tab === t
                     ? 'bg-white shadow-sm text-foreground border border-border'
@@ -218,7 +236,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
         <div className="space-y-4">
           {/* Bar */}
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <StatusTabs value={driverView} onChange={setDriverView}
+            <StatusTabs value={driverView} onChange={(view) => { setDriverView(view); resetPages(); }}
               activeCount={drivers.length} archivedCount={archivedDrivers.length} />
             {driverView === 'active' && (
             <div className="flex items-center gap-4 text-sm">
@@ -250,14 +268,15 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
               </div>
             ) : (
               <div className="bg-white rounded-2xl border border-border shadow-sm divide-y divide-border">
-                {archivedDrivers.map((d) => (
+                <div ref={archivedDriversArea} className="divide-y divide-border">
+                {archivedDriversPage.pageItems.map((d) => (
                   <div key={d.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 sm:px-5 py-3.5">
                     <div className="flex items-center gap-3 min-w-0 flex-1 basis-48">
                       <div className="w-9 h-9 bg-muted rounded-full flex items-center justify-center flex-shrink-0 border border-border">
                         <Users className="w-4 h-4 text-muted-foreground" />
                       </div>
                       <div className="min-w-0">
-                        <p className="text-sm font-medium text-foreground break-words">{d.name}</p>
+                        <p className="text-sm font-semibold text-foreground break-words">{d.name}</p>
                         <p className="text-xs text-muted-foreground break-words">{d.id} · {d.phone}</p>
                       </div>
                     </div>
@@ -266,6 +285,9 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                     </span>
                   </div>
                 ))}
+                </div>
+                <PaginationFooter page={archivedDriversPage.page} totalItems={archivedDrivers.length}
+                  onPageChange={archivedDriversPage.setPage} singular="driver" plural="drivers" className="bg-muted/20" />
               </div>
             )
           )}
@@ -287,30 +309,32 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
             </div>
           ) : (
             <div className="bg-white rounded-2xl border border-border shadow-sm overflow-hidden">
+              <div ref={activeDriversArea}>
               {/* Desktop/tablet table */}
               <div className="hidden sm:block overflow-x-auto">
               {/* Table head */}
-              <div className="grid grid-cols-[minmax(160px,2fr)_minmax(130px,1.5fr)_120px_115px_auto] gap-3 px-5 py-3 bg-muted/30 border-b border-border text-xs font-semibold text-muted-foreground uppercase tracking-wide min-w-[600px]">
+              <div style={driverTableLayout} className="grid gap-3 px-5 py-3 bg-muted/30 border-b border-border text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                 <span>Driver</span>
                 <span className="flex items-center gap-1"><Phone className="w-3.5 h-3.5" /> Contact</span>
                 <span>Availability</span>
                 <span className="flex items-center gap-1"><KeyRound className="w-3.5 h-3.5" /> PIN</span>
-                {!isViewOnly && <span>Action</span>}
+                {!isViewOnly && <span className="text-right">Action</span>}
               </div>
               {/* Table rows */}
               <div className="divide-y divide-border">
-                {drivers.map((d) => {
+                {activeDriversPage.pageItems.map((d) => {
                   const avail = isAvailable(d.status);
                   return (
                     <div key={d.id}
-                      className="grid grid-cols-[minmax(160px,2fr)_minmax(130px,1.5fr)_120px_115px_auto] gap-3 items-center px-5 py-4 hover:bg-muted/10 transition-colors min-w-[600px]">
+                      style={driverTableLayout}
+                      className="grid gap-3 items-center px-5 py-4 hover:bg-muted/10 transition-colors">
                       {/* Name */}
                       <div className="flex items-center gap-3 min-w-0">
                         <div className="w-9 h-9 bg-[#0d9488]/15 rounded-full flex items-center justify-center flex-shrink-0 border border-[#0d9488]/20">
                           <Users className="w-4 h-4 text-[#0d9488]" />
                         </div>
                         <div className="min-w-0">
-                          <p className="text-sm font-medium text-foreground truncate">{d.name}</p>
+                          <p className="text-sm font-semibold text-foreground truncate">{d.name}</p>
                           <p className="text-xs text-muted-foreground">{d.id}</p>
                         </div>
                       </div>
@@ -344,7 +368,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
 
                       {/* Actions — hidden for view-only */}
                       {!isViewOnly && (
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center justify-end gap-1.5">
                           <button
                             onClick={() => setPinTarget({ id: d.id, name: d.name })}
                             title="Regenerate PIN"
@@ -369,7 +393,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
 
               {/* Mobile card list */}
               <div className="sm:hidden divide-y divide-border">
-                {drivers.map((d) => {
+                {activeDriversPage.pageItems.map((d) => {
                   const avail = isAvailable(d.status);
                   return (
                     <div key={d.id} className="p-3.5">
@@ -378,7 +402,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                           <Users className="w-4 h-4 text-[#0d9488]" />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium text-foreground truncate">{d.name}</p>
+                          <p className="text-sm font-semibold text-foreground truncate">{d.name}</p>
                           <p className="text-xs text-muted-foreground">{d.id}</p>
                         </div>
                         <span className={`flex-shrink-0 inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-medium ${
@@ -430,6 +454,10 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                   );
                 })}
               </div>
+              </div>
+              <PaginationFooter page={activeDriversPage.page} totalItems={drivers.length}
+                onPageChange={activeDriversPage.setPage} singular="driver" plural="drivers"
+                className="border-t border-border bg-muted/20" />
             </div>
           ))}
 
@@ -446,7 +474,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
       {tab === 'Trucks' && (
         <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <StatusTabs value={truckView} onChange={setTruckView}
+            <StatusTabs value={truckView} onChange={(view) => { setTruckView(view); resetPages(); }}
               activeCount={trucks.length} archivedCount={archivedTrucks.length} />
             {truckView === 'active' && (
             <div className="flex items-center gap-4 text-sm">
@@ -478,7 +506,8 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
               </div>
             ) : (
               <div className="bg-white rounded-2xl border border-border shadow-sm divide-y divide-border">
-                {archivedTrucks.map((t) => (
+                <div ref={archivedTrucksArea} className="divide-y divide-border">
+                {archivedTrucksPage.pageItems.map((t) => (
                   <div key={t.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 sm:px-5 py-3.5">
                     <div className="flex items-center gap-3 min-w-0 flex-1 basis-48">
                       <div className="w-9 h-9 bg-muted rounded-full flex items-center justify-center flex-shrink-0 border border-border overflow-hidden grayscale">
@@ -494,6 +523,9 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                     </span>
                   </div>
                 ))}
+                </div>
+                <PaginationFooter page={archivedTrucksPage.page} totalItems={archivedTrucks.length}
+                  onPageChange={archivedTrucksPage.setPage} singular="truck" plural="trucks" className="bg-muted/20" />
               </div>
             )
           )}
@@ -514,6 +546,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
             </div>
           ) : (
             <div className="bg-white rounded-2xl border border-border shadow-sm overflow-hidden">
+              <div ref={activeTrucksArea}>
               {/* Desktop/tablet table */}
               <div className="hidden sm:block overflow-x-auto">
               <div className={`grid ${isViewOnly ? 'grid-cols-[minmax(140px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px] min-w-[560px]' : 'grid-cols-[minmax(140px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px_auto] min-w-[660px]'} gap-4 px-5 py-3 bg-muted/30 border-b border-border text-xs font-semibold text-muted-foreground uppercase tracking-wide`}>
@@ -524,7 +557,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                 {!isViewOnly && <span>Action</span>}
               </div>
               <div className="divide-y divide-border">
-                {trucks.map((t) => (
+                {activeTrucksPage.pageItems.map((t) => (
                   <div key={t.id}
                     className={`grid ${isViewOnly ? 'grid-cols-[minmax(140px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px] min-w-[560px]' : 'grid-cols-[minmax(140px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px_auto] min-w-[660px]'} gap-4 items-center px-5 py-4 hover:bg-muted/10 transition-colors`}>
                     {/* Plate */}
@@ -576,7 +609,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
 
               {/* Mobile card list */}
               <div className="sm:hidden divide-y divide-border">
-                {trucks.map((t) => (
+                {activeTrucksPage.pageItems.map((t) => (
                   <div key={t.id} className="p-3.5">
                     <div className="flex items-center gap-3">
                       <div className="w-9 h-9 bg-[#0d9488]/15 rounded-full flex items-center justify-center flex-shrink-0 border border-[#0d9488]/20 overflow-hidden">
@@ -622,6 +655,10 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                   </div>
                 ))}
               </div>
+              </div>
+              <PaginationFooter page={activeTrucksPage.page} totalItems={trucks.length}
+                onPageChange={activeTrucksPage.setPage} singular="truck" plural="trucks"
+                className="border-t border-border bg-muted/20" />
             </div>
           ))}
         </div>
