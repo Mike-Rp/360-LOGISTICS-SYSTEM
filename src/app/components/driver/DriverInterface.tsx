@@ -1,13 +1,13 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import {
   LogOut, Package, CheckCircle2, XCircle, Camera, WifiOff,
-  Clock, MapPin, Truck, AlertTriangle, FileText, Building2,
-  Calendar, ChevronRight, ChevronLeft, Lock, ArrowDown,
+  Clock, Truck, AlertTriangle, FileText, Building2,
+  ChevronRight, ChevronLeft, Lock, ArrowDown,
   RefreshCw, Timer, RotateCcw, X, Phone,
 } from 'lucide-react';
-import type { Assignment, TaskStatus, StatusPhoto, DocStatus } from '../../data/assignmentTypes';
+import type { Assignment, CompletedTask, TaskStatus, StatusPhoto, DocStatus } from '../../data/assignmentTypes';
 import { taskStatusConfig } from '../../data/assignmentTypes';
-import { loadDriverData, driverUpdate, uploadImage } from '../../lib/db';
+import { loadDriverData, loadDriverCompletedDelivery, driverUpdate, uploadImage } from '../../lib/db';
 
 /* ── Types ── */
 interface CompletedHistoryItem {
@@ -25,6 +25,29 @@ interface NormDoc {
 interface DriverNotif {
   id: string; type: 'rejection' | 'approval'; title: string; body: string;
 }
+
+type HistoryDetail = CompletedTask & { documents: Array<Assignment['documents'][number] & { uploadedAt?: string }> };
+
+const manilaDate = (value?: string) => {
+  if (!value) return 'Not available';
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T12:00:00+08:00`) : new Date(value);
+  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila', month: 'short', day: 'numeric', year: 'numeric',
+  }).format(date);
+};
+
+const manilaStamp = (value?: string) => {
+  if (!value) return 'Not available';
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(value)) return value; // Do not invent a year for legacy display stamps.
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila', month: 'short', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true,
+  }).formatToParts(date);
+  const part = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  return `${part('month')} ${part('day')}, ${part('year')} · ${part('hour')}:${part('minute')} ${part('dayPeriod')}`;
+};
 
 /* ── Constants ── */
 const LINEAR_FLOW: TaskStatus[] = ['Assigned', 'Picked Up', 'In Transit', 'Delivered'];
@@ -666,6 +689,168 @@ function DetailRow({ label, value }: { label: string; value?: string | null }) {
   );
 }
 
+function PastDeliveryRow({ item, onOpen }: { item: CompletedHistoryItem; onOpen: () => void }) {
+  return (
+    <button type="button" onClick={onOpen}
+      className="w-full min-w-0 min-h-20 rounded-2xl border border-gray-200 bg-white px-4 py-3 text-left flex items-center justify-between gap-3 active:bg-green-50 focus-visible:outline-2 focus-visible:outline-green-600">
+      <span className="min-w-0 flex-1">
+        <span className="block font-bold text-foreground truncate">{item.truckPlate}</span>
+        <span className="block text-sm text-gray-600 truncate">{item.company}</span>
+        <span className="block text-xs text-gray-500">{manilaDate(item.deliveryDate)}</span>
+      </span>
+      <span className="shrink-0 text-xs font-bold text-green-700 bg-green-50 border border-green-200 px-2.5 py-1 rounded-full">Completed ✓</span>
+    </button>
+  );
+}
+
+function DriverPageControls({ page, pages, onPage }: { page: number; pages: number; onPage: (page: number) => void }) {
+  if (pages <= 1) return null;
+  return (
+    <nav aria-label="Pagination" className="flex items-center justify-center gap-2 py-3 flex-wrap">
+      <button type="button" onClick={() => onPage(page - 1)} disabled={page === 1} aria-label="Previous page"
+        className="h-11 w-11 rounded-xl border border-gray-200 bg-white flex items-center justify-center disabled:opacity-40"><ChevronLeft className="w-5 h-5" /></button>
+      {Array.from({ length: pages }, (_, index) => index + 1).filter((number) => number === 1 || number === pages || Math.abs(number - page) <= 1).map((number, index, visible) => (
+        <span key={number} className="hidden sm:contents">
+          {index > 0 && number - visible[index - 1] > 1 && <span className="text-gray-400">…</span>}
+          <button type="button" onClick={() => onPage(number)} aria-current={number === page ? 'page' : undefined}
+            className={`h-11 min-w-11 rounded-xl px-2 font-semibold ${number === page ? 'bg-green-700 text-white' : 'bg-white border border-gray-200 text-gray-600'}`}>{number}</button>
+        </span>
+      ))}
+      <span className="sm:hidden h-11 min-w-11 px-3 rounded-xl bg-green-700 text-white font-semibold flex items-center justify-center">{page}</span>
+      <button type="button" onClick={() => onPage(page + 1)} disabled={page === pages} aria-label="Next page"
+        className="h-11 w-11 rounded-xl border border-gray-200 bg-white flex items-center justify-center disabled:opacity-40"><ChevronRight className="w-5 h-5" /></button>
+    </nav>
+  );
+}
+
+function DriverNotificationRow({ notification }: { notification: DriverNotif }) {
+  const n = notification;
+  return (
+    <div className={`min-h-20 rounded-2xl border p-4 flex items-start gap-4 ${n.type === 'rejection' ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`}>
+      <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${n.type === 'rejection' ? 'bg-red-100' : 'bg-green-100'}`}>
+        {n.type === 'rejection' ? <XCircle className="w-7 h-7 text-red-500" /> : <CheckCircle2 className="w-7 h-7 text-green-500" />}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-base font-bold text-foreground break-words">{n.title}</p>
+        <p className="text-sm text-gray-600 mt-1 leading-relaxed break-words">{n.body}</p>
+      </div>
+    </div>
+  );
+}
+
+function HistoryDetailsSheet({ driverId, assignmentId, onClose }: { driverId: string; assignmentId: string; onClose: () => void }) {
+  const [detail, setDetail] = useState<HistoryDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [remarksOpen, setRemarksOpen] = useState(false);
+  const [remarksOverflow, setRemarksOverflow] = useState(false);
+  const remarksRef = useRef<HTMLParagraphElement>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    loadDriverCompletedDelivery(driverId, assignmentId).then((result) => {
+      if (alive) { setDetail(result); setLoading(false); }
+    }).catch(() => {
+      if (alive) { setError('Unable to load this delivery. Please try again.'); setLoading(false); }
+    });
+    return () => { alive = false; };
+  }, [driverId, assignmentId]);
+
+  useEffect(() => {
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { if (previewUrl) setPreviewUrl(null); else onClose(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => { document.body.style.overflow = previous; window.removeEventListener('keydown', onKey); };
+  }, [onClose, previewUrl]);
+
+  useEffect(() => {
+    if (!detail?.remarks || remarksOpen || !remarksRef.current) return;
+    const measure = () => setRemarksOverflow((remarksRef.current?.scrollHeight ?? 0) > (remarksRef.current?.clientHeight ?? 0) + 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(remarksRef.current);
+    return () => observer.disconnect();
+  }, [detail, remarksOpen]);
+
+  const docs = detail?.documents ?? [];
+  const uploaded = docs.filter((doc) => doc.uploaded);
+  const approved = uploaded.filter((doc) => doc.docStatus === 'approved').length;
+  const docRows = uploaded.length ? [
+    ...REQUIRED_DOCS.map((type) => docs.find((doc) => doc.type === type) ?? { type, uploaded: false, docStatus: 'pending' as DocStatus }),
+    ...docs.filter((doc) => !REQUIRED_DOCS.includes(doc.type)),
+  ] : [];
+  const safeUrl = (url?: string) => url && (/^https:\/\//i.test(url) || /^data:(image\/(png|jpeg|webp)|application\/pdf);base64,/i.test(url)) ? url : null;
+  const isImage = (url: string) => /^data:image\//i.test(url) || /\.(png|jpe?g|webp)(\?|$)/i.test(url);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center sm:justify-center sm:p-4">
+      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+      <div role="dialog" aria-modal="true" aria-label="Past delivery details"
+        className="relative w-full min-w-0 max-h-[85dvh] sm:max-w-xl bg-white rounded-t-3xl sm:rounded-2xl shadow-xl flex flex-col overflow-hidden">
+        <div className="w-10 h-1 rounded-full bg-gray-300 mx-auto mt-2 sm:hidden shrink-0" />
+        <div className="px-4 sm:px-6 py-4 border-b border-gray-200 flex items-start justify-between gap-3 shrink-0">
+          <div className="min-w-0">
+            <h2 className="text-xl font-bold text-foreground break-words">{detail?.truckPlate ?? 'Past delivery'}</h2>
+            <p className="text-xs font-mono text-gray-500 break-all">{assignmentId}</p>
+            {detail && <span className="inline-block mt-2 text-xs font-bold text-green-700 bg-green-50 border border-green-200 px-2.5 py-1 rounded-full">Completed ✓</span>}
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close details" className="w-11 h-11 shrink-0 flex items-center justify-center rounded-xl border border-gray-200"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="min-w-0 overflow-y-auto overscroll-contain px-4 sm:px-6 py-4 space-y-5">
+          {loading ? <p className="text-gray-500 py-8 text-center">Loading delivery…</p> : error ? <p className="text-red-600 py-8 text-center">{error}</p> : !detail ? (
+            <p className="text-gray-500 py-8 text-center">This delivery is no longer available.</p>
+          ) : <>
+            <div className="text-sm space-y-2 break-words">
+              <p><span className="font-semibold text-gray-500">Route: </span>{detail.destination}</p>
+              <p><span className="font-semibold text-gray-500">Customer: </span>{detail.company}</p>
+              <p><span className="font-semibold text-gray-500">Delivery date: </span>{manilaDate(detail.deliveryDate)}</p>
+              <p><span className="font-semibold text-gray-500">Completed at: </span>{manilaStamp(detail.completedAt)}</p>
+              {detail.remarks?.trim() && <div>
+                <span className="font-semibold text-gray-500">Remarks</span>
+                <p ref={remarksRef} className={`whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${remarksOpen ? '' : 'line-clamp-3'}`}>{detail.remarks}</p>
+                {(remarksOverflow || remarksOpen) && <button type="button" onClick={() => setRemarksOpen((open) => !open)} className="min-h-11 text-green-700 font-semibold">{remarksOpen ? 'See less' : 'See more'}</button>}
+              </div>}
+            </div>
+            <section>
+              <h3 className="font-bold text-foreground">Documents</h3>
+              <p className="text-sm text-gray-500 mt-0.5">{approved} of {REQUIRED_DOCS.length} documents approved</p>
+              {docRows.length ? <div className="mt-3 space-y-2">
+                {docRows.map((doc) => {
+                  const url = safeUrl(doc.fileUrl);
+                  const status = !doc.uploaded ? 'Awaiting upload' : doc.docStatus === 'approved' ? 'Approved' : doc.docStatus === 'rejected' ? 'Rejected' : 'Pending review';
+                  const color = !doc.uploaded ? 'bg-gray-100 text-gray-600' : doc.docStatus === 'approved' ? 'bg-green-50 text-green-700' : doc.docStatus === 'rejected' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700';
+                  return <div key={doc.type} className="min-w-0 flex items-center gap-3 rounded-xl border border-gray-200 p-3">
+                    {doc.type === 'Proof of Delivery' && url && isImage(url) ? (
+                      <button type="button" onClick={() => setPreviewUrl(url)} aria-label="Enlarge Proof of Delivery" className="shrink-0 w-11 h-11 rounded-lg overflow-hidden border border-gray-200">
+                        <img src={url} alt="Proof of Delivery thumbnail" loading="lazy" decoding="async" className="w-full h-full object-cover" />
+                      </button>
+                    ) : <FileText className="w-5 h-5 text-gray-400 shrink-0" />}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-foreground break-words">{doc.type}</p>
+                      <span className={`inline-block text-xs rounded-full px-2 py-0.5 ${color}`}>{status}</span>
+                      {doc.uploaded && <p className="text-xs text-gray-500">{'uploadedAt' in doc && typeof doc.uploadedAt === 'string' ? manilaStamp(doc.uploadedAt) : 'Upload time unavailable'}</p>}
+                    </div>
+                    {url && <a href={url} target="_blank" rel="noopener noreferrer" className="shrink-0 min-h-11 px-3 flex items-center text-sm font-semibold text-green-700">View</a>}
+                  </div>;
+                })}
+              </div> : <p className="text-sm text-gray-500 mt-3">No documents uploaded for this delivery.</p>}
+            </section>
+          </>}
+        </div>
+      </div>
+      {previewUrl && <div className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center p-4" onClick={() => setPreviewUrl(null)}>
+        <button type="button" onClick={() => setPreviewUrl(null)} aria-label="Close preview" className="absolute top-4 right-4 h-11 w-11 text-white flex items-center justify-center"><X className="w-6 h-6" /></button>
+        <img src={previewUrl} alt="Proof of Delivery" className="max-w-full max-h-full object-contain" />
+      </div>}
+    </div>
+  );
+}
+
 /* ════════════════════════════════════════════════════════════
    MAIN COMPONENT
    ════════════════════════════════════════════════════════════ */
@@ -685,7 +870,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
   /* ── Screen state: 'dashboard' or 'task' ── */
   /* Persisted the same way admin's activeNav is — otherwise a refresh while
      viewing the task screen silently drops the driver back to Dashboard. */
-  const [screen, setScreen] = useState<'dashboard' | 'task'>(() => {
+  const [screen, setScreen] = useState<'dashboard' | 'task' | 'history' | 'notifications'>(() => {
     const saved = localStorage.getItem('360_driver_screen');
     return saved === 'task' ? 'task' : 'dashboard';
   });
@@ -700,6 +885,11 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
   const [delaySheet,   setDelaySheet]   = useState<'pickup' | 'delivery' | null>(null);
   const [issueSheet,   setIssueSheet]   = useState(false);
   const [logoutDlg,    setLogoutDlg]    = useState(false);
+  const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
+  const [historySearch, setHistorySearch] = useState('');
+  const [historyPage, setHistoryPage] = useState(1);
+  const [notificationPage, setNotificationPage] = useState(1);
+  const closeHistoryDetail = useCallback(() => setSelectedHistoryId(null), []);
 
   /* Per-document "please retake, this looks blurry" message — keyed by doc
      type since more than one document row can exist at once. */
@@ -884,6 +1074,19 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
     return notifs;
   }, [normalizedDocs]);
 
+  const completedHistory = data?.completedHistory ?? [];
+  const filteredHistory = completedHistory.filter((item) =>
+    `${item.truckPlate} ${item.company}`.toLowerCase().includes(historySearch.trim().toLowerCase()));
+  const historyPages = Math.max(1, Math.ceil(filteredHistory.length / 8));
+  const shownHistoryPage = Math.min(historyPage, historyPages);
+  const historyRows = filteredHistory.slice((shownHistoryPage - 1) * 8, shownHistoryPage * 8);
+  const notificationPages = Math.max(1, Math.ceil(driverNotifs.length / 8));
+  const shownNotificationPage = Math.min(notificationPage, notificationPages);
+  const notificationRows = driverNotifs.slice((shownNotificationPage - 1) * 8, shownNotificationPage * 8);
+
+  useEffect(() => { if (historyPage > historyPages) setHistoryPage(historyPages); }, [historyPage, historyPages]);
+  useEffect(() => { if (notificationPage > notificationPages) setNotificationPage(notificationPages); }, [notificationPage, notificationPages]);
+
   /* Delay gates */
   /* Parses a "Mon D, YYYY" display date + "H:MM AM/PM" display time into one
      real Date so lateness is judged against the actual scheduled moment —
@@ -1062,24 +1265,9 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
             <h2 className="text-xl font-bold text-foreground mb-3">Notifications</h2>
             {driverNotifs.length > 0 ? (
               <div className="space-y-3">
-                {driverNotifs.map((n) => (
-                  <div key={n.id} className={`rounded-2xl border p-4 flex items-start gap-4 ${
-                    n.type === 'rejection' ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'
-                  }`}>
-                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${
-                      n.type === 'rejection' ? 'bg-red-100' : 'bg-green-100'
-                    }`}>
-                      {n.type === 'rejection'
-                        ? <XCircle className="w-7 h-7 text-red-500" />
-                        : <CheckCircle2 className="w-7 h-7 text-green-500" />
-                      }
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-base font-bold text-foreground">{n.title}</p>
-                      <p className="text-sm text-gray-600 mt-1 leading-relaxed">{n.body}</p>
-                    </div>
-                  </div>
-                ))}
+                {driverNotifs.slice(0, 5).map((n) => <DriverNotificationRow key={n.id} notification={n} />)}
+                {driverNotifs.length > 5 && <button type="button" onClick={() => { setNotificationPage(1); setScreen('notifications'); }}
+                  className="w-full min-h-11 text-green-700 font-semibold">See all</button>}
               </div>
             ) : (
               <div className="bg-white rounded-2xl border border-gray-200 px-5 py-7 text-center">
@@ -1091,32 +1279,11 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
           {/* ── TASK HISTORY ── */}
           <section>
             <h2 className="text-xl font-bold text-foreground mb-3">Past Deliveries</h2>
-            {(data?.completedHistory ?? []).length > 0 ? (
-              <div className="space-y-3">
-                {data!.completedHistory!.map((item) => (
-                  <div key={item.id} className="bg-white rounded-2xl border border-gray-200 p-4 space-y-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-mono font-bold text-gray-400">{item.id}</span>
-                      <span className="text-sm font-bold text-green-700 bg-green-50 border border-green-200 px-3 py-1 rounded-full flex-shrink-0">
-                        Completed ✓
-                      </span>
-                    </div>
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2.5">
-                        <Truck className="w-5 h-5 text-gray-400 flex-shrink-0" />
-                        <span className="text-base font-bold text-foreground">{item.truckPlate}</span>
-                      </div>
-                      <div className="flex items-start gap-2.5">
-                        <MapPin className="w-5 h-5 text-gray-400 flex-shrink-0 mt-0.5" />
-                        <span className="text-base text-gray-600 leading-snug">{item.company}</span>
-                      </div>
-                      <div className="flex items-center gap-2.5">
-                        <Calendar className="w-5 h-5 text-gray-400 flex-shrink-0" />
-                        <span className="text-base text-gray-500">{item.deliveryDate}</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+            {completedHistory.length > 0 ? (
+              <div className="space-y-2">
+                {completedHistory.slice(0, 3).map((item) => <PastDeliveryRow key={item.id} item={item} onOpen={() => setSelectedHistoryId(item.id)} />)}
+                {completedHistory.length > 3 && <button type="button" onClick={() => { setHistorySearch(''); setHistoryPage(1); setScreen('history'); }}
+                  className="w-full min-h-11 text-green-700 font-semibold">View all history</button>}
               </div>
             ) : (
               <div className="bg-white rounded-2xl border border-gray-200 px-5 py-7 text-center">
@@ -1136,8 +1303,50 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
 
         {ActionErrorBanner}
         {LogoutDialog}
+        {selectedHistoryId && <HistoryDetailsSheet key={selectedHistoryId} driverId={driverId} assignmentId={selectedHistoryId} onClose={closeHistoryDetail} />}
       </div>
     );
+  }
+
+  if (screen === 'history') {
+    return <div className="min-h-screen min-w-0 bg-gray-50">
+      <header className="sticky top-0 z-20 bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3">
+        <button type="button" onClick={() => setScreen('dashboard')} aria-label="Back to dashboard" className="h-11 w-11 shrink-0 rounded-xl border border-gray-200 flex items-center justify-center"><ChevronLeft className="w-5 h-5" /></button>
+        <h1 className="text-xl font-bold text-foreground">Past Deliveries</h1>
+      </header>
+      <main className="min-w-0 max-w-2xl mx-auto px-4 py-5">
+        <label htmlFor="driver-history-search" className="sr-only">Search past deliveries by truck or customer</label>
+        <input id="driver-history-search" type="search" value={historySearch}
+          onChange={(event) => { setHistorySearch(event.target.value); setHistoryPage(1); }}
+          placeholder="Search truck or customer" className="w-full min-w-0 h-12 px-4 rounded-xl border border-gray-200 bg-white text-base mb-4" />
+        {filteredHistory.length ? <>
+          <div className="grid gap-2">
+            {historyRows.map((item) => <PastDeliveryRow key={item.id} item={item} onOpen={() => setSelectedHistoryId(item.id)} />)}
+            {Array.from({ length: 8 - historyRows.length }, (_, index) => <div key={`empty-${index}`} aria-hidden="true" className="invisible min-h-20 rounded-2xl border px-4 py-3" />)}
+          </div>
+          <DriverPageControls page={shownHistoryPage} pages={historyPages} onPage={setHistoryPage} />
+        </> : <div className="bg-white rounded-2xl border border-gray-200 px-5 py-7 text-center text-gray-500">{historySearch ? 'No matching deliveries.' : 'No past deliveries yet.'}</div>}
+      </main>
+      {selectedHistoryId && <HistoryDetailsSheet key={selectedHistoryId} driverId={driverId} assignmentId={selectedHistoryId} onClose={closeHistoryDetail} />}
+    </div>;
+  }
+
+  if (screen === 'notifications') {
+    return <div className="min-h-screen min-w-0 bg-gray-50">
+      <header className="sticky top-0 z-20 bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3">
+        <button type="button" onClick={() => setScreen('dashboard')} aria-label="Back to dashboard" className="h-11 w-11 shrink-0 rounded-xl border border-gray-200 flex items-center justify-center"><ChevronLeft className="w-5 h-5" /></button>
+        <h1 className="text-xl font-bold text-foreground">Notifications</h1>
+      </header>
+      <main className="min-w-0 max-w-2xl mx-auto px-4 py-5">
+        {driverNotifs.length ? <>
+          <div className="grid gap-3">
+            {notificationRows.map((notification) => <DriverNotificationRow key={notification.id} notification={notification} />)}
+            {Array.from({ length: 8 - notificationRows.length }, (_, index) => <div key={`empty-${index}`} aria-hidden="true" className="invisible min-h-20 rounded-2xl border p-4" />)}
+          </div>
+          <DriverPageControls page={shownNotificationPage} pages={notificationPages} onPage={setNotificationPage} />
+        </> : <div className="bg-white rounded-2xl border border-gray-200 px-5 py-7 text-center text-gray-400">No new notifications</div>}
+      </main>
+    </div>;
   }
 
   /* ════════════════════════════════════════════════════════════

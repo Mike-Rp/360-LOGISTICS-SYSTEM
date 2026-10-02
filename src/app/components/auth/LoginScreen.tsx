@@ -38,6 +38,8 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
    so neither the number nor whatever PIN was typed can be the right one. */
   const [driverError,   setDriverError]   = useState<{ type: 'mobile' | 'pin' | 'mobile_and_pin' | 'general'; msg: string } | null>(null);
   const [driverLoading, setDriverLoading] = useState(false);
+  const mobileStartsWrong = mobile.length > 0 && !mobile.startsWith('9');
+  const mobileHasError = mobileStartsWrong || driverError?.type === 'mobile' || driverError?.type === 'mobile_and_pin';
   /* "Forgot your PIN?" dialog — purely informational, it starts no reset flow. */
   const [showPinHelp,   setShowPinHelp]   = useState(false);
 
@@ -160,10 +162,10 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
 
   return (
     <div
-      className="min-h-screen flex items-center justify-center p-4"
-      style={{ background: 'linear-gradient(153deg, #f0fdf4 0%, #eff6ff 50%, #ffffff 100%)' }}
+      className="relative isolate min-h-screen w-full overflow-hidden flex items-center justify-center p-4 sm:p-6"
+      style={{ background: '#f8fbfa url(/login-background.png) center / cover no-repeat' }}
     >
-      <div className="w-full max-w-[420px]">
+      <div className="relative z-10 w-full max-w-[420px]">
         <div className="bg-white rounded-3xl shadow-2xl overflow-hidden">
           <div className="px-7 sm:px-9 pt-9 pb-7 space-y-7">
 
@@ -210,9 +212,10 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
 
                 <div className="space-y-2.5">
                   <label className="text-base font-semibold text-foreground block">Mobile Number</label>
-                  <div className={`flex w-full max-w-full min-w-0 items-center rounded-2xl border overflow-hidden focus-within:ring-2 focus-within:ring-primary/30 transition-all ${
-                    driverError?.type === 'mobile' || driverError?.type === 'mobile_and_pin' ? 'border-red-400 bg-red-50' : 'border-[#e5e7eb] bg-[#f9fafb]'
-                  }`}>
+                  <div>
+                    <div className={`flex w-full max-w-full min-w-0 items-center rounded-2xl border overflow-hidden focus-within:ring-2 transition-colors duration-150 ${
+                      mobileHasError ? 'border-red-500 bg-red-50 focus-within:ring-red-500/30' : 'border-[#e5e7eb] bg-[#f9fafb] focus-within:border-primary focus-within:ring-primary/30'
+                    }`}>
                     {/* Country prefix badge */}
                     <span className="shrink-0 px-2 sm:px-4 py-4 bg-gray-100 border-r border-[#e5e7eb] text-base font-bold text-foreground select-none whitespace-nowrap">
                       +63
@@ -224,6 +227,8 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
                       autoComplete="off"
                       value={mobile}
                       onChange={(e) => handleMobile(e.target.value)}
+                      aria-invalid={mobileHasError || undefined}
+                      aria-describedby={mobileStartsWrong ? 'driver-mobile-start-help' : undefined}
                       placeholder="9XX XXX XXXX"
                       maxLength={10}
                       onKeyDown={(e) => e.key === 'Enter' && handleDriverLogin()}
@@ -231,14 +236,18 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
                     />
                     {/* Character counter */}
                     <span className={`shrink-0 px-2 sm:px-4 text-xs sm:text-sm font-semibold tabular-nums ${
-                      mobile.length === 10 ? 'text-green-600' : 'text-muted-foreground'
+                      mobileStartsWrong ? 'text-red-600' : mobile.length === 10 ? 'text-green-600' : 'text-muted-foreground'
                     }`}>
                       {mobile.length}/10
                     </span>
+                    </div>
+                    <p id="driver-mobile-start-help" aria-live="polite" className="mt-1 min-h-4 text-xs leading-4 text-red-600 break-words">
+                      {mobileStartsWrong ? 'Mobile number must start with 9' : ''}
+                    </p>
                   </div>
                 </div>
 
-                {(driverError?.type === 'mobile' || driverError?.type === 'mobile_and_pin') && (
+                {!mobileStartsWrong && (driverError?.type === 'mobile' || driverError?.type === 'mobile_and_pin') && (
                   <ErrorBanner icon={Phone} title="Mobile Number Not Found" sub={driverError.msg} />
                 )}
 

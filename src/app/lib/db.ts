@@ -744,6 +744,28 @@ export async function loadDriverData(driverId: string): Promise<DriverViewData> 
   };
 }
 
+/* Read a completed delivery only when its driver opens it. Keep the driver ID in
+   the query as well as relying on RLS, so history cannot be widened by the UI. */
+export async function loadDriverCompletedDelivery(driverId: string, assignmentId: string): Promise<(CompletedTask & {
+  documents: Array<AssignmentDoc & { uploadedAt?: string }>;
+}) | null> {
+  const { data: row, error } = await supabase.from('assignments').select('*')
+    .eq('id', assignmentId).eq('driver_id', driverId).eq('state', 'completed').maybeSingle();
+  if (error) throw error;
+  if (!row) return null;
+  const { data: docs, error: docsError } = await supabase.from('assignment_documents').select('*')
+    .eq('assignment_id', assignmentId);
+  if (docsError) throw docsError;
+  return {
+    ...assignmentFromRow(row, docs ?? [], [], []),
+    completedAt: row.completed_at ?? '',
+    documents: (docs ?? []).sort((a, b) => a.position - b.position).map((doc) => ({
+      ...docFromRow(doc),
+      ...(doc.uploaded_at ? { uploadedAt: doc.uploaded_at as string } : {}),
+    })),
+  };
+}
+
 /* Everything a driver may change (the database triggers enforce it — see guard_* in the migration):
    status / issue reason / acknowledgement, photos, delay reports, new document files, + a notification. */
 export async function driverUpdate(

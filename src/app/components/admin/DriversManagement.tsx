@@ -35,7 +35,7 @@ function Highlight({ text, query }: { text: string; query: string }) {
   );
 }
 import {
-  DOCUMENT_TYPES, taskStatusConfig, availabilityConfig, DEMO_ADMIN_EMAIL,
+  DOCUMENT_TYPES, taskStatusConfig, DEMO_ADMIN_EMAIL,
   type Assignment, type CompletedTask, type LocalDriver, type LocalTruck,
   type TaskStatus, type DocStatus, type AdminActivityInput, type AssignmentDoc,
 } from '../../data/assignmentTypes';
@@ -651,11 +651,6 @@ function CharCount({ value, max = TEXT_MAX }: { value: string; max?: number }) {
 }
 
 /* ─── Helpers ─────────────────────────────────────── */
-/* Driver availability as shown on screen: stored 'Assigned' = On Delivery;
-   'Pending' and 'Complete' both mean not on a delivery = Available (display only) */
-const driverAvailability = (s: string) =>
-  s === 'Assigned' ? availabilityConfig.onDelivery : availabilityConfig.available;
-
 /* Colored dot + label (no emoji circles) */
 /* `acknowledged` only matters while status is 'Assigned' — it shows a lighter
    purple instead of the usual purple until the driver's app has actually loaded
@@ -921,27 +916,22 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
       <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-[480px] flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-200">
 
-        {/* ── Sticky header: driver identity + status ── */}
-        <header className="flex items-start gap-3 px-5 py-4 border-b border-border flex-shrink-0">
+        {/* ── Sticky header: driver identity ── */}
+        <header className="flex items-center gap-3 px-5 py-4 border-b border-border flex-shrink-0">
           <div className="w-12 h-12 rounded-full bg-blue-50 border border-blue-100 flex items-center justify-center flex-shrink-0">
             <User className="w-6 h-6 text-blue-600" />
           </div>
           <div className="flex-1 min-w-0">
-            <h3 className="text-lg font-bold text-foreground leading-tight truncate">{driver.name}</h3>
-            <p className="text-xs text-muted-foreground truncate">{driver.id} · {driver.phone}</p>
-            {driver.currentLocation && (
-              <p className="text-xs text-muted-foreground truncate">{driver.currentLocation}</p>
+            <h3 className="text-xl sm:text-2xl font-bold text-foreground leading-tight break-words">{driver.name}</h3>
+            <p className="text-xs text-muted-foreground break-words">{driver.id} · {driver.phone}</p>
+            {driver.currentLocation?.trim() && driver.currentLocation.trim() !== '—' && (
+              <p className="text-xs text-muted-foreground break-words">Current location: {driver.currentLocation}</p>
             )}
           </div>
-          <div className="flex items-center gap-1.5 flex-shrink-0">
-            <span className={`text-xs px-2.5 py-1 rounded-full border ${driverAvailability(driver.status).badge}`}>
-              {driverAvailability(driver.status).label}
-            </span>
-            <button onClick={onClose} aria-label="Close"
-              className="p-1.5 rounded-lg hover:bg-accent transition-colors text-muted-foreground">
-              <X className="w-5 h-5" />
-            </button>
-          </div>
+          <button onClick={onClose} aria-label="Close"
+            className="p-1.5 rounded-lg hover:bg-accent transition-colors text-muted-foreground flex-shrink-0 self-start">
+            <X className="w-5 h-5" />
+          </button>
         </header>
 
         {/* ── Scrollable content ── */}
