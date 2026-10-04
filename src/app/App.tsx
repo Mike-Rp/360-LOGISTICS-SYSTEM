@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, type Dispatch, type SetStateAction } from 'react';
 import { CheckCircle2 } from 'lucide-react';
 import { supabase } from './lib/supabaseClient';
-import { loadAdminData, syncAdminData, resetAllData, restoreSession, signOut, readRecordCreationTimes } from './lib/db';
+import { loadAdminData, syncAdminData, markNotificationsRead, resetAllData, restoreSession, signOut, readRecordCreationTimes } from './lib/db';
+import { rememberNotificationReads, restoreNotificationReads } from './lib/notificationReadState';
 import type { StaffSession } from './lib/db';
 import AdminDashboard from './components/admin/AdminDashboard';
 import DriverInterface from './components/driver/DriverInterface';
@@ -57,6 +58,57 @@ export default function App() {
   const [saveError,     setSaveError]     = useState<string | null>(null);
   const [loadError,     setLoadError]     = useState<string | null>(null);
   const [loginSuccess,  setLoginSuccess]  = useState<string | null>(null);
+  const notificationsRef = useRef(notifications);
+  notificationsRef.current = notifications;
+  const pendingReadWrites = useRef(new Set<string>());
+
+  const flushNotificationReads = useCallback((account: string, ids: string[]) => {
+    if (!signedInRef.current || adminEmailRef.current !== account
+      || (adminRoleRef.current !== 'admin' && adminRoleRef.current !== 'csr')) return;
+    const pending = ids.filter((id) => !pendingReadWrites.current.has(`${account}:${id}`));
+    if (!pending.length) return;
+    pending.forEach((id) => pendingReadWrites.current.add(`${account}:${id}`));
+    const failureMessage = 'Could not save notification read status to the server. It will retry when data refreshes.';
+    void markNotificationsRead(pending).then(() => {
+      if (signedInRef.current && adminEmailRef.current === account) {
+        setSaveError((current) => current === failureMessage ? null : current);
+      }
+    }).catch((err) => {
+      console.error('[notification read] save failed:', err);
+      if (signedInRef.current && adminEmailRef.current === account) {
+        setSaveError(failureMessage);
+      }
+    }).finally(() => {
+      pending.forEach((id) => pendingReadWrites.current.delete(`${account}:${id}`));
+    });
+  }, []);
+
+  const restoreNotifications = useCallback((loaded: AppNotification[]) => {
+    const account = adminEmailRef.current;
+    const restored = account ? restoreNotificationReads(account, loaded) : null;
+    const next = restored?.notifications ?? loaded;
+    notificationsRef.current = next;
+    setNotifications(next);
+    if (restored?.storageError) {
+      setSaveError('Browser storage is unavailable. Notification read status may not survive refresh until saved to the server.');
+    }
+    if (account && restored) flushNotificationReads(account, restored.pendingIds);
+  }, [flushNotificationReads]);
+
+  // Header uses this same setter for individual reads and Mark all as read.
+  const persistNotificationReads: Dispatch<SetStateAction<AppNotification[]>> = useCallback((update) => {
+    const previous = notificationsRef.current;
+    const next = typeof update === 'function' ? update(previous) : update;
+    const unreadIds = new Set(previous.filter((notification) => !notification.read).map((notification) => notification.id));
+    const ids = next.filter((notification) => notification.read && unreadIds.has(notification.id)).map((notification) => notification.id);
+    const account = adminEmailRef.current;
+    if (account && ids.length && rememberNotificationReads(account, ids).storageError) {
+      setSaveError('Browser storage is unavailable. Notification read status may not survive refresh until saved to the server.');
+    }
+    notificationsRef.current = next;
+    setNotifications(next);
+    if (account) flushNotificationReads(account, ids);
+  }, [flushNotificationReads]);
 
   /* ── Admin activity logging — auto-tags the signed-in account. (The database also stamps the
      real email/role on insert, so this can't be spoofed from the browser.) ── */
@@ -83,7 +135,7 @@ export default function App() {
       setAssignments(data.assignments);
       setCompleted(data.completed);
       setCancelled(data.cancelled);
-      setNotifications(data.notifications);
+      restoreNotifications(data.notifications);
       setActivityLog(data.activityLog);
       setArchivedDrivers(data.archivedDrivers);
       setArchivedTrucks(data.archivedTrucks);
@@ -96,7 +148,7 @@ export default function App() {
       setDataLoading(false);
       setTimeout(() => { isPollUpdate.current = false; }, 200);
     }
-  }, []);
+  }, [restoreNotifications]);
 
   const applySession = useCallback(async (staff: StaffSession, fresh = false) => {
     isPollUpdate.current = true; // block auto-save until loadData finishes
@@ -239,7 +291,7 @@ export default function App() {
       const data = await loadAdminData();
       isPollUpdate.current = true;
       setAssignments(data.assignments);
-      setNotifications(data.notifications);
+      restoreNotifications(data.notifications);
       setDrivers(data.drivers);
       setTrucks(data.trucks);
       setCompleted(data.completed);
@@ -252,7 +304,7 @@ export default function App() {
       /* The change itself succeeded — the next 12 s poll will pick it up */
       console.warn('[onServerChange] reload failed, the next poll will retry:', err);
     }
-  }, [saveToServer, drivers, trucks, assignments, completed, cancelled, notifications, activityLog]);
+  }, [saveToServer, restoreNotifications, drivers, trucks, assignments, completed, cancelled, notifications, activityLog]);
 
   /* ── Admin real-time poll — refresh data every 12 s ── */
   useEffect(() => {
@@ -270,7 +322,7 @@ export default function App() {
         isPollUpdate.current = true;
         setLoadError(null);        // a good poll means the connection recovered
         setAssignments(data.assignments);
-        setNotifications(data.notifications);
+        restoreNotifications(data.notifications);
         setDrivers(data.drivers);
         setTrucks(data.trucks);
         setCompleted(data.completed);
@@ -288,7 +340,7 @@ export default function App() {
       }
     }, 12000);
     return () => clearInterval(id);
-  }, [signedIn, adminRole]);
+  }, [signedIn, adminRole, restoreNotifications]);
 
   /* Forget who was signed in and go back to the login screen (local state only). */
   const clearSession = useCallback(() => {
@@ -416,7 +468,7 @@ export default function App() {
           assignments={assignments}  setAssignments={setAssignments}
           completed={completed}      setCompleted={setCompleted}
           cancelled={cancelled}      setCancelled={setCancelled}
-          notifications={notifications} setNotifications={setNotifications}
+          notifications={notifications} setNotifications={persistNotificationReads}
           activityLog={activityLog}
           onLogActivity={onLogActivity}
           onServerChange={onServerChange}

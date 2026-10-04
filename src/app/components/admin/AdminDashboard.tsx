@@ -30,7 +30,7 @@ function targetFromUrl(): NotificationTarget | null {
 }
 
 const SEARCH_PLACEHOLDERS: Partial<Record<NavItem, string>> = {
-  Monitor: 'Search trucks, drivers, routes...',
+  Monitor: 'Search truck plate, driver, or route...',
   Deliveries: 'Search deliveries...',
   Documents: 'Search documents...',
   Accounts: 'Search accounts...',

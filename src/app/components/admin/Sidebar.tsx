@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { LayoutDashboard, Package, FileText, BarChart3, UserCog, Route, Menu, X } from 'lucide-react';
+import { LayoutDashboard, Truck, FileText, ChartNoAxesCombined, ClipboardList, Route, Menu, X } from 'lucide-react';
 import imgLogo from 'figma:asset/5e73e3c08e898d68c86717993c6e7442d03e9ac4.png';
 import { adminHref, followAdminLink } from '../../lib/adminNavigation';
 
@@ -15,10 +15,10 @@ interface SidebarProps {
 const navItems: { name: NavItem; label?: string; icon: React.ElementType }[] = [
   { name: 'Dashboard',  icon: LayoutDashboard },
   { name: 'Monitor',    label: 'Dispatch', icon: Route },
-  { name: 'Deliveries', icon: Package         },
+  { name: 'Deliveries', icon: Truck           },
   { name: 'Documents',  icon: FileText        },
-  { name: 'Reports',    icon: BarChart3       },
-  { name: 'Accounts',   icon: UserCog         },
+  { name: 'Reports',    icon: ChartNoAxesCombined },
+  { name: 'Accounts',   label: 'Drivers & Trucks', icon: ClipboardList },
 ];
 
 export default function Sidebar({ activeNav, setActiveNav, mobileOpen, setMobileOpen }: SidebarProps) {

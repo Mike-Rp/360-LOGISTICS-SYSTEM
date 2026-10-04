@@ -1,7 +1,7 @@
 import { Package, CheckCircle, AlertTriangle, FileText, ArrowRight } from 'lucide-react';
 import type { Assignment, CompletedTask } from '../../../data/assignmentTypes';
 import { parseStoredTimestamp } from '../../../data/assignmentTypes';
-import { adminHref, followAdminLink } from '../../../lib/adminNavigation';
+import { adminHref, followAdminLink, pushAdminNavigation, pendingDocumentReviewTarget } from '../../../lib/adminNavigation';
 
 interface Props {
   assignments: Assignment[];
@@ -54,6 +54,7 @@ export default function DashboardStatCards({ assignments, completed, onNavigate 
   const docsPending = assignments.reduce(
     (sum, a) => sum + a.documents.filter((d) => d.uploaded && d.docStatus === 'pending').length, 0
   );
+  const reviewTarget = pendingDocumentReviewTarget(assignments);
 
   const cards = [
     {
@@ -72,7 +73,7 @@ export default function DashboardStatCards({ assignments, completed, onNavigate 
     {
       label: 'Docs Pending Review', value: docsPending, icon: FileText, alert: docsPending > 0,
       detail: docsPending > 0 ? 'Awaiting approval' : 'All documents reviewed',
-      link: { label: 'Review', onClick: () => onNavigate('Documents') },
+      link: { label: 'Review', href: adminHref('Monitor', reviewTarget), onClick: () => pushAdminNavigation('Monitor', reviewTarget) },
     },
   ];
 
@@ -97,7 +98,7 @@ export default function DashboardStatCards({ assignments, completed, onNavigate 
             <div className="text-right min-w-0">
               <p className="text-xs text-muted-foreground leading-snug">{detail}</p>
               {link && (
-                <a href={adminHref('Documents')} onClick={(event) => followAdminLink(event, link.onClick)}
+                <a href={link.href} onClick={(event) => followAdminLink(event, link.onClick)}
                   className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:text-primary/80 mt-0.5">
                   {link.label} <ArrowRight className="w-3 h-3" />
                 </a>

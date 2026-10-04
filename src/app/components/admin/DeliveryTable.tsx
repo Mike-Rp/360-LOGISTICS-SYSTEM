@@ -1,9 +1,9 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { MapPin, Package, CheckCircle2, Truck, Building2, Filter, ChevronRight } from 'lucide-react';
 import type { Assignment, CompletedTask, LocalTruck, TaskStatus } from '../../data/assignmentTypes';
 import { taskStatusConfig } from '../../data/assignmentTypes';
 import { assignmentDisplayStatusConfig, getAssignmentDisplayStatus, getAssignmentDocumentProgress } from '../../lib/assignmentWorkflow';
-import { adminHref, followAdminLink, pushAdminNavigation } from '../../lib/adminNavigation';
+import { ADMIN_NAVIGATION_EVENT, adminHref, followAdminLink, pushAdminNavigation } from '../../lib/adminNavigation';
 import { matchesAssignmentDate } from '../../lib/assignmentDateFilter';
 import ASNWithCopy from './ASNWithCopy';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
@@ -209,7 +209,7 @@ export default function DeliveryTable({
     return <RecentActivities assignments={assignments} completed={completed} />;
   }
 
-  const [tab, setTab]       = useState<'active' | 'completed' | 'cancelled'>('active');
+  const [tab, setTab]       = useState<'active' | 'completed' | 'cancelled'>(() => new URLSearchParams(window.location.search).get('tab') === 'completed' ? 'completed' : 'active');
   const [period, setPeriod] = useState<FilterPeriod>('all');
   const [remarksAssignment, setRemarksAssignment] = useState<Assignment | null>(null);
 
@@ -246,6 +246,29 @@ export default function DeliveryTable({
     completedPage.setPage(1);
     cancelledPage.setPage(1);
   };
+  useEffect(() => {
+    const openCompleted = () => {
+      if (new URLSearchParams(window.location.search).get('tab') !== 'completed') return;
+      setTab('completed');
+      resetPages();
+    };
+    openCompleted();
+    window.addEventListener('popstate', openCompleted);
+    window.addEventListener(ADMIN_NAVIGATION_EVENT, openCompleted);
+    return () => {
+      window.removeEventListener('popstate', openCompleted);
+      window.removeEventListener(ADMIN_NAVIGATION_EVENT, openCompleted);
+    };
+  }, []);
+  const selectTab = (next: 'active' | 'completed' | 'cancelled') => {
+    setTab(next);
+    resetPages();
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('tab')) {
+      url.searchParams.delete('tab');
+      window.history.replaceState(window.history.state, '', url);
+    }
+  };
   const newAssignmentId = useLocalAddedHighlight('assignment', resetPages);
   useLayoutEffect(() => { resetPages(); }, [search]);
 
@@ -272,21 +295,21 @@ export default function DeliveryTable({
           <div className="flex items-center gap-2 flex-wrap">
             {/* Tab */}
             <div className="flex flex-wrap max-w-full min-w-0 bg-muted/30 rounded-lg p-1 border border-border">
-              <button onClick={() => { setTab('active'); resetPages(); }}
+              <button onClick={() => selectTab('active')}
                 className={`px-2 sm:px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all flex items-center gap-1 sm:gap-1.5 ${tab === 'active' ? 'bg-white shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
                 Active
                 {filteredActive.length > 0 && (
                   <span className={`text-xs rounded-full px-1.5 py-0.5 min-w-[20px] text-center ${tab === 'active' ? 'bg-primary text-white' : 'bg-muted text-muted-foreground'}`}>{filteredActive.length}</span>
                 )}
               </button>
-              <button onClick={() => { setTab('completed'); resetPages(); }}
+              <button onClick={() => selectTab('completed')}
                 className={`px-2 sm:px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all flex items-center gap-1 sm:gap-1.5 ${tab === 'completed' ? 'bg-white shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
                 Completed
                 {filteredDone.length > 0 && (
                   <span className={`text-xs rounded-full px-1.5 py-0.5 min-w-[20px] text-center ${tab === 'completed' ? 'bg-green-500 text-white' : 'bg-muted text-muted-foreground'}`}>{filteredDone.length}</span>
                 )}
               </button>
-              <button onClick={() => { setTab('cancelled'); resetPages(); }}
+              <button onClick={() => selectTab('cancelled')}
                 className={`px-2 sm:px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all flex items-center gap-1 sm:gap-1.5 ${tab === 'cancelled' ? 'bg-white shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
                 Cancelled
                 {filteredCancelled.length > 0 && (

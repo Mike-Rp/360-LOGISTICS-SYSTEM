@@ -1,4 +1,5 @@
 import type { MouseEvent } from 'react';
+import type { Assignment } from '../data/assignmentTypes';
 
 export const ADMIN_PATHS = {
   Dashboard: '/dashboard',
@@ -11,6 +12,14 @@ export const ADMIN_PATHS = {
 
 export type AdminPage = keyof typeof ADMIN_PATHS;
 export const ADMIN_NAVIGATION_EVENT = '360-admin-navigation';
+
+// Dashboard review actions use an exact document target for one pending upload, otherwise the queue.
+export function pendingDocumentReviewTarget(assignments: readonly Pick<Assignment, 'id' | 'documents'>[]) {
+  const pending = assignments.flatMap((assignment) => assignment.documents
+    .filter((doc) => doc.uploaded && doc.docStatus === 'pending')
+    .map((doc) => ({ assignmentId: assignment.id, docType: doc.type })));
+  return pending.length === 1 ? { ...pending[0], review: true } : { review: true };
+}
 
 export function adminPageFromUrl(url = new URL(window.location.href)): AdminPage {
   const path = url.pathname.replace(/\/$/, '') || '/';
@@ -27,13 +36,14 @@ export function adminPageFromUrl(url = new URL(window.location.href)): AdminPage
   return 'Dashboard';
 }
 
-export function adminHref(page: AdminPage, target?: { assignmentId: string; docType?: string; review?: boolean }): string {
+export function adminHref(page: AdminPage, target?: { assignmentId?: string; docType?: string; review?: boolean }, tab?: 'completed'): string {
   const params = new URLSearchParams();
   if (target) {
-    params.set('assignment', target.assignmentId);
+    if (target.assignmentId !== undefined) params.set('assignment', target.assignmentId);
     if (target.docType) params.set('document', target.docType);
     if (target.review) params.set('review', 'true');
   }
+  if (page === 'Deliveries' && tab) params.set('tab', tab);
   const query = params.toString();
   return ADMIN_PATHS[page] + (query ? `?${query}` : '');
 }
@@ -44,8 +54,8 @@ export function followAdminLink(event: MouseEvent<HTMLAnchorElement>, navigate: 
   navigate();
 }
 
-export function pushAdminNavigation(page: AdminPage, target?: { assignmentId: string; docType?: string; review?: boolean }): void {
-  const href = adminHref(page, target);
+export function pushAdminNavigation(page: AdminPage, target?: { assignmentId?: string; docType?: string; review?: boolean }, tab?: 'completed'): void {
+  const href = adminHref(page, target, tab);
   if (!target && window.location.pathname + window.location.search === href) return;
   window.history.pushState({ ...window.history.state, adminNavigation: true }, '', href);
   window.dispatchEvent(new Event(ADMIN_NAVIGATION_EVENT));

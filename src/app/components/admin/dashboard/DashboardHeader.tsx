@@ -1,6 +1,6 @@
 import { Plus } from 'lucide-react';
 import type { Assignment, CompletedTask } from '../../../data/assignmentTypes';
-import { adminHref, followAdminLink } from '../../../lib/adminNavigation';
+import { adminHref, followAdminLink, pushAdminNavigation, pendingDocumentReviewTarget } from '../../../lib/adminNavigation';
 
 interface Props {
   assignments: Assignment[];
@@ -54,6 +54,7 @@ export function WelcomeSummary({ assignments, completed, onNavigate }: Pick<Prop
   const docsPending    = assignments.reduce(
     (sum, a) => sum + a.documents.filter((d) => d.uploaded && d.docStatus === 'pending').length, 0
   );
+  const reviewTarget = pendingDocumentReviewTarget(assignments);
 
   const linkCls = 'font-medium text-foreground underline decoration-dotted underline-offset-4 hover:text-primary transition-colors';
   const parts: React.ReactNode[] = [];
@@ -63,7 +64,7 @@ export function WelcomeSummary({ assignments, completed, onNavigate }: Pick<Prop
     <a key="delayed" href={adminHref('Deliveries')} onClick={(event) => followAdminLink(event, () => onNavigate('Deliveries'))} className={linkCls}>{delayed} delayed</a>
   );
   if (docsPending > 0) parts.push(
-    <a key="docs" href={adminHref('Documents')} onClick={(event) => followAdminLink(event, () => onNavigate('Documents'))} className={linkCls}>
+    <a key="docs" href={adminHref('Monitor', reviewTarget)} onClick={(event) => followAdminLink(event, () => pushAdminNavigation('Monitor', reviewTarget))} className={linkCls}>
       {plural(docsPending, 'document', 'documents')} waiting for review
     </a>
   );

@@ -515,12 +515,36 @@ async function syncTable(
 
 let saveQueue: Promise<void> = Promise.resolve();
 
+/* Read actions save immediately and share the existing queue. Never insert or delete notifications here. */
+export function markNotificationsRead(ids: string[]): Promise<void> {
+  const run = async () => {
+    for (const batch of chunk([...new Set(ids)], 200)) {
+      const { data, error } = await supabase.from('notifications').update({ read: true }).in('id', batch).select('id');
+      if (error) throw error;
+      for (const row of data ?? []) {
+        const stored = snapshot?.notifications.get(row.id);
+        if (stored) stored.read = true;
+      }
+      if (data?.length !== batch.length) {
+        throw new Error('Some notification read states could not be saved.');
+      }
+    }
+  };
+  const result = saveQueue.then(run);
+  saveQueue = result.catch(() => undefined);
+  return result;
+}
+
 /* Save the admin screens' state. Calls are queued so two saves never overlap. */
 export function syncAdminData(data: AdminData): Promise<void> {
   const run = async () => {
     if (!snapshot) return;                       // nothing loaded yet — never write from an empty state
     const prev = snapshot;
     const next = flatten(data);
+    // A stale queued auto-save must not mark an already-read notification unread again.
+    next.notifications.forEach((row, id) => {
+      if (prev.notifications.get(id)?.read) row.read = true;
+    });
 
     await syncTable('trucks',  ['id'], prev.trucks,  next.trucks,  { noDelete: true });
     await syncTable('drivers', ['id'], prev.drivers, next.drivers, { noDelete: true });

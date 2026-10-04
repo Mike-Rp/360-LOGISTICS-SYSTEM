@@ -15,6 +15,7 @@ import TruckImage from '../TruckImage';
 import ASNWithCopy from './ASNWithCopy';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
 import { sortNewestFirst, markLocalRecordAdded, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
+import { ADMIN_NAVIGATION_EVENT, adminHref, followAdminLink, pushAdminNavigation } from '../../lib/adminNavigation';
 import { TRUCK_CLASSIFICATIONS, truckSideImageFor } from '../../data/truckTypes';
 import {
   verifyOwnPassword, editAssignment, cancelAssignment, AssignmentActionError,
@@ -37,7 +38,7 @@ function Highlight({ text, query }: { text: string; query: string }) {
   );
 }
 import {
-  DOCUMENT_TYPES, taskStatusConfig, DEMO_ADMIN_EMAIL,
+  DOCUMENT_TYPES, taskStatusConfig, DEMO_ADMIN_EMAIL, parseStoredTimestamp,
   type Assignment, type CompletedTask, type LocalDriver, type LocalTruck,
   type TaskStatus, type DocStatus, type AdminActivityInput, type AssignmentDoc,
 } from '../../data/assignmentTypes';
@@ -482,17 +483,11 @@ function StepProgress({ step, total = 2 }: { step: number; total?: number }) {
   );
 }
 
-/* Free-text input that suggests addresses already used in past deliveries */
-function AddressAutocomplete({ value, onChange, options, placeholder, hasError, icon }: {
-  value: string; onChange: (v: string) => void; options: string[];
+/* Manual location input; browser autocomplete stays disabled for these fields only. */
+function LocationInput({ value, onChange, placeholder, hasError, icon }: {
+  value: string; onChange: (v: string) => void;
   placeholder?: string; hasError?: boolean; icon?: React.ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
-  const q = value.trim().toLowerCase();
-  const matches = options
-    .filter((o) => o.toLowerCase().includes(q) && o.toLowerCase() !== q)
-    .slice(0, 5);
-
   return (
     <div className="relative">
       {icon && (
@@ -502,28 +497,11 @@ function AddressAutocomplete({ value, onChange, options, placeholder, hasError, 
       )}
       <input
         type="text" value={value}
-        onChange={(e) => { onChange(e.target.value); setOpen(true); }}
-        onFocus={() => setOpen(true)}
-        /* Delay so a click on a suggestion registers before the list closes */
-        onBlur={() => setTimeout(() => setOpen(false), 120)}
+        onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         autoComplete="off"
         className={`${fieldBase} ${fieldTone(hasError)} ${icon ? 'pl-9' : ''}`}
       />
-      {open && matches.length > 0 && (
-        <ul className="absolute z-20 left-0 right-0 top-full mt-1 bg-white border border-border rounded-[10px] shadow-lg overflow-hidden py-1">
-          {matches.map((m) => (
-            <li key={m}>
-              <button type="button"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => { onChange(m); setOpen(false); }}
-                className="w-full text-left px-3.5 py-2 text-sm text-foreground hover:bg-accent transition-colors truncate">
-                {m}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
     </div>
   );
 }
@@ -1300,11 +1278,10 @@ const REAUTH_COOLDOWN_MS = 30_000;
 let reauthFails       = 0;
 let reauthLockedUntil = 0;
 
-function EditAssignmentModal({ assignment, drivers, trucks, assignments, addressBook, onClose, onSaved, onServerChange }: {
+function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose, onSaved, onServerChange }: {
   /* Live copy from props — null once it leaves the active list (completed/cancelled elsewhere) */
   assignment: Assignment | null;
   drivers: LocalDriver[]; trucks: LocalTruck[]; assignments: Assignment[];
-  addressBook: { from: string[]; to: string[]; pickup: string[] };
   onClose: () => void;
   onSaved: (id: string) => void;
   onServerChange: (action: () => Promise<void>) => Promise<void>;
@@ -1486,14 +1463,14 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, address
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <FieldLabel required>From</FieldLabel>
-              <AddressAutocomplete value={f.from} onChange={(v) => set('from', v)} options={addressBook.from}
+              <LocationInput value={f.from} onChange={(v) => set('from', v)}
                 placeholder="e.g. Origin city or municipality" hasError={!!errors.from}
                 icon={<MapPin className="w-3.5 h-3.5" />} />
               {errText('from')}
             </div>
             <div>
               <FieldLabel required>To</FieldLabel>
-              <AddressAutocomplete value={f.to} onChange={(v) => set('to', v)} options={addressBook.to}
+              <LocationInput value={f.to} onChange={(v) => set('to', v)}
                 placeholder="e.g. Destination city or municipality" hasError={!!errors.to}
                 icon={<Navigation className="w-3.5 h-3.5" />} />
               {errText('to')}
@@ -1513,8 +1490,8 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, address
 
           <div>
             <FieldLabel required>Pickup Location</FieldLabel>
-            <AddressAutocomplete value={f.pickupLocation} onChange={(v) => set('pickupLocation', v)}
-              options={addressBook.pickup} placeholder="e.g. Warehouse A, Valenzuela City"
+            <LocationInput value={f.pickupLocation} onChange={(v) => set('pickupLocation', v)}
+              placeholder="e.g. Warehouse A, Valenzuela City"
               hasError={!!errors.pickupLocation} icon={<Package className="w-3.5 h-3.5" />} />
             {errText('pickupLocation')}
           </div>
@@ -1660,13 +1637,16 @@ interface Props {
 }
 
 const MONITOR_PAGE_SIZE = 6;
-const COMPLETED_PAGE_SIZE = 8;
+const RECENT_COMPLETED_LIMIT = 5;
 
-function formatCompletedAtDisplay(value: string) {
-  const match = value.trim().match(/^([A-Za-z]{3,9})\s+(\d{1,2})(?:,\s*(\d{4}))?(?:\s+at|,)?\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-  if (!match) return value;
-  const [, month, day, year, hour, minute, period] = match;
-  return `${month.slice(0, 3)} ${Number(day)}${year ? `, ${year}` : ''} · ${Number(hour)}:${minute} ${period.toUpperCase()}`;
+function formatRecentCompletion(date: Date, today: string) {
+  const day = dateToIso(date) === today ? 'Today' : 'Yesterday';
+  return `${day} · ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+}
+
+function reviewQueueRequested() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('review') === 'true' && !params.has('assignment');
 }
 
 /* ─── Main Component ───────────────────────────────── */
@@ -1691,6 +1671,27 @@ export default function DriversManagement({
   const [editId,         setEditId]         = useState<string | null>(null);
   const [classificationFilter, setClassificationFilter] = useState('');
   const [completedOpen, setCompletedOpen] = useState(false);
+  const [reviewQueueOpen, setReviewQueueOpen] = useState(reviewQueueRequested);
+
+  useEffect(() => {
+    const restoreReviewQueue = () => setReviewQueueOpen(reviewQueueRequested());
+    window.addEventListener('popstate', restoreReviewQueue);
+    window.addEventListener(ADMIN_NAVIGATION_EVENT, restoreReviewQueue);
+    return () => {
+      window.removeEventListener('popstate', restoreReviewQueue);
+      window.removeEventListener(ADMIN_NAVIGATION_EVENT, restoreReviewQueue);
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!reviewQueueOpen) return;
+    setClassificationFilter('');
+    if (search) onSearchChange('');
+    setCompletedOpen(false);
+    setViewDetailsId(null);
+    setReviewTarget(null);
+    setMissingTarget(false);
+  }, [reviewQueueOpen]);
 
   useEffect(() => {
     if (!completedOpen) return;
@@ -1726,25 +1727,6 @@ export default function DriversManagement({
   const assignedDriverIds = new Set(assignments.map((a) => a.driverId));
   const availableDrivers  = drivers.filter((d) => !assignedDriverIds.has(d.id));
   const availableTrucks   = trucks.filter((t)  => t.status === 'Available');
-
-  /* Autocomplete suggestions drawn from addresses used in past deliveries */
-  const addressBook = (() => {
-    const from = new Set<string>();
-    const to   = new Set<string>();
-    const pickup = new Set<string>();
-    [...assignments, ...completed].forEach((a) => {
-      if (a.pickupLocation?.trim()) pickup.add(a.pickupLocation.trim());
-      const dest = a.destination ?? '';
-      if (dest.includes('→')) {
-        const [f, t] = dest.split('→');
-        if (f?.trim()) from.add(f.trim());
-        if (t?.trim()) to.add(t.trim());
-      } else if (dest.trim()) {
-        to.add(dest.trim());
-      }
-    });
-    return { from: [...from].sort(), to: [...to].sort(), pickup: [...pickup].sort() };
-  })();
 
   const resetAssignTask = () => {
     setShowAssignTask(false); setTaskStep(1); setTaskDriverId(''); setTaskTruckId('');
@@ -1911,9 +1893,12 @@ export default function DriversManagement({
   const activeDriverIds = new Set(drivers.map((d) => d.id));
   const activeTruckIds = new Set(trucks.map((t) => t.id));
   const validAssignments = assignments.filter((a) => activeDriverIds.has(a.driverId) && activeTruckIds.has(a.truckId));
-  const matchingClassifications = classificationFilter
-    ? validAssignments.filter((a) => trucks.find((t) => t.id === a.truckId)?.classification === classificationFilter)
+  const reviewAssignments = reviewQueueOpen
+    ? assignments.filter((assignment) => assignment.documents.some((doc) => doc.uploaded && doc.docStatus === 'pending'))
     : validAssignments;
+  const matchingClassifications = classificationFilter
+    ? reviewAssignments.filter((a) => trucks.find((t) => t.id === a.truckId)?.classification === classificationFilter)
+    : reviewAssignments;
   const visibleAssignments = sortNewestFirst(sq
     ? matchingClassifications.filter((a) =>
         [a.truckPlate, a.id, a.driverName, a.destination, a.company, a.taskStatus].some((f) =>
@@ -1923,7 +1908,7 @@ export default function DriversManagement({
     : matchingClassifications, (assignment) => assignment.id);
   const activePage = usePagination(visibleAssignments, MONITOR_PAGE_SIZE);
   const newAssignmentId = useLocalAddedHighlight('assignment', () => activePage.setPage(1));
-  useLayoutEffect(() => { activePage.setPage(1); }, [search, activePage.setPage]);
+  useLayoutEffect(() => { activePage.setPage(1); }, [search, reviewQueueOpen, activePage.setPage]);
   useEffect(() => {
     if (!notificationTarget) return;
     setReviewTarget(null);
@@ -1943,10 +1928,18 @@ export default function DriversManagement({
     }
     onNotificationTargetHandled?.();
   }, [notificationTarget]);
-  const recentCompleted = [...completed].reverse();
-  const completedPage = usePagination(recentCompleted, COMPLETED_PAGE_SIZE);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const todayKey = dateToIso(today);
+  const yesterdayKey = dateToIso(yesterday);
+  const recentCompleted = completed.flatMap((assignment) => {
+    const date = parseStoredTimestamp(assignment.completedAt);
+    if (!date || (dateToIso(date) !== todayKey && dateToIso(date) !== yesterdayKey)) return [];
+    return [{ assignment, date }];
+  }).sort((left, right) => right.date.getTime() - left.date.getTime() || right.assignment.id.localeCompare(left.assignment.id));
+  const visibleCompleted = recentCompleted.slice(0, RECENT_COMPLETED_LIMIT);
   const activePageArea = useStablePageHeight(activePage.page, visibleAssignments.length, MONITOR_PAGE_SIZE, `${search}|${classificationFilter}`);
-  const completedPageArea = useStablePageHeight(completedPage.page, completed.length, COMPLETED_PAGE_SIZE);
 
   const viewDetailsAssign = viewDetailsId
     ? assignments.find((a) => a.id === viewDetailsId) ?? completed.find((a) => a.id === viewDetailsId) ?? null
@@ -1971,7 +1964,7 @@ export default function DriversManagement({
               aria-expanded={completedOpen} aria-controls="recent-completed-panel" aria-haspopup="dialog"
               className="relative z-50 inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-border bg-white px-3 text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-muted/30 xl:w-auto">
               <CheckCircle2 className="h-4 w-4 shrink-0 text-green-500" /> Recent Completed
-              <span className="rounded-full bg-green-500 px-2 py-0.5 text-xs text-white">{completed.length}</span>
+              <span className="rounded-full bg-green-500 px-2 py-0.5 text-xs text-white">{recentCompleted.length}</span>
               <ChevronDown className={'h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-150 ' + (completedOpen ? 'rotate-180' : '')} />
             </button>
             <div aria-hidden="true" onClick={() => setCompletedOpen(false)}
@@ -1981,19 +1974,22 @@ export default function DriversManagement({
               <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-border bg-white px-4 py-3">
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <CheckCircle2 className="h-5 w-5 shrink-0 text-green-500" />
-                  <h3 className="font-semibold text-foreground">Recent Completed Deliveries</h3>
-                  <span className="rounded-full bg-green-500 px-2 py-0.5 text-xs text-white">{completed.length}</span>
+                  <div className="min-w-0">
+                    <h3 className="font-semibold text-foreground">Recent Completed Deliveries</h3>
+                    <p className="text-xs text-muted-foreground">Today &amp; yesterday</p>
+                  </div>
+                  <span className="rounded-full bg-green-500 px-2 py-0.5 text-xs text-white">{recentCompleted.length}</span>
                 </div>
                 <button type="button" onClick={() => setCompletedOpen(false)} aria-label="Close recent completed deliveries"
                   className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted/50 hover:text-foreground">
                   <X className="h-4 w-4" />
                 </button>
               </div>
-              {completed.length === 0 ? (
-                <p className="px-4 py-10 text-center text-sm text-muted-foreground">No completed deliveries yet.</p>
+              {recentCompleted.length === 0 ? (
+                <p className="px-4 py-6 text-center text-sm text-muted-foreground">No recent completed deliveries.</p>
               ) : (
                 <>
-                  <div ref={completedPageArea}>
+                  <div>
                     <table className="hidden w-full table-fixed text-xs lg:table xl:text-sm">
                       <colgroup>
                         <col className="w-[17%]" /><col className="w-[15%]" /><col className="w-[19%]" />
@@ -2007,7 +2003,7 @@ export default function DriversManagement({
                         </tr>
                       </thead>
                       <tbody>
-                        {completedPage.pageItems.map((c) => (
+                        {visibleCompleted.map(({ assignment: c, date }) => (
                           <tr key={c.id} className="border-b border-border/50 transition-colors hover:bg-muted/10">
                             <td className="px-2 py-3 align-top [overflow-wrap:anywhere]">
                               <div className="flex min-w-0 items-start gap-2">
@@ -2023,14 +2019,14 @@ export default function DriversManagement({
                             <td className="px-2 py-3 align-top text-foreground [overflow-wrap:anywhere]">{c.company}</td>
                             <td className="px-2 py-3 align-top text-foreground [overflow-wrap:anywhere]">{c.deliveryDate}</td>
                             <td className="px-2 py-3 align-top [overflow-wrap:anywhere]">
-                              <span className="inline-block max-w-full rounded-full border border-green-200 bg-green-100 px-2 py-1 text-xs text-green-700">{formatCompletedAtDisplay(c.completedAt)}</span>
+                              <span className="inline-block max-w-full rounded-full border border-green-200 bg-green-100 px-2 py-1 text-xs text-green-700">{formatRecentCompletion(date, todayKey)}</span>
                             </td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                     <div className="divide-y divide-border/50 lg:hidden">
-                      {completedPage.pageItems.map((c) => (
+                      {visibleCompleted.map(({ assignment: c, date }) => (
                         <div key={c.id} className="grid min-w-0 grid-cols-[5.5rem_minmax(0,1fr)] gap-x-3 gap-y-2 px-4 py-3 text-sm [overflow-wrap:anywhere]">
                           <span className="text-xs font-semibold text-muted-foreground">TRUCK #</span>
                           <span className="inline-flex min-w-0 items-start gap-2 text-[#0d9488]"><Truck className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span className="min-w-0"><span className="font-semibold">{c.truckPlate}</span><span className="block text-xs text-muted-foreground"><ASNWithCopy value={c.id} />{trucks.find((t) => t.id === c.truckId)?.classification && ` · ${trucks.find((t) => t.id === c.truckId)?.classification}`}</span></span></span>
@@ -2039,14 +2035,18 @@ export default function DriversManagement({
                           <span className="text-xs font-semibold text-muted-foreground">CUSTOMER</span><span className="min-w-0 text-foreground">{c.company}</span>
                           <span className="text-xs font-semibold text-muted-foreground">DELIVERY DATE</span><span className="min-w-0 text-foreground">{c.deliveryDate}</span>
                           <span className="text-xs font-semibold text-muted-foreground">COMPLETED AT</span>
-                          <span className="min-w-0"><span className="inline-block max-w-full rounded-full border border-green-200 bg-green-100 px-2 py-1 text-xs text-green-700">{formatCompletedAtDisplay(c.completedAt)}</span></span>
+                          <span className="min-w-0"><span className="inline-block max-w-full rounded-full border border-green-200 bg-green-100 px-2 py-1 text-xs text-green-700">{formatRecentCompletion(date, todayKey)}</span></span>
                         </div>
                       ))}
                     </div>
                   </div>
-                  <PaginationFooter page={completedPage.page} totalItems={completed.length} pageSize={COMPLETED_PAGE_SIZE}
-                    onPageChange={completedPage.setPage} singular="delivery" plural="deliveries"
-                    className="border-t border-border bg-muted/20" />
+                  <div className="sticky bottom-0 border-t border-border bg-white px-4 py-3">
+                    <a href={adminHref('Deliveries', undefined, 'completed')}
+                      onClick={(event) => followAdminLink(event, () => { setCompletedOpen(false); pushAdminNavigation('Deliveries', undefined, 'completed'); })}
+                      className="inline-flex min-h-10 max-w-full items-center gap-2 text-sm font-medium text-primary hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+                      <span className="min-w-0 break-words">View all completed deliveries</span><ArrowRight aria-hidden="true" className="h-4 w-4 shrink-0" />
+                    </a>
+                  </div>
                 </>
               )}
             </div>
@@ -2074,8 +2074,18 @@ export default function DriversManagement({
         </div>
       </div>
 
+      {reviewQueueOpen && (
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+          <p className="text-muted-foreground">{reviewAssignments.length} assignment{reviewAssignments.length === 1 ? '' : 's'} requiring review</p>
+          <button type="button" onClick={() => pushAdminNavigation('Monitor')}
+            className="min-h-10 text-primary hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+            Show all assignments
+          </button>
+        </div>
+      )}
+
       {/* ── Main Board ── */}
-      {validAssignments.length === 0 && !classificationFilter ? (
+      {validAssignments.length === 0 && !classificationFilter && !reviewQueueOpen ? (
         <div className="bg-white rounded-2xl border border-dashed border-border p-16 text-center">
           <ClipboardList className="w-14 h-14 mx-auto mb-4 text-muted-foreground/30" />
           <p className="font-semibold text-foreground mb-1">No Active Assignments</p>
@@ -2090,7 +2100,9 @@ export default function DriversManagement({
       ) : visibleAssignments.length === 0 ? (
         <div className="bg-white rounded-2xl border border-dashed border-border p-16 text-center">
           <Search className="w-12 h-12 mx-auto mb-3 text-muted-foreground/30" />
-          {classificationFilter ? (
+          {reviewQueueOpen && !classificationFilter && !sq ? (
+            <p role="status" className="font-semibold text-foreground">No documents waiting for review.</p>
+          ) : classificationFilter ? (
             <p className="font-semibold text-foreground">No trucks found for this classification.</p>
           ) : (
             <>
@@ -2119,6 +2131,7 @@ export default function DriversManagement({
             /* Uploaded but not yet approved — amber. Rejected sits here too:
                it still needs admin/driver action, so it must not read as done. */
             const inReview = a.documents.filter((d) => d.uploaded && d.docStatus !== 'approved').length;
+            const pendingReviewCount = a.documents.filter((d) => d.uploaded && d.docStatus === 'pending').length;
 
             return (
               <div key={a.id}
@@ -2179,7 +2192,7 @@ export default function DriversManagement({
                         <Check className="w-3 h-3 text-green-600" />{approved} approved
                       </span>
                       <span className="inline-flex items-center gap-1">
-                        <Clock className="w-3 h-3 text-amber-500" />{inReview} pending review
+                        <Clock className="w-3 h-3 text-amber-500" />{reviewQueueOpen ? pendingReviewCount : inReview} pending review
                       </span>
                       <span className="inline-flex items-center gap-1">
                         <Clock className="w-3 h-3 text-gray-400" />{total - approved - inReview} awaiting upload
@@ -2189,9 +2202,16 @@ export default function DriversManagement({
                 </div>
 
                 <div className="flex justify-end px-4 pb-4 sm:px-5 sm:pb-5">
-                  <button onClick={() => setViewDetailsId(a.id)}
+                  <button onClick={() => {
+                    if (reviewQueueOpen && !drivers.some((driver) => driver.id === a.driverId)) {
+                      setMissingTarget(true);
+                      return;
+                    }
+                    setViewDetailsId(a.id);
+                    if (reviewQueueOpen) setReviewTarget({ assignmentId: a.id });
+                  }}
                     className="min-h-10 rounded-lg bg-[#10b981] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#059669]">
-                    View Shipment
+                    {reviewQueueOpen ? 'Review documents' : 'View Shipment'}
                   </button>
                 </div>
               </div>
@@ -2262,10 +2282,9 @@ export default function DriversManagement({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <FieldLabel required>From</FieldLabel>
-                    <AddressAutocomplete
+                    <LocationInput
                       value={taskFrom}
                       onChange={(v) => { setTaskFrom(v); setTaskErrors((p) => ({ ...p, from: '' })); }}
-                      options={addressBook.from}
                       placeholder="e.g. Origin city or municipality"
                       hasError={!!taskErrors.from}
                       icon={<MapPin className="w-3.5 h-3.5" />}
@@ -2274,10 +2293,9 @@ export default function DriversManagement({
                   </div>
                   <div>
                     <FieldLabel required>To</FieldLabel>
-                    <AddressAutocomplete
+                    <LocationInput
                       value={taskTo}
                       onChange={(v) => { setTaskTo(v); setTaskErrors((p) => ({ ...p, to: '' })); }}
-                      options={addressBook.to}
                       placeholder="e.g. Destination city or municipality"
                       hasError={!!taskErrors.to}
                       icon={<Navigation className="w-3.5 h-3.5" />}
@@ -2303,10 +2321,9 @@ export default function DriversManagement({
                 {/* Pickup Location */}
                 <div>
                   <FieldLabel required>Pickup Location</FieldLabel>
-                  <AddressAutocomplete
+                  <LocationInput
                     value={taskPickupLocation}
                     onChange={(v) => { setTaskPickupLocation(v); setTaskErrors((p) => ({ ...p, pickupLocation: '' })); }}
-                    options={addressBook.pickup}
                     placeholder="e.g. Warehouse A, Valenzuela City"
                     hasError={!!taskErrors.pickupLocation}
                     icon={<Package className="w-3.5 h-3.5" />}
@@ -2466,7 +2483,6 @@ export default function DriversManagement({
           drivers={drivers}
           trucks={trucks}
           assignments={assignments}
-          addressBook={addressBook}
           onClose={() => { setViewDetailsId(editId); setEditId(null); }}
           onSaved={(id) => { setEditId(null); setViewDetailsId(id); }}
           onServerChange={onServerChange}
