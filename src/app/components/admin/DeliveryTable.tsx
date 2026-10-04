@@ -1,8 +1,13 @@
 import { useLayoutEffect, useRef, useState } from 'react';
-import { MapPin, Package, CheckCircle2, Truck, Building2, Filter } from 'lucide-react';
+import { MapPin, Package, CheckCircle2, Truck, Building2, Filter, ChevronRight } from 'lucide-react';
 import type { Assignment, CompletedTask, LocalTruck, TaskStatus } from '../../data/assignmentTypes';
 import { taskStatusConfig } from '../../data/assignmentTypes';
+import { assignmentDisplayStatusConfig, getAssignmentDisplayStatus, getAssignmentDocumentProgress } from '../../lib/assignmentWorkflow';
+import { adminHref, followAdminLink, pushAdminNavigation } from '../../lib/adminNavigation';
+import { matchesAssignmentDate } from '../../lib/assignmentDateFilter';
+import ASNWithCopy from './ASNWithCopy';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
+import { sortNewestFirst, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 
 type FilterPeriod = 'all' | 'today' | 'month' | 'year';
@@ -26,6 +31,43 @@ function StatusBadge({ status }: { status: TaskStatus }) {
       {cfg.label}
     </span>
   );
+}
+
+function AssignmentStatusBadge({ assignment }: { assignment: Assignment }) {
+  const cfg = assignmentDisplayStatusConfig[getAssignmentDisplayStatus(assignment)];
+  return (
+    <span className={`inline-flex max-w-full items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-medium ${cfg.badge}`}>
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
+      <span className="min-w-0 break-words">{cfg.label}</span>
+    </span>
+  );
+}
+
+function DocumentsAction({ assignment }: { assignment: Assignment }) {
+  const docs = getAssignmentDocumentProgress(assignment);
+  if (!docs.canOpen) {
+    return (
+      <button type="button" disabled aria-label={`Documents for ${assignment.id}: not available yet`}
+        className="flex min-h-10 max-w-full flex-col items-start rounded-lg border border-border bg-muted/20 px-2 py-1 text-xs text-muted-foreground">
+        <span>Documents</span><span>Not available yet</span>
+      </button>
+    );
+  }
+  const color = docs.rejected ? 'bg-red-50 text-red-700' : docs.allApproved ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700';
+  const count = docs.applicable || docs.uploaded ? `${docs.uploaded}/${docs.required}` : 'View uploads';
+  return (
+    <a href={adminHref('Documents', { assignmentId: assignment.id })}
+      aria-label={`Open documents for ${assignment.truckPlate}, assignment ${assignment.id}: ${count}`}
+      onClick={event => { event.stopPropagation(); followAdminLink(event, () => pushAdminNavigation('Documents', { assignmentId: assignment.id })); }}
+      className="inline-flex min-h-10 max-w-full flex-wrap items-center gap-1 rounded-lg border border-border bg-white px-2 py-1 text-xs font-medium text-foreground hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+      <span>Documents</span><span className={`rounded-full px-1.5 py-0.5 tabular-nums ${color}`}>{count}</span>
+      <ChevronRight aria-hidden="true" className="ml-auto h-3.5 w-3.5 shrink-0" />
+    </a>
+  );
+}
+
+function secondaryTimestamp(assignment: Assignment) {
+  return (assignment as Partial<CompletedTask>).completedAt || assignment.assignedAt;
 }
 
 function RemarksPreview({ remarks, onOpen }: { remarks: string; onOpen: () => void }) {
@@ -59,34 +101,16 @@ function TruckMetadata({ assignment, truck, query }: { assignment: Assignment; t
   return (
     <div className="min-w-0 leading-4">
       {(truck?.classification || capacity) && <p className="break-words text-xs text-muted-foreground">{truck?.classification}{truck?.classification && capacity && ' · '}{capacity}</p>}
-      <p className="break-all text-xs text-muted-foreground/75"><Highlight text={assignment.id} query={query} /></p>
+      <p className="break-all text-xs text-muted-foreground/75"><ASNWithCopy value={assignment.id}><Highlight text={assignment.id} query={query} /></ASNWithCopy></p>
     </div>
   );
 }
 
-/* When the delivery was created, in ms. createdAt comes from assignments.created_at; a row
-   dispatched moments ago that hasn't been reloaded yet has none, so it counts as "just now". */
-const createdMs = (a: Assignment) => {
-  const t = a.createdAt ? Date.parse(a.createdAt) : NaN;
-  return isNaN(t) ? Date.now() : t;
-};
-
 /* Filters by CREATED time, compared in the browser's local time (Philippine time for the
    team) — not UTC, which would shift anything created before 8 AM to the previous day. */
 function matchesPeriod(a: Assignment, period: FilterPeriod): boolean {
-  if (period === 'all') return true;
-  const d   = new Date(createdMs(a));
-  const now = new Date();
-  const sameYear = d.getFullYear() === now.getFullYear();
-  if (period === 'year')  return sameYear;
-  if (period === 'month') return sameYear && d.getMonth() === now.getMonth();
-  if (period === 'today') return sameYear && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
-  return true;
+  return matchesAssignmentDate(a, period);
 }
-
-/* Newest first, by created time */
-const newestFirst = <T extends Assignment>(rows: T[]): T[] =>
-  [...rows].sort((x, y) => createdMs(y) - createdMs(x));
 
 const PERIOD_LABELS: Record<FilterPeriod, string> = {
   all:   'All Time',
@@ -199,17 +223,20 @@ export default function DeliveryTable({
     !q || fields.some((f) => f.toLowerCase().includes(q));
 
   /* Time filter (created time) + search, then newest first — the same for all three tabs */
-  const filteredActive = newestFirst(assignments
+  const allAssignments = [...new Map([...completed, ...assignments].map(assignment => [assignment.id, assignment])).values()];
+  const filteredActive = sortNewestFirst(allAssignments
+    .filter((a) => a.taskStatus !== 'Cancelled' && getAssignmentDisplayStatus(a) !== 'Completed')
     .filter((a) => matchesPeriod(a, period))
-    .filter((a) => matchesSearch([a.truckPlate, a.id, a.driverName, a.destination, a.company, a.taskStatus])));
+    .filter((a) => matchesSearch([a.truckPlate, a.id, a.driverName, a.destination, a.company, a.taskStatus])), (assignment) => assignment.id);
 
-  const filteredDone = newestFirst(completed
+  const filteredDone = sortNewestFirst(allAssignments
+    .filter((c) => getAssignmentDisplayStatus(c) === 'Completed')
     .filter((c) => matchesPeriod(c, period))
-    .filter((c) => matchesSearch([c.truckPlate, c.id, c.driverName, c.destination, c.company])));
+    .filter((c) => matchesSearch([c.truckPlate, c.id, c.driverName, c.destination, c.company])), (assignment) => assignment.id);
 
-  const filteredCancelled = newestFirst(cancelled
+  const filteredCancelled = sortNewestFirst(cancelled
     .filter((a) => matchesPeriod(a, period))
-    .filter((a) => matchesSearch([a.truckPlate, a.id, a.driverName, a.destination, a.company, a.taskStatus])));
+    .filter((a) => matchesSearch([a.truckPlate, a.id, a.driverName, a.destination, a.company, a.taskStatus])), (assignment) => assignment.id);
 
   const activePage = usePagination(filteredActive, DELIVERIES_PAGE_SIZE);
   const completedPage = usePagination(filteredDone, DELIVERIES_PAGE_SIZE);
@@ -219,6 +246,7 @@ export default function DeliveryTable({
     completedPage.setPage(1);
     cancelledPage.setPage(1);
   };
+  const newAssignmentId = useLocalAddedHighlight('assignment', resetPages);
   useLayoutEffect(() => { resetPages(); }, [search]);
 
   /* A time range or search is narrowing the list */
@@ -314,19 +342,19 @@ export default function DeliveryTable({
               <div className="hidden xl:block w-full min-w-0">
                 <table className="w-full table-fixed text-sm">
                   <colgroup>
-                    <col className="w-[20%]" /><col className="w-[12%]" /><col className="w-[26%]" />
-                    <col className="w-[15%]" /><col className="w-[14%]" /><col className="w-[13%]" />
+                    <col className="w-[14%]" /><col className="w-[10%]" /><col className="w-[20%]" />
+                    <col className="w-[10%]" /><col className="w-[17%]" /><col className="w-[12%]" /><col className="w-[17%]" />
                   </colgroup>
                   <thead className="bg-muted/30">
                     <tr>
-                      {['TRUCK', 'DRIVER', 'ROUTE', 'CUSTOMER', 'STATUS', 'DATE'].map((col) => (
+                      {['TRUCK', 'DRIVER', 'ROUTE', 'CUSTOMER', 'STATUS', 'DATE', 'DOCUMENTS'].map((col) => (
                         <th key={col} className="px-2 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider break-words">{col}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
                     {pageRows.map((a) => (
-                      <tr key={a.id} className={"hover:bg-accent/50 transition-colors" + (q ? " bg-yellow-50/30" : "")}>
+                      <tr key={a.id} style={newRecordHighlight(a.id, newAssignmentId)} className={"hover:bg-accent/50 transition-colors" + (q ? " bg-yellow-50/30" : "")}>
                         <td className="px-2 py-3 min-w-0 break-words">
                           <p className="font-semibold text-foreground"><Highlight text={a.truckPlate} query={search} /></p>
                           <TruckMetadata assignment={a} truck={truckFor(a)} query={search} />
@@ -338,11 +366,12 @@ export default function DeliveryTable({
                           {a.remarks && <RemarksPreview remarks={a.remarks} onOpen={() => setRemarksAssignment(a)} />}
                         </td>
                         <td className="px-2 py-3 font-medium text-foreground break-words"><Highlight text={a.company} query={search} /></td>
-                        <td className="px-2 py-3"><StatusBadge status={a.taskStatus} /></td>
+                        <td className="px-2 py-3"><AssignmentStatusBadge assignment={a} /></td>
                         <td className="px-2 py-3 min-w-0 break-words">
                           <p className="font-medium text-foreground">{a.deliveryDate}</p>
-                          <p className="text-xs text-muted-foreground break-words">{a.assignedAt}</p>
+                          <p className="text-xs text-muted-foreground break-words">{secondaryTimestamp(a)}</p>
                         </td>
+                        <td className="px-2 py-3"><DocumentsAction assignment={a} /></td>
                       </tr>
                     ))}
                   </tbody>
@@ -352,10 +381,10 @@ export default function DeliveryTable({
               {/* Tablet and mobile card list */}
               <div className="xl:hidden divide-y divide-border">
                 {pageRows.map((a) => (
-                  <div key={a.id} className={`p-4 min-w-0 space-y-2 ${q ? 'bg-yellow-50/30' : ''}`}>
+                  <div key={a.id} style={newRecordHighlight(a.id, newAssignmentId)} className={`p-4 min-w-0 space-y-2 ${q ? 'bg-yellow-50/30' : ''}`}>
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <span className="min-w-0 font-semibold text-foreground break-words"><Highlight text={a.truckPlate} query={search} /></span>
-                      <StatusBadge status={a.taskStatus} />
+                      <AssignmentStatusBadge assignment={a} />
                     </div>
                     <TruckMetadata assignment={a} truck={truckFor(a)} query={search} />
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-2 min-w-0 text-sm">
@@ -368,9 +397,10 @@ export default function DeliveryTable({
                       <p className="min-w-0 font-medium text-foreground break-all"><Highlight text={a.company} query={search} /></p>
                       <div className="min-w-0 text-sm">
                         <p className="font-medium text-foreground break-words">{a.deliveryDate}</p>
-                        <p className="text-xs text-muted-foreground break-words">{a.assignedAt}</p>
+                        <p className="text-xs text-muted-foreground break-words">{secondaryTimestamp(a)}</p>
                       </div>
                     </div>
+                    <DocumentsAction assignment={a} />
                   </div>
                 ))}
               </div>
@@ -407,19 +437,19 @@ export default function DeliveryTable({
               <div className="hidden xl:block w-full min-w-0">
                 <table className="w-full table-fixed text-sm">
                   <colgroup>
-                    <col className="w-[20%]" /><col className="w-[12%]" /><col className="w-[26%]" />
-                    <col className="w-[15%]" /><col className="w-[14%]" /><col className="w-[13%]" />
+                    <col className="w-[14%]" /><col className="w-[10%]" /><col className="w-[20%]" />
+                    <col className="w-[10%]" /><col className="w-[17%]" /><col className="w-[12%]" /><col className="w-[17%]" />
                   </colgroup>
                   <thead className="bg-muted/30">
                     <tr>
-                      {['TRUCK', 'DRIVER', 'ROUTE', 'CUSTOMER', 'STATUS', 'DATE'].map((col) => (
+                      {['TRUCK', 'DRIVER', 'ROUTE', 'CUSTOMER', 'STATUS', 'DATE', 'DOCUMENTS'].map((col) => (
                         <th key={col} className="px-2 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider break-words">{col}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
                     {completedPage.pageItems.map((c) => (
-                      <tr key={c.id} className={"hover:bg-accent/50 transition-colors" + (q ? " bg-yellow-50/30" : "")}>
+                      <tr key={c.id} style={newRecordHighlight(c.id, newAssignmentId)} className={"hover:bg-accent/50 transition-colors" + (q ? " bg-yellow-50/30" : "")}>
                         <td className="px-2 py-3 min-w-0 break-words">
                           <p className="font-semibold text-foreground"><Highlight text={c.truckPlate} query={search} /></p>
                           <TruckMetadata assignment={c} truck={truckFor(c)} query={search} />
@@ -431,11 +461,12 @@ export default function DeliveryTable({
                           {c.remarks && <RemarksPreview remarks={c.remarks} onOpen={() => setRemarksAssignment(c)} />}
                         </td>
                         <td className="px-2 py-3 font-medium text-foreground break-all"><Highlight text={c.company} query={search} /></td>
-                        <td className="px-2 py-3">{c.taskStatus && taskStatusConfig[c.taskStatus] && <StatusBadge status={c.taskStatus} />}</td>
+                        <td className="px-2 py-3"><AssignmentStatusBadge assignment={c} /></td>
                         <td className="px-2 py-3 break-words text-foreground">
                           <p className="font-medium">{c.deliveryDate}</p>
-                          <p className="text-xs text-muted-foreground break-words">{c.completedAt}</p>
+                          <p className="text-xs text-muted-foreground break-words">{secondaryTimestamp(c)}</p>
                         </td>
+                        <td className="px-2 py-3"><DocumentsAction assignment={c} /></td>
                       </tr>
                     ))}
                   </tbody>
@@ -445,10 +476,10 @@ export default function DeliveryTable({
               {/* Tablet and mobile card list */}
               <div className="xl:hidden divide-y divide-border">
                 {completedPage.pageItems.map((c) => (
-                  <div key={c.id} className={`p-4 min-w-0 space-y-2 ${q ? 'bg-yellow-50/30' : ''}`}>
+                  <div key={c.id} style={newRecordHighlight(c.id, newAssignmentId)} className={`p-4 min-w-0 space-y-2 ${q ? 'bg-yellow-50/30' : ''}`}>
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <span className="min-w-0 font-semibold text-foreground break-words"><Highlight text={c.truckPlate} query={search} /></span>
-                      {c.taskStatus && taskStatusConfig[c.taskStatus] && <StatusBadge status={c.taskStatus} />}
+                      <AssignmentStatusBadge assignment={c} />
                     </div>
                     <TruckMetadata assignment={c} truck={truckFor(c)} query={search} />
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-2 min-w-0 text-sm">
@@ -461,9 +492,10 @@ export default function DeliveryTable({
                       <p className="min-w-0 font-medium text-foreground break-all"><Highlight text={c.company} query={search} /></p>
                       <div className="min-w-0">
                         <p className="font-medium text-foreground break-words">{c.deliveryDate}</p>
-                        <p className="text-xs text-muted-foreground break-words">{c.completedAt}</p>
+                        <p className="text-xs text-muted-foreground break-words">{secondaryTimestamp(c)}</p>
                       </div>
                     </div>
+                    <DocumentsAction assignment={c} />
                   </div>
                 ))}
               </div>
@@ -479,7 +511,7 @@ export default function DeliveryTable({
           <DialogHeader className="min-w-0 pr-6 text-left">
             <DialogTitle>Remarks</DialogTitle>
             <DialogDescription className="break-all">
-              {remarksAssignment && `${remarksAssignment.truckPlate} · ${remarksAssignment.destination} · ${remarksAssignment.id}`}
+              {remarksAssignment && <>{remarksAssignment.truckPlate} · {remarksAssignment.destination} · <ASNWithCopy value={remarksAssignment.id} /></>}
             </DialogDescription>
           </DialogHeader>
           <div className="min-w-0 max-h-[60dvh] overflow-y-auto whitespace-pre-wrap break-all text-sm text-foreground">

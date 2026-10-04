@@ -1,6 +1,7 @@
 import { ArrowRight, Truck } from 'lucide-react';
 import type { Assignment, LocalDriver, LocalTruck } from '../../../data/assignmentTypes';
 import { availabilityConfig } from '../../../data/assignmentTypes';
+import { adminHref, followAdminLink } from '../../../lib/adminNavigation';
 
 interface Props {
   drivers: LocalDriver[];     // active only — archived are loaded separately (App.tsx)
@@ -17,10 +18,10 @@ const initials = (name: string) =>
 
 function ViewAll({ onClick }: { onClick: () => void }) {
   return (
-    <button onClick={onClick}
+    <a href={adminHref('Accounts')} onClick={(event) => followAdminLink(event, onClick)}
       className="inline-flex items-center gap-1 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
       View all <ArrowRight className="w-3.5 h-3.5" />
-    </button>
+    </a>
   );
 }
 

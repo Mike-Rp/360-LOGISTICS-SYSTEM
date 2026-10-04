@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { LayoutDashboard, Package, FileText, BarChart3, UserCog, Route, Menu, X } from 'lucide-react';
 import imgLogo from 'figma:asset/5e73e3c08e898d68c86717993c6e7442d03e9ac4.png';
+import { adminHref, followAdminLink } from '../../lib/adminNavigation';
 
 type NavItem = 'Dashboard' | 'Monitor' | 'Deliveries' | 'Documents' | 'Reports' | 'Accounts';
 
@@ -46,10 +47,10 @@ export default function Sidebar({ activeNav, setActiveNav, mobileOpen, setMobile
      so the logo's left edge lines up with the menu icons. 642×363 PNG shown 40px tall,
      so it stays sharp on high-DPI screens. Click → Dashboard. */
   const LogoButton = ({ compact = false }: { compact?: boolean }) => (
-    <button onClick={() => handleNav('Dashboard')} aria-label="Go to Dashboard"
+    <a href={adminHref('Dashboard')} onClick={(event) => followAdminLink(event, () => handleNav('Dashboard'))} aria-label="Go to Dashboard"
       className="flex items-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40">
       <img src={imgLogo} alt="360 Logistics" className={compact ? 'h-5 w-auto' : 'h-10 w-auto'} />
-    </button>
+    </a>
   );
 
   const NavContent = ({ iconOnly = false }: { iconOnly?: boolean }) => (
@@ -59,9 +60,10 @@ export default function Sidebar({ activeNav, setActiveNav, mobileOpen, setMobile
         const isActive = activeNav === item.name;
         const label = item.label ?? item.name;
         return (
-          <button
+          <a
             key={item.name}
-            onClick={() => handleNav(item.name)}
+            href={adminHref(item.name)}
+            onClick={(event) => followAdminLink(event, () => handleNav(item.name))}
             aria-label={iconOnly ? label : undefined}
             aria-current={isActive ? 'page' : undefined}
             className={`${iconOnly ? 'group relative flex h-11 w-full items-center justify-center rounded-lg' : 'w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left'} transition-all ${
@@ -77,7 +79,7 @@ export default function Sidebar({ activeNav, setActiveNav, mobileOpen, setMobile
                 <span role="tooltip" className="pointer-events-none absolute left-full top-1/2 z-50 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md bg-foreground px-2 py-1 text-xs text-background opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus:opacity-100">{label}</span>
               </>
             ) : <span className="font-medium text-sm">{label}</span>}
-          </button>
+          </a>
         );
       })}
     </nav>

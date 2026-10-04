@@ -6,11 +6,12 @@ import {
 } from 'lucide-react';
 import { parseStoredTimestamp, type AppNotification } from '../../data/assignmentTypes';
 import { Popover, PopoverTrigger, PopoverContent } from '../ui/popover';
+import { adminHref, followAdminLink } from '../../lib/adminNavigation';
 
 interface Props {
   notifications: AppNotification[];
   setNotifications: React.Dispatch<React.SetStateAction<AppNotification[]>>;
-  onNavigate: (page: string, target: { assignmentId: string; docType?: string }) => void;
+  onNavigate: (page: string, target: { assignmentId: string; docType?: string; review?: boolean }) => void;
   onLogout: () => void;
   onOpenSettings: () => void;
   onOpenHelp: () => void;
@@ -31,8 +32,8 @@ const NOTIF_ICON: Record<AppNotification['type'], React.ElementType> = {
   issue_report:  AlertCircle,
 };
 
-const NOTIF_NAV: Record<AppNotification['type'], string> = {
-  doc_upload:    'Documents',
+const NOTIF_NAV: Record<AppNotification['type'], 'Documents' | 'Monitor'> = {
+  doc_upload:    'Monitor',
   status_update: 'Monitor',
   delay_report:  'Monitor',
   issue_report:  'Monitor',
@@ -192,11 +193,12 @@ export default function Header({
                             const message = n.message.startsWith(prefix) ? n.message.slice(prefix.length) : n.message;
                             const actionLabel = n.type === 'doc_upload' ? 'Review' : 'View shipment';
                             const actionAria = n.type === 'doc_upload' ? `Review ${n.docType ?? 'document'} for ${identifier}` : `View shipment for ${identifier}`;
+                            const target = { assignmentId: n.assignmentId, docType: n.type === 'doc_upload' ? n.docType : undefined, review: n.type === 'doc_upload' };
                             const openDestination = () => {
                               setNotifications((previous) => previous.some((item) => item.id === n.id && !item.read)
                                 ? previous.map((item) => item.id === n.id ? { ...item, read: true } : item)
                                 : previous);
-                              onNavigate(navPage, { assignmentId: n.assignmentId, docType: n.type === 'doc_upload' ? n.docType : undefined });
+                              onNavigate(navPage, target);
                               setBellOpen(false);
                             };
                             return (
@@ -207,18 +209,18 @@ export default function Header({
                                 <div className="min-w-0 flex-1">
                                   <div className="flex min-w-0 items-start justify-between gap-2">
                                     <span className="min-w-0 break-words text-sm font-semibold text-foreground">{identifier}</span>
-                                    <button type="button" onClick={openDestination} aria-label={actionAria}
+                                    <a href={adminHref(navPage, target)} onClick={(event) => { event.stopPropagation(); followAdminLink(event, openDestination); }} aria-label={actionAria}
                                       className="hidden min-h-8 shrink-0 items-center whitespace-nowrap text-xs font-medium text-primary hover:text-primary/80 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:inline-flex">
                                       {actionLabel} →
-                                    </button>
+                                    </a>
                                   </div>
                                   <p className="break-words text-sm leading-snug text-foreground/90">{message}</p>
                                   <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
                                     <span className="text-xs text-muted-foreground">{fmtTimestamp(n.timestamp)}</span>
-                                    <button type="button" onClick={openDestination} aria-label={actionAria}
+                                    <a href={adminHref(navPage, target)} onClick={(event) => { event.stopPropagation(); followAdminLink(event, openDestination); }} aria-label={actionAria}
                                       className="inline-flex min-h-8 items-center text-xs font-medium text-primary hover:text-primary/80 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:hidden">
                                       {actionLabel} →
-                                    </button>
+                                    </a>
                                   </div>
                                 </div>
                               </div>

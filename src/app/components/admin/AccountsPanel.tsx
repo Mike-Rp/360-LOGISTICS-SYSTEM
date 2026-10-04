@@ -11,6 +11,7 @@ import TruckImage from '../TruckImage';
 import ConfirmPasswordDialog from './ConfirmPasswordDialog';
 import { archiveDriver, archiveTruck, resetDriverPin, AssignmentActionError } from '../../lib/db';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
+import { sortNewestFirst, markLocalRecordAdded, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
 
 /* Plain-language text for the errors the archive / PIN database functions can return */
 const accountActionError = (err: unknown): string => {
@@ -120,14 +121,15 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
   const [truckView,  setTruckView]  = useState<'active' | 'archived'>('active');
   const query = search.trim().toLowerCase();
   const matches = (fields: (string | undefined)[]) => !query || fields.some((field) => field?.toLowerCase().includes(query));
-  const visibleDrivers = tab === 'Drivers' && driverView === 'active' ? drivers.filter((driver) => matches([driver.name, driver.id, driver.phone])) : drivers;
-  const visibleArchivedDrivers = tab === 'Drivers' && driverView === 'archived' ? archivedDrivers.filter((driver) => matches([driver.name, driver.id, driver.phone])) : archivedDrivers;
+  const visibleDrivers = sortNewestFirst(tab === 'Drivers' && driverView === 'active' ? drivers.filter((driver) => matches([driver.name, driver.id, driver.phone])) : drivers, (driver) => driver.id, 'driver');
+  const visibleArchivedDrivers = sortNewestFirst(tab === 'Drivers' && driverView === 'archived' ? archivedDrivers.filter((driver) => matches([driver.name, driver.id, driver.phone])) : archivedDrivers, (driver) => driver.id, 'driver');
   const visibleTrucks = tab === 'Trucks' && truckView === 'active' ? trucks.filter((truck) => matches([truck.plateNumber, truck.id, truck.classification, truck.capacity])) : trucks;
   const visibleArchivedTrucks = tab === 'Trucks' && truckView === 'archived' ? archivedTrucks.filter((truck) => matches([truck.plateNumber, truck.id, truck.classification, truck.capacity])) : archivedTrucks;
   const activeDriversPage = usePagination(visibleDrivers);
   const archivedDriversPage = usePagination(visibleArchivedDrivers);
   const activeTrucksPage = usePagination(visibleTrucks);
   const archivedTrucksPage = usePagination(visibleArchivedTrucks);
+  const newDriverId = useLocalAddedHighlight('driver', () => activeDriversPage.setPage(1));
   useLayoutEffect(() => {
     activeDriversPage.setPage(1);
     archivedDriversPage.setPage(1);
@@ -339,7 +341,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                   const avail = isAvailable(d.status);
                   return (
                     <div key={d.id}
-                      style={driverTableLayout}
+                      style={{ ...driverTableLayout, ...newRecordHighlight(d.id, newDriverId) }}
                       className="grid gap-3 items-center px-5 py-4 hover:bg-muted/10 transition-colors">
                       {/* Name */}
                       <div className="flex items-center gap-3 min-w-0">
@@ -409,7 +411,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                 {activeDriversPage.pageItems.map((d) => {
                   const avail = isAvailable(d.status);
                   return (
-                    <div key={d.id} className="p-3.5">
+                    <div key={d.id} style={newRecordHighlight(d.id, newDriverId)} className="p-3.5">
                       <div className="flex items-center gap-3">
                         <div className="w-9 h-9 bg-[#0d9488]/15 rounded-full flex items-center justify-center flex-shrink-0 border border-[#0d9488]/20">
                           <Users className="w-4 h-4 text-[#0d9488]" />
@@ -744,6 +746,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
         <RegisterDriverModal
           drivers={drivers}
           setDrivers={setDrivers}
+          onCreated={(driver) => { markLocalRecordAdded('driver', driver.id); activeDriversPage.setPage(1); }}
           onClose={() => setShowAddDriver(false)}
         />
       )}

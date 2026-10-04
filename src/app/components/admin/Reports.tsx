@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import {
   FileDown, TrendingUp, Package, AlertTriangle,
-  X, Eye, Printer, Clock, Truck,
+  X, Eye, Printer, Clock, Truck, Check,
   User, MapPin, Building2, Timer, AlarmClock,
 } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
@@ -579,6 +579,16 @@ function initialRange(): DateRange {
   return { start: startDate.toISOString().slice(0, 10), end };
 }
 
+function validateRange(value: DateRange): string {
+  const validDay = (day: string) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || Number(day.slice(0, 4)) === 0) return false;
+    const date = bucketDate(day);
+    return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === day;
+  };
+  if (!validDay(value.start) || !validDay(value.end)) return 'Select a valid date range.';
+  return value.start > value.end ? 'From date cannot be after To date.' : '';
+}
+
 function reportDay(value?: string): string | null {
   const parsed = value ? parseStoredTimestamp(value) : null;
   return parsed ? manilaDay(parsed) : null;
@@ -636,6 +646,35 @@ export default function Reports({ assignments, completed, cancelled }: ReportsPr
   const [draftRange, setDraftRange] = useState<DateRange>(initialRange);
   const [range, setRange] = useState<DateRange>(initialRange);
   const [rangeError, setRangeError] = useState('');
+  const [actionFeedback, setActionFeedback] = useState<'apply' | 'reset' | null>(null);
+  const feedbackTimer = useRef<ReturnType<typeof window.setTimeout> | undefined>(undefined);
+
+  useEffect(() => () => window.clearTimeout(feedbackTimer.current), []);
+
+  const clearActionFeedback = () => {
+    window.clearTimeout(feedbackTimer.current);
+    setActionFeedback(null);
+  };
+  const confirmRangeAction = (action: 'apply' | 'reset') => {
+    clearActionFeedback();
+    setActionFeedback(action);
+    feedbackTimer.current = window.setTimeout(() => setActionFeedback(null), 1800);
+  };
+  const applyRange = () => {
+    clearActionFeedback();
+    const error = validateRange(draftRange);
+    setRangeError(error);
+    if (error) return;
+    setRange(draftRange);
+    confirmRangeAction('apply');
+  };
+  const resetRange = () => {
+    const reset = initialRange();
+    setDraftRange(reset);
+    setRange(reset);
+    setRangeError('');
+    confirmRangeAction('reset');
+  };
 
   const handleExport = (reportKey: ReportKey) => {
     const weeklyRows  = buildWeeklyRows(assignments, completed);
@@ -713,40 +752,6 @@ export default function Reports({ assignments, completed, cancelled }: ReportsPr
         </p>
       </header>
 
-      <section className="rounded-xl border border-border bg-white p-4 sm:p-5 shadow-sm">
-        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
-          <div>
-            <h3 className="font-semibold text-foreground">Analytics date range</h3>
-            <p className="text-xs text-muted-foreground mt-1">Filter charts by scheduled delivery date.</p>
-          </div>
-          <div className="flex flex-col md:flex-row md:items-end gap-3 w-full lg:w-auto">
-            <label className="text-xs font-medium text-muted-foreground min-w-0 flex-1 lg:flex-none">
-              From
-              <input type="date" value={draftRange.start} max={draftRange.end}
-                onChange={event => { setDraftRange(value => ({ ...value, start: event.target.value })); setRangeError(''); }}
-                className="mt-1 block w-full min-w-0 rounded-lg border border-border bg-white px-3 py-2 text-sm text-foreground" />
-            </label>
-            <label className="text-xs font-medium text-muted-foreground min-w-0 flex-1 lg:flex-none">
-              To
-              <input type="date" value={draftRange.end} min={draftRange.start}
-                onChange={event => { setDraftRange(value => ({ ...value, end: event.target.value })); setRangeError(''); }}
-                className="mt-1 block w-full min-w-0 rounded-lg border border-border bg-white px-3 py-2 text-sm text-foreground" />
-            </label>
-            <div className="flex gap-2">
-              <button type="button" onClick={() => { const reset = initialRange(); setDraftRange(reset); setRange(reset); setRangeError(''); }}
-                className="min-h-10 rounded-lg border border-border px-4 text-sm text-foreground hover:bg-muted">Reset</button>
-              <button type="button" onClick={() => {
-                if (!draftRange.start || !draftRange.end || draftRange.start > draftRange.end) {
-                  setRangeError('Choose a valid start and end date.'); return;
-                }
-                setRange(draftRange); setRangeError('');
-              }} className="min-h-10 rounded-lg bg-primary px-4 text-sm text-white hover:bg-primary/90">Apply</button>
-            </div>
-          </div>
-        </div>
-        {rangeError && <p role="alert" className="mt-2 text-xs text-red-600">{rangeError}</p>}
-      </section>
-
       <section className="space-y-4">
         <div>
           <h3 className="text-lg font-semibold text-foreground">Reports</h3>
@@ -786,6 +791,47 @@ export default function Reports({ assignments, completed, cancelled }: ReportsPr
           </div>
         ))}
       </div>
+      </section>
+
+      <section className="rounded-xl border border-border bg-white p-4 sm:p-5 shadow-sm">
+        <div className="flex min-w-0 flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+          <div className="min-w-0">
+            <h3 className="font-semibold text-foreground">Analytics date range</h3>
+            <p className="text-xs text-muted-foreground mt-1">Filter charts by scheduled delivery date.</p>
+          </div>
+          <div className="w-full min-w-0 lg:w-auto">
+            <div className="flex min-w-0 flex-col md:flex-row md:flex-wrap md:items-end gap-3">
+              <label className="text-xs font-medium text-muted-foreground min-w-0 flex-1 md:basis-40 lg:flex-none">
+                From
+                <input type="date" required value={draftRange.start} max={draftRange.end}
+                  aria-invalid={!!rangeError} aria-describedby={rangeError ? 'analytics-range-error' : undefined}
+                  onChange={event => { clearActionFeedback(); setDraftRange(value => ({ ...value, start: event.target.value })); setRangeError(''); }}
+                  className={`mt-1 block w-full min-w-0 rounded-lg border bg-white px-3 py-2 text-sm text-foreground ${rangeError ? 'border-red-500' : 'border-border'}`} />
+              </label>
+              <label className="text-xs font-medium text-muted-foreground min-w-0 flex-1 md:basis-40 lg:flex-none">
+                To
+                <input type="date" required value={draftRange.end} min={draftRange.start}
+                  aria-invalid={!!rangeError} aria-describedby={rangeError ? 'analytics-range-error' : undefined}
+                  onChange={event => { clearActionFeedback(); setDraftRange(value => ({ ...value, end: event.target.value })); setRangeError(''); }}
+                  className={`mt-1 block w-full min-w-0 rounded-lg border bg-white px-3 py-2 text-sm text-foreground ${rangeError ? 'border-red-500' : 'border-border'}`} />
+              </label>
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <button type="button" onClick={resetRange} aria-label="Reset"
+                  className="grid w-28 min-h-11 shrink-0 items-center justify-center rounded-lg border border-border px-3 text-sm text-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+                  <span aria-hidden="true" className={`col-start-1 row-start-1 transition-opacity duration-150 motion-reduce:transition-none ${actionFeedback === 'reset' ? 'opacity-0' : 'opacity-100'}`}>Reset</span>
+                  <span aria-hidden="true" className={`col-start-1 row-start-1 inline-flex items-center justify-center gap-1.5 transition-opacity duration-150 motion-reduce:transition-none ${actionFeedback === 'reset' ? 'opacity-100' : 'opacity-0'}`}><Check className="h-3.5 w-3.5" />Reset</span>
+                </button>
+                <button type="button" onClick={applyRange} aria-label={actionFeedback === 'apply' ? 'Applied' : 'Apply'}
+                  className="grid w-28 min-h-11 shrink-0 items-center justify-center rounded-lg bg-primary px-3 text-sm text-white hover:bg-primary/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+                  <span aria-hidden="true" className={`col-start-1 row-start-1 transition-opacity duration-150 motion-reduce:transition-none ${actionFeedback === 'apply' ? 'opacity-0' : 'opacity-100'}`}>Apply</span>
+                  <span aria-hidden="true" className={`col-start-1 row-start-1 inline-flex items-center justify-center gap-1.5 transition-opacity duration-150 motion-reduce:transition-none ${actionFeedback === 'apply' ? 'opacity-100' : 'opacity-0'}`}><Check className="h-3.5 w-3.5" />Applied</span>
+                </button>
+              </div>
+            </div>
+            {rangeError && <p id="analytics-range-error" role="alert" className="mt-2 text-xs text-red-600">{rangeError}</p>}
+            <span role="status" className="sr-only">{actionFeedback === 'apply' ? 'Applied' : actionFeedback === 'reset' ? 'Reset' : ''}</span>
+          </div>
+        </div>
       </section>
 
       <section className="space-y-4">

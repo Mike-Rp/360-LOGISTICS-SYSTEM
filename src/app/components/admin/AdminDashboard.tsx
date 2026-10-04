@@ -13,18 +13,20 @@ import SettingsPanel from './SettingsPanel';
 import HelpPanel from './HelpPanel';
 import WorkspaceSettingsPanel from './WorkspaceSettingsPanel';
 import DashboardHome from './dashboard/DashboardHome';
+import { Toaster } from '../ui/sonner';
+import { ADMIN_NAVIGATION_EVENT, adminPageFromUrl, pushAdminNavigation } from '../../lib/adminNavigation';
 import type { Assignment, CompletedTask, LocalDriver, LocalTruck, AppNotification, AdminRole, AdminActivityEntry, AdminActivityInput } from '../../data/assignmentTypes';
 
 type NavItem = 'Dashboard' | 'Monitor' | 'Deliveries' | 'Documents' | 'Reports' | 'Accounts';
 
-type NotificationTarget = { page: 'Documents' | 'Monitor'; assignmentId: string; docType?: string };
+type NotificationTarget = { page: 'Documents' | 'Monitor'; assignmentId: string; docType?: string; review?: boolean };
 
 function targetFromUrl(): NotificationTarget | null {
   const params = new URLSearchParams(window.location.search);
-  const page = params.get('page');
+  const page = adminPageFromUrl();
   const assignmentId = params.get('assignment') ?? '';
   if ((page !== 'Documents' && page !== 'Monitor') || !params.has('assignment')) return null;
-  return { page, assignmentId, docType: params.get('document') ?? undefined };
+  return { page, assignmentId, docType: params.get('document') ?? undefined, review: page === 'Monitor' && params.get('review') === 'true' };
 }
 
 const SEARCH_PLACEHOLDERS: Partial<Record<NavItem, string>> = {
@@ -86,7 +88,6 @@ export default function AdminDashboard({
   const [searchInput, setSearchInput] = useState({ page: activeNav, value: '' });
   const [searchQuery, setSearchQuery] = useState({ page: activeNav, value: '' });
   const [notificationTarget, setNotificationTarget] = useState<NotificationTarget | null>(targetFromUrl);
-  const [locationReady, setLocationReady] = useState(false);
   const currentSearchInput = searchInput.page === activeNav ? searchInput.value : '';
   const currentSearchQuery = searchQuery.page === activeNav ? searchQuery.value : '';
 
@@ -108,46 +109,35 @@ export default function AdminDashboard({
   useEffect(() => {
     const restoreLocation = () => {
       const target = targetFromUrl();
-      const page = new URLSearchParams(window.location.search).get('page');
       setNotificationTarget(target);
-      if (page === 'Documents' || page === 'Monitor' || page === 'Dashboard' || page === 'Deliveries' || page === 'Reports' || page === 'Accounts') {
-        setActiveNav(page);
-      }
     };
     restoreLocation();
-    setLocationReady(true);
     window.addEventListener('popstate', restoreLocation);
-    return () => window.removeEventListener('popstate', restoreLocation);
-  }, [setActiveNav]);
+    window.addEventListener(ADMIN_NAVIGATION_EVENT, restoreLocation);
+    return () => {
+      window.removeEventListener('popstate', restoreLocation);
+      window.removeEventListener(ADMIN_NAVIGATION_EVENT, restoreLocation);
+    };
+  }, []);
 
-  useEffect(() => {
-    if (!locationReady || notificationTarget) return;
-    const url = new URL(window.location.href);
-    if (!url.searchParams.has('page') || url.searchParams.get('page') === activeNav) return;
-    url.searchParams.set('page', activeNav);
-    window.history.replaceState(window.history.state, '', url);
-  }, [activeNav, locationReady, notificationTarget]);
+  const navigateToModule = (page: NavItem) => {
+    pushAdminNavigation(page);
+    setActiveNav(page);
+  };
 
-  const navigateToNotification = (page: string, target: { assignmentId: string; docType?: string }) => {
+  const navigateToNotification = (page: string, target: { assignmentId: string; docType?: string; review?: boolean }) => {
     if (page !== 'Documents' && page !== 'Monitor') return;
-    const previous = new URL(window.location.href);
-    previous.searchParams.set('page', activeNav);
-    previous.searchParams.delete('assignment');
-    previous.searchParams.delete('document');
-    window.history.replaceState(window.history.state, '', previous);
-    const next = new URL(previous);
-    next.searchParams.set('page', page);
-    next.searchParams.set('assignment', target.assignmentId);
-    if (target.docType) next.searchParams.set('document', target.docType);
-    window.history.pushState(null, '', next);
+    pushAdminNavigation(page, target);
     setNotificationTarget({ page, ...target });
     setActiveNav(page);
   };
 
   const clearNotificationTarget = useCallback(() => {
     const url = new URL(window.location.href);
+    url.searchParams.delete('page');
     url.searchParams.delete('assignment');
     url.searchParams.delete('document');
+    url.searchParams.delete('review');
     window.history.replaceState(window.history.state, '', url);
     setNotificationTarget(null);
   }, []);
@@ -196,8 +186,8 @@ export default function AdminDashboard({
               notifications={notifications}
               adminName={adminName}
               isViewOnly={isViewOnly}
-              onNavigate={(page) => setActiveNav(page)}
-              onDispatch={() => { setDispatchOnOpen(true); setActiveNav('Monitor'); }}
+              onNavigate={navigateToModule}
+              onDispatch={() => { setDispatchOnOpen(true); navigateToModule('Monitor'); }}
             />
           );
         }
@@ -208,7 +198,7 @@ export default function AdminDashboard({
               assignments={assignments}
               completed={completed}
               cancelled={cancelled}
-              onNavigateToDeliveries={() => setActiveNav('Deliveries')}
+              onNavigateToDeliveries={() => navigateToModule('Deliveries')}
             />
             <Charts
               assignments={assignments}
@@ -243,7 +233,7 @@ export default function AdminDashboard({
           <DeliveryTable fullView assignments={assignments} completed={completed} cancelled={cancelled} trucks={trucks} search={currentSearchQuery} />
         );
       case 'Documents':
-        return <DocumentArchive assignments={assignments} completed={completed} setAssignments={setAssignments} isViewOnly={isViewOnly} search={currentSearchQuery} onSearchChange={changeSearch} notificationTarget={notificationTarget?.page === 'Documents' ? notificationTarget : null} onNotificationTargetHandled={clearNotificationTarget} />;
+        return <DocumentArchive assignments={assignments} completed={completed} cancelled={cancelled} setAssignments={setAssignments} isViewOnly={isViewOnly} search={currentSearchQuery} onSearchChange={changeSearch} notificationTarget={notificationTarget?.page === 'Documents' ? notificationTarget : null} onNotificationTargetHandled={clearNotificationTarget} />;
       case 'Reports':
         return <Reports assignments={assignments} completed={completed} cancelled={cancelled} />;
       case 'Accounts':
@@ -270,7 +260,7 @@ export default function AdminDashboard({
 
   return (
     <div className="flex h-screen bg-background overflow-hidden">
-      <Sidebar activeNav={activeNav} setActiveNav={setActiveNav} mobileOpen={mobileMenuOpen} setMobileOpen={setMobileMenuOpen} />
+      <Sidebar activeNav={activeNav} setActiveNav={navigateToModule} mobileOpen={mobileMenuOpen} setMobileOpen={setMobileMenuOpen} />
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden pt-[calc(4rem+env(safe-area-inset-top))] md:pt-0">
         <Header
           notifications={notifications}
@@ -288,10 +278,12 @@ export default function AdminDashboard({
           searchValue={currentSearchInput}
           onSearchChange={changeSearch}
         />
-        <main className={`min-w-0 flex-1 p-4 sm:p-6 ${mobileMenuOpen ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+        <main className={`min-w-0 flex-1 p-4 sm:p-6 ${mobileMenuOpen || settingsOpen ? 'overflow-hidden' : 'overflow-y-auto'}`}>
           <div className="max-w-[1600px] mx-auto space-y-4 sm:space-y-6">{renderContent()}</div>
         </main>
       </div>
+
+      <Toaster position="bottom-right" duration={1800} visibleToasts={1} closeButton={false} />
 
       {/* ── Floating panels ── */}
       <SettingsPanel

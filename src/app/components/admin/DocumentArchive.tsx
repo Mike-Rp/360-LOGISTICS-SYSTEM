@@ -2,14 +2,20 @@ import { useState, useMemo, useLayoutEffect, useEffect, useRef } from 'react';
 import {
   FileText, X, CheckCircle2, Clock, XCircle,
   Truck, User, Eye, Search, Calendar, Package,
-  AlertCircle, ChevronDown, ChevronRight,
+  AlertCircle, ChevronDown, ChevronRight, Filter,
 } from 'lucide-react';
+import ASNWithCopy from './ASNWithCopy';
 import type { Assignment, CompletedTask, DocStatus } from '../../data/assignmentTypes';
+import { assignmentDisplayStatusConfig, getAssignmentDisplayStatus, getAssignmentDocumentSummary } from '../../lib/assignmentWorkflow';
+import type { AssignmentDisplayStatus } from '../../lib/assignmentWorkflow';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
+import { sortNewestFirst, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
+import { matchesAssignmentDate } from '../../lib/assignmentDateFilter';
 
 interface Props {
   assignments:     Assignment[];
   completed:       CompletedTask[];
+  cancelled?:      Assignment[];
   setAssignments?: React.Dispatch<React.SetStateAction<Assignment[]>>;
   isViewOnly?:     boolean;
   search:         string;
@@ -19,6 +25,26 @@ interface Props {
 }
 
 type DocFilter = 'all' | 'pending' | 'approved' | 'rejected';
+type ArchiveDatePeriod = 'all' | 'today' | 'week' | 'month' | 'last30';
+
+const DATE_OPTIONS: Array<{ value: ArchiveDatePeriod; label: string }> = [
+  { value: 'today', label: 'Today' },
+  { value: 'week', label: 'This Week' },
+  { value: 'month', label: 'This Month' },
+  { value: 'last30', label: 'Last 30 Days' },
+  { value: 'all', label: 'All Time' },
+];
+const FILTER_PREFERENCE_KEY = '360_document_archive_filters';
+
+function savedFilters(): { status: DocFilter; date: ArchiveDatePeriod } {
+  try {
+    const saved = JSON.parse(localStorage.getItem(FILTER_PREFERENCE_KEY) || '{}');
+    return {
+      status: ['all', 'pending', 'approved', 'rejected'].includes(saved.status) ? saved.status : 'all',
+      date: DATE_OPTIONS.some(option => option.value === saved.date) ? saved.date : 'all',
+    };
+  } catch { return { status: 'all', date: 'all' }; }
+}
 
 const STATUS_CFG: Record<DocStatus, { label: string; badge: string; icon: React.ReactNode }> = {
   pending:  { label: 'Pending',  badge: 'bg-amber-50 text-amber-700 border-amber-200', icon: <Clock        className="w-3 h-3" /> },
@@ -76,10 +102,12 @@ function Hi({ text, q }: { text: string; q: string }) {
 
 interface DocGroup {
   assignmentId: string;
+  createdAt?: string;
   driverName:   string;
   truckPlate:   string;
   deliveryDate: string;
-  isCompleted:  boolean;
+  deliveryStatus: AssignmentDisplayStatus;
+  documentSummary: ReturnType<typeof getAssignmentDocumentSummary>;
   docs: Array<{
     type:          string;
     docStatus:     DocStatus;
@@ -88,9 +116,31 @@ interface DocGroup {
   }>;
 }
 
+function AssignmentStatusBadge({ status }: { status: AssignmentDisplayStatus }) {
+  const cfg = assignmentDisplayStatusConfig[status];
+  return (
+    <span className={`inline-flex max-w-full items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-medium ${cfg.badge}`}>
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
+      <span className="min-w-0 break-words">{cfg.label}</span>
+    </span>
+  );
+}
+
+function DocumentStatusSummary({ summary }: {
+  summary: DocGroup['documentSummary'];
+}) {
+  const badge = summary.tone === 'missing' ? 'bg-gray-100 text-gray-600 border-gray-200' : STATUS_CFG[summary.tone].badge;
+  return (
+    <div className="min-w-0 space-y-1">
+      <span className={`inline-flex max-w-full break-words rounded-full border px-2 py-0.5 text-xs font-medium ${badge}`}>{summary.label}</span>
+      <p className="text-xs leading-relaxed text-muted-foreground break-words">{summary.breakdown}</p>
+    </div>
+  );
+}
+
 /* ── Accordion row ── */
 function GroupRow({
-  group, filter, search, open, onToggle, onPreview, highlightDoc,
+  group, filter, search, open, onToggle, onPreview, highlightDoc, highlightAssignment, newAssignmentId,
 }: {
   group:     DocGroup;
   filter:    DocFilter;
@@ -99,21 +149,21 @@ function GroupRow({
   onToggle:  () => void;
   onPreview: (url: string, type: string) => void;
   highlightDoc?: string | null;
+  highlightAssignment?: string | null;
+  newAssignmentId?: string | null;
 }) {
   const q = search.trim().toLowerCase();
 
   const visibleDocs = group.docs.filter(d => filter === 'all' || d.docStatus === filter);
-  if (visibleDocs.length === 0) return null;
-
-  const approved = group.docs.filter(d => d.docStatus === 'approved').length;
-  const pending  = group.docs.filter(d => d.docStatus === 'pending').length;
-  const rejected = group.docs.filter(d => d.docStatus === 'rejected').length;
+  if (visibleDocs.length === 0 && group.docs.length > 0) return null;
 
   return (
     <>
-      {/* ── Assignment header row (5 cols) ── */}
+      {/* ── Assignment header row (6 cols) ── */}
       <tr
+        data-document-assignment="" data-assignment-id={group.assignmentId} tabIndex={-1}
         onClick={onToggle}
+        style={newRecordHighlight(group.assignmentId, highlightAssignment === group.assignmentId ? highlightAssignment : newAssignmentId ?? null)}
         className={`cursor-pointer select-none transition-colors border-b border-border/60
           ${open ? 'bg-primary/5' : 'bg-white hover:bg-muted/30'}`}
       >
@@ -123,20 +173,17 @@ function GroupRow({
             <div className={`w-5 h-5 flex items-center justify-center flex-shrink-0 transition-colors ${open ? 'text-primary' : 'text-muted-foreground'}`}>
               {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
             </div>
-            <div className={`w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 ${group.isCompleted ? 'bg-purple-100' : 'bg-primary/10'}`}>
-              <Package className={`w-3.5 h-3.5 ${group.isCompleted ? 'text-purple-600' : 'text-primary'}`} />
+            <div className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 bg-muted">
+              <Package className="w-3.5 h-3.5 text-muted-foreground" />
             </div>
             <span className="font-bold font-mono text-sm text-foreground">
-              <Hi text={group.assignmentId} q={q} />
+              <ASNWithCopy value={group.assignmentId}><Hi text={group.assignmentId} q={q} /></ASNWithCopy>
             </span>
-            {group.isCompleted && (
-              <span className="text-[12px] px-1.5 py-0.5 bg-purple-50 text-purple-700 border border-purple-200 rounded-full font-medium leading-none">Done</span>
-            )}
           </div>
         </td>
 
         {/* Driver */}
-        <td className="px-4 py-3 whitespace-nowrap text-sm text-foreground font-medium">
+        <td className="px-4 py-3 whitespace-nowrap text-sm text-foreground font-semibold">
           <Hi text={group.driverName} q={q} />
         </td>
 
@@ -152,35 +199,19 @@ function GroupRow({
           {group.deliveryDate || '—'}
         </td>
 
-        {/* Docs summary */}
+        {/* Delivery progress and document review are separate statuses. */}
+        <td className="px-4 py-3"><AssignmentStatusBadge status={group.deliveryStatus} /></td>
+
+        {/* Document review summary */}
         <td className="px-4 py-3">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-xs text-muted-foreground">
-              {group.docs.length} doc{group.docs.length !== 1 ? 's' : ''}
-            </span>
-            {approved > 0 && (
-              <span className="text-[12px] px-2 py-0.5 bg-green-50 text-green-700 border border-green-200 rounded-full font-medium">
-                {approved} approved
-              </span>
-            )}
-            {pending > 0 && (
-              <span className="text-[12px] px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-full font-medium">
-                {pending} pending
-              </span>
-            )}
-            {rejected > 0 && (
-              <span className="text-[12px] px-2 py-0.5 bg-red-50 text-red-700 border border-red-200 rounded-full font-medium">
-                {rejected} rejected
-              </span>
-            )}
-          </div>
+          <DocumentStatusSummary summary={group.documentSummary} />
         </td>
       </tr>
 
-      {/* ── Expanded area — spans all 5 cols ── */}
+      {/* ── Expanded area — spans all 6 cols ── */}
       {open && (
         <tr className="border-b border-border/40">
-          <td colSpan={5} className="p-0">
+          <td colSpan={6} className="p-0">
             <div className="ml-10 border-l-2 border-primary/20">
 
               {/* Sub-header: DOCUMENT · STATUS · REASON/NOTES · FILE */}
@@ -200,6 +231,7 @@ function GroupRow({
               </div>
 
               {/* Document rows */}
+              {visibleDocs.length === 0 && <p className="px-4 py-4 text-sm text-muted-foreground">No documents uploaded for this assignment.</p>}
               {visibleDocs.map((doc, i) => {
                 const cfg = STATUS_CFG[doc.docStatus];
                 const isLast = i === visibleDocs.length - 1;
@@ -274,7 +306,7 @@ function GroupRow({
 
 /* ── Mobile card (replaces GroupRow's table markup below `sm`) ── */
 function GroupCard({
-  group, filter, search, open, onToggle, onPreview, highlightDoc,
+  group, filter, search, open, onToggle, onPreview, highlightDoc, highlightAssignment, newAssignmentId,
 }: {
   group:     DocGroup;
   filter:    DocFilter;
@@ -283,51 +315,40 @@ function GroupCard({
   onToggle:  () => void;
   onPreview: (url: string, type: string) => void;
   highlightDoc?: string | null;
+  highlightAssignment?: string | null;
+  newAssignmentId?: string | null;
 }) {
   const q = search.trim().toLowerCase();
 
   const visibleDocs = group.docs.filter(d => filter === 'all' || d.docStatus === filter);
-  if (visibleDocs.length === 0) return null;
-
-  const approved = group.docs.filter(d => d.docStatus === 'approved').length;
-  const pending  = group.docs.filter(d => d.docStatus === 'pending').length;
-  const rejected = group.docs.filter(d => d.docStatus === 'rejected').length;
+  if (visibleDocs.length === 0 && group.docs.length > 0) return null;
 
   return (
     <div className="rounded-xl border border-border bg-white overflow-hidden">
-      <div onClick={onToggle} className={`flex items-start gap-3 p-4 cursor-pointer select-none transition-colors ${open ? 'bg-primary/5' : 'hover:bg-muted/30'}`}>
+      <div data-document-assignment="" data-assignment-id={group.assignmentId} tabIndex={-1} onClick={onToggle} style={newRecordHighlight(group.assignmentId, highlightAssignment === group.assignmentId ? highlightAssignment : newAssignmentId ?? null)} className={`flex items-start gap-3 p-4 cursor-pointer select-none transition-colors ${open ? 'bg-primary/5' : 'hover:bg-muted/30'}`}>
         <div className={`w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors ${open ? 'text-primary' : 'text-muted-foreground'}`}>
           {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
         </div>
-        <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${group.isCompleted ? 'bg-purple-100' : 'bg-primary/10'}`}>
-          <Package className={`w-4 h-4 ${group.isCompleted ? 'text-purple-600' : 'text-primary'}`} />
+        <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-muted">
+          <Package className="w-4 h-4 text-muted-foreground" />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="font-bold font-mono text-sm text-foreground"><Hi text={group.assignmentId} q={q} /></span>
-            {group.isCompleted && (
-              <span className="text-[12px] px-1.5 py-0.5 bg-purple-50 text-purple-700 border border-purple-200 rounded-full font-medium leading-none">Done</span>
-            )}
+            <span className="font-bold font-mono text-sm text-foreground"><ASNWithCopy value={group.assignmentId}><Hi text={group.assignmentId} q={q} /></ASNWithCopy></span>
           </div>
-          <p className="text-xs text-muted-foreground mt-0.5 truncate">
-            <Hi text={group.driverName} q={q} /> · <Hi text={group.truckPlate} q={q} /> · {group.deliveryDate || '—'}
+          <p className="text-xs text-muted-foreground mt-0.5 break-words">
+            <span className="font-semibold text-foreground"><Hi text={group.driverName} q={q} /></span> · <Hi text={group.truckPlate} q={q} /> · {group.deliveryDate || '—'}
           </p>
-          <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
-            {approved > 0 && (
-              <span className="text-[12px] px-2 py-0.5 bg-green-50 text-green-700 border border-green-200 rounded-full font-medium">{approved} approved</span>
-            )}
-            {pending > 0 && (
-              <span className="text-[12px] px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-full font-medium">{pending} pending</span>
-            )}
-            {rejected > 0 && (
-              <span className="text-[12px] px-2 py-0.5 bg-red-50 text-red-700 border border-red-200 rounded-full font-medium">{rejected} rejected</span>
-            )}
+          <div className="mt-2 space-y-2">
+            <div><p className="mb-1 text-xs text-muted-foreground">Status</p><AssignmentStatusBadge status={group.deliveryStatus} /></div>
+            <div><p className="mb-1 text-xs text-muted-foreground">Document Status</p><DocumentStatusSummary summary={group.documentSummary} /></div>
           </div>
         </div>
       </div>
 
       {open && (
         <div className="border-t border-border bg-muted/10 divide-y divide-border/40">
+          {visibleDocs.length === 0 && <p className="px-4 py-4 text-sm text-muted-foreground">No documents uploaded for this assignment.</p>}
           {visibleDocs.map((doc) => {
             const cfg = STATUS_CFG[doc.docStatus];
             return (
@@ -366,14 +387,22 @@ function GroupCard({
 }
 
 /* ── Main export ── */
-export default function DocumentArchive({ assignments, completed, search, onSearchChange, notificationTarget, onNotificationTargetHandled }: Props) {
-  const [filter,  setFilter]  = useState<DocFilter>('all');
+export default function DocumentArchive({ assignments, completed, cancelled = [], search, onSearchChange, notificationTarget, onNotificationTargetHandled }: Props) {
+  const [filter,  setFilter]  = useState<DocFilter>(() => savedFilters().status);
+  const [period, setPeriod] = useState<ArchiveDatePeriod>(() => savedFilters().date);
   const [preview, setPreview] = useState<{ url: string; type: string } | null>(null);
   const [openIds, setOpenIds] = useState<Set<string>>(new Set());
   const [highlightDoc, setHighlightDoc] = useState<string | null>(null);
+  const [highlightAssignment, setHighlightAssignment] = useState<string | null>(null);
+  const [linkedAssignmentId, setLinkedAssignmentId] = useState<string | null>(null);
   const [missingTarget, setMissingTarget] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const previousSearch = useRef(search);
+
+  useEffect(() => {
+    try { localStorage.setItem(FILTER_PREFERENCE_KEY, JSON.stringify({ status: filter, date: period })); }
+    catch { /* Filtering still works when browser storage is unavailable. */ }
+  }, [filter, period]);
 
   const toggle = (id: string) =>
     setOpenIds(prev => {
@@ -382,34 +411,44 @@ export default function DocumentArchive({ assignments, completed, search, onSear
       return next;
     });
 
-  const q = notificationTarget ? '' : search.trim().toLowerCase();
+  const focusedId = notificationTarget?.assignmentId ?? linkedAssignmentId;
+  const q = search.trim().toLowerCase();
 
   const { groups, counts } = useMemo(() => {
     const all: DocGroup[] = [];
+    const normalGroups: DocGroup[] = [];
 
     const push = (
       id: string, driverName: string, truckPlate: string,
-      deliveryDate: string, isCompleted: boolean,
-      docs: Assignment['documents']
+      deliveryDate: string, deliveryStatus: AssignmentDisplayStatus,
+      documentSummary: DocGroup['documentSummary'],
+      docs: Assignment['documents'], createdAt?: string
     ) => {
       const uploaded = docs.filter(d => d.uploaded);
-      if (!uploaded.length) return;
+      if (!uploaded.length && id !== focusedId) return;
       const matchesSearch =
         !q || [id, driverName, truckPlate].some(f => f.toLowerCase().includes(q)) ||
         uploaded.some(d => d.type.toLowerCase().includes(q));
-      if (!matchesSearch) return;
-      all.push({
-        assignmentId: id, driverName, truckPlate, deliveryDate, isCompleted,
+      const matchesFilters = uploaded.length > 0 && matchesSearch && matchesAssignmentDate({ id, createdAt }, period);
+      if (!matchesFilters && id !== focusedId) return;
+      const group: DocGroup = {
+        assignmentId: id, createdAt, driverName, truckPlate, deliveryDate, deliveryStatus, documentSummary,
         docs: uploaded.map(d => ({
           type: d.type, docStatus: d.docStatus, fileUrl: d.fileUrl, rejectReason: d.rejectReason,
         })),
-      });
+      };
+      all.push(group);
+      if (matchesFilters) normalGroups.push(group);
     };
 
-    for (const a of assignments) push(a.id, a.driverName, a.truckPlate, a.deliveryDate, false, a.documents);
-    for (const c of completed)   push(c.id, c.driverName, c.truckPlate, c.deliveryDate, true,  c.documents);
+    for (const a of assignments) push(a.id, a.driverName, a.truckPlate, a.deliveryDate, getAssignmentDisplayStatus(a), getAssignmentDocumentSummary(a), a.documents, a.createdAt);
+    for (const c of completed)   push(c.id, c.driverName, c.truckPlate, c.deliveryDate, getAssignmentDisplayStatus(c), getAssignmentDocumentSummary(c), c.documents, c.createdAt);
+    // Cancelled assignments are included only when opened through an exact link.
+    for (const c of cancelled) if (c.id === focusedId) {
+      push(c.id, c.driverName, c.truckPlate, c.deliveryDate, getAssignmentDisplayStatus(c), getAssignmentDocumentSummary(c), c.documents, c.createdAt);
+    }
 
-    const flatDocs = all.flatMap(g => g.docs);
+    const flatDocs = normalGroups.flatMap(g => g.docs);
     const counts = {
       all:      flatDocs.length,
       pending:  flatDocs.filter(d => d.docStatus === 'pending').length,
@@ -418,50 +457,63 @@ export default function DocumentArchive({ assignments, completed, search, onSear
     };
 
     return { groups: all, counts };
-  }, [assignments, completed, q]);
+  }, [assignments, completed, cancelled, q, period, focusedId]);
 
-  const visibleGroups = groups.filter(g =>
-    notificationTarget || filter === 'all' || g.docs.some(d => d.docStatus === filter)
-  );
+  const visibleGroups = sortNewestFirst(groups.filter(g =>
+    focusedId ? g.assignmentId === focusedId : filter === 'all' || g.docs.some(d => d.docStatus === filter)
+  ), (group) => group.assignmentId);
 
   const { page: currentPage, setPage, pageItems: pageGroups } = usePagination(visibleGroups);
+  const newAssignmentId = useLocalAddedHighlight('assignment', () => setPage(1));
+  const normalPage = useRef(1);
   useLayoutEffect(() => {
-    if (previousSearch.current !== search && !notificationTarget) setPage(1);
+    if (!focusedId) normalPage.current = currentPage;
+  }, [currentPage, focusedId]);
+  useLayoutEffect(() => {
+    if (previousSearch.current !== search) {
+      normalPage.current = 1;
+      if (!focusedId) setPage(1);
+    }
     previousSearch.current = search;
-  }, [search, setPage, notificationTarget]);
-  const pageArea = useStablePageHeight(currentPage, visibleGroups.length, 10, `${search}|${filter}`);
+  }, [search, setPage, focusedId]);
+  const pageArea = useStablePageHeight(currentPage, visibleGroups.length, 10, `${search}|${filter}|${period}|${focusedId ?? ''}`);
+  const targetIndex = visibleGroups.findIndex(group => group.assignmentId === notificationTarget?.assignmentId);
 
   useEffect(() => {
     if (!notificationTarget) return;
-    const assignment = [...assignments, ...completed].find(a => a.id === notificationTarget.assignmentId);
+    const assignment = [...assignments, ...completed, ...cancelled].find(a => a.id === notificationTarget.assignmentId);
     const doc = assignment?.documents.find(d => d.type === notificationTarget.docType && d.uploaded);
-    if (!assignment || !doc) {
+    if (!assignment || (notificationTarget.docType && !doc)) {
       setMissingTarget(true);
+      setLinkedAssignmentId(null);
       onNotificationTargetHandled?.();
       return;
     }
     setMissingTarget(false);
-    if (search) onSearchChange('');
-    if (filter !== 'all') setFilter('all');
+    setLinkedAssignmentId(assignment.id);
     setOpenIds(previous => previous.has(assignment.id) ? previous : new Set(previous).add(assignment.id));
-    const index = groups.findIndex(group => group.assignmentId === assignment.id);
-    if (index >= 0) setPage(Math.floor(index / 10) + 1);
-  }, [notificationTarget?.assignmentId, notificationTarget?.docType, assignments, completed]);
+    if (targetIndex >= 0) setPage(Math.floor(targetIndex / 10) + 1);
+  }, [notificationTarget?.assignmentId, notificationTarget?.docType, assignments, completed, cancelled, targetIndex, setPage, onNotificationTargetHandled]);
 
   useEffect(() => {
-    if (!notificationTarget || search || filter !== 'all') return;
-    const assignment = [...assignments, ...completed].find(a => a.id === notificationTarget.assignmentId);
+    if (!notificationTarget) return;
+    const assignment = [...assignments, ...completed, ...cancelled].find(a => a.id === notificationTarget.assignmentId);
     const doc = assignment?.documents.find(d => d.type === notificationTarget.docType && d.uploaded);
-    if (!doc || !openIds.has(notificationTarget.assignmentId)) return;
-    const item = [...(rootRef.current?.querySelectorAll<HTMLElement>('[data-notification-document]') ?? [])]
-      .find(element => element.dataset.assignmentId === notificationTarget.assignmentId && element.dataset.docType === notificationTarget.docType && element.getClientRects().length > 0);
+    if (!assignment || (notificationTarget.docType && !doc) || !openIds.has(notificationTarget.assignmentId)) return;
+    const selector = notificationTarget.docType ? '[data-notification-document]' : '[data-document-assignment]';
+    const item = [...(rootRef.current?.querySelectorAll<HTMLElement>(selector) ?? [])]
+      .find(element => element.dataset.assignmentId === notificationTarget.assignmentId && (!notificationTarget.docType || element.dataset.docType === notificationTarget.docType) && element.getClientRects().length > 0);
     if (!item) return;
     item.scrollIntoView({ block: 'center' });
     item.focus({ preventScroll: true });
-    setHighlightDoc(`${notificationTarget.assignmentId}|${notificationTarget.docType}`);
-    if (doc.fileUrl && doc.fileUrl !== '[image-data-stripped]') setPreview({ url: doc.fileUrl, type: doc.type });
+    if (doc) {
+      setHighlightDoc(`${notificationTarget.assignmentId}|${doc.type}`);
+      if (doc.fileUrl && doc.fileUrl !== '[image-data-stripped]') setPreview({ url: doc.fileUrl, type: doc.type });
+    } else {
+      setHighlightAssignment(notificationTarget.assignmentId);
+    }
     onNotificationTargetHandled?.();
-  }, [notificationTarget, search, filter, currentPage, openIds, assignments, completed, onNotificationTargetHandled]);
+  }, [notificationTarget, currentPage, openIds, assignments, completed, cancelled, onNotificationTargetHandled]);
 
   useEffect(() => {
     if (!highlightDoc) return;
@@ -469,19 +521,21 @@ export default function DocumentArchive({ assignments, completed, search, onSear
     return () => window.clearTimeout(timer);
   }, [highlightDoc]);
 
-  const allOpen = pageGroups.length > 0 && pageGroups.every(g => openIds.has(g.assignmentId));
-  const toggleAll = () => {
-    setOpenIds(prev => {
-      const next = new Set(prev);
-      for (const group of pageGroups) {
-        if (allOpen) next.delete(group.assignmentId);
-        else next.add(group.assignmentId);
-      }
-      return next;
-    });
+  useEffect(() => {
+    if (!highlightAssignment) return;
+    const timer = window.setTimeout(() => setHighlightAssignment(null), 3000);
+    return () => window.clearTimeout(timer);
+  }, [highlightAssignment]);
+
+  const clearFocus = () => {
+    setLinkedAssignmentId(null);
+    setHighlightAssignment(null);
+    setHighlightDoc(null);
+    if (notificationTarget) onNotificationTargetHandled?.();
+    setPage(normalPage.current);
   };
 
-  const emptyAll    = counts.all === 0;
+  const emptyAll    = groups.length === 0 && !q && filter === 'all' && period === 'all';
   const emptyFilter = !emptyAll && visibleGroups.length === 0;
 
   return (
@@ -498,16 +552,17 @@ export default function DocumentArchive({ assignments, completed, search, onSear
       </div>
 
       {/* Filter chips */}
-      <div className="flex items-center gap-2 flex-wrap">
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
         {([
           /* badge = count colour on an unselected tab; badgeOn = on the selected green tab
              (white pill + coloured text so it stays readable on green) */
           { key: 'all',      label: 'All',      badge: 'bg-gray-100 text-gray-600',   badgeOn: 'bg-white text-gray-700'  },
-          { key: 'pending',  label: 'Pending',  badge: 'bg-amber-100 text-amber-700', badgeOn: 'bg-white text-amber-700' },
-          { key: 'approved', label: 'Approved', badge: 'bg-green-100 text-green-700', badgeOn: 'bg-white text-green-700' },
+          { key: 'pending',  label: 'Pending review', badge: 'bg-amber-100 text-amber-700', badgeOn: 'bg-white text-amber-700' },
+          { key: 'approved', label: 'All approved', badge: 'bg-green-100 text-green-700', badgeOn: 'bg-white text-green-700' },
           { key: 'rejected', label: 'Rejected', badge: 'bg-red-100 text-red-700',     badgeOn: 'bg-white text-red-700'   },
         ] as { key: DocFilter; label: string; badge: string; badgeOn: string }[]).map(({ key, label, badge, badgeOn }) => (
-          <button key={key} onClick={() => { setFilter(key); setPage(1); }}
+          <button key={key} onClick={() => { setFilter(key); normalPage.current = 1; setPage(1); }}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium border transition-all ${
               filter === key
                 ? 'bg-primary text-white border-primary'
@@ -522,13 +577,23 @@ export default function DocumentArchive({ assignments, completed, search, onSear
             </span>
           </button>
         ))}
-
-        {visibleGroups.length > 0 && (
-          <button onClick={toggleAll} className="ml-auto text-xs text-primary font-medium hover:underline">
-            {allOpen ? 'Collapse all' : 'Expand all'}
-          </button>
-        )}
+        </div>
+        <div className="flex min-w-0 items-center gap-1.5 rounded-lg border border-border bg-white px-2 py-1.5 sm:ml-auto">
+          <Filter aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <select aria-label="Document Archive date filter" value={period}
+            onChange={event => { setPeriod(event.target.value as ArchiveDatePeriod); normalPage.current = 1; setPage(1); }}
+            className="min-h-8 min-w-0 flex-1 cursor-pointer bg-transparent pr-1 text-sm text-foreground focus-visible:outline-2 focus-visible:outline-primary">
+            {DATE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+        </div>
       </div>
+
+      {focusedId && (
+        <div role="status" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+          <span>Showing <span className="font-semibold text-foreground break-all"><ASNWithCopy value={focusedId} /></span></span>
+          <button type="button" onClick={clearFocus} className="min-h-10 px-2 font-medium text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary">Clear focus</button>
+        </div>
+      )}
 
       {/* Empty states */}
       {emptyAll ? (
@@ -541,7 +606,7 @@ export default function DocumentArchive({ assignments, completed, search, onSear
         <div className="bg-white rounded-2xl border border-dashed border-border py-16 text-center">
           <Search className="w-12 h-12 mx-auto mb-3 text-muted-foreground/30" />
           <p className="font-medium text-foreground">
-            {q ? `No results for "${search}"` : `No ${filter} documents`}
+            {q ? `No results for "${search}"` : filter === 'all' && period !== 'all' ? 'No documents for this date range' : `No ${filter} documents`}
           </p>
           <p className="text-sm text-muted-foreground mt-1">Try a different search term or filter.</p>
           {q && (
@@ -571,7 +636,10 @@ export default function DocumentArchive({ assignments, completed, search, onSear
                     <div className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5" /> Date</div>
                   </th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">
-                    Docs
+                    Status
+                  </th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">
+                    Document Status
                   </th>
                 </tr>
               </thead>
@@ -580,12 +648,14 @@ export default function DocumentArchive({ assignments, completed, search, onSear
                   <GroupRow
                     key={group.assignmentId}
                     group={group}
-                    filter={filter}
-                    search={search}
+                    filter={focusedId === group.assignmentId ? 'all' : filter}
+                    search={focusedId === group.assignmentId ? '' : search}
                     open={openIds.has(group.assignmentId)}
                     onToggle={() => toggle(group.assignmentId)}
                     onPreview={(url, type) => setPreview({ url, type })}
                     highlightDoc={highlightDoc}
+                    highlightAssignment={highlightAssignment}
+                    newAssignmentId={newAssignmentId}
                   />
                 ))}
               </tbody>
@@ -598,12 +668,14 @@ export default function DocumentArchive({ assignments, completed, search, onSear
               <GroupCard
                 key={group.assignmentId}
                 group={group}
-                filter={filter}
-                search={search}
+                filter={focusedId === group.assignmentId ? 'all' : filter}
+                search={focusedId === group.assignmentId ? '' : search}
                 open={openIds.has(group.assignmentId)}
                 onToggle={() => toggle(group.assignmentId)}
                 onPreview={(url, type) => setPreview({ url, type })}
                 highlightDoc={highlightDoc}
+                highlightAssignment={highlightAssignment}
+                newAssignmentId={newAssignmentId}
               />
             ))}
           </div>
@@ -615,7 +687,7 @@ export default function DocumentArchive({ assignments, completed, search, onSear
             {filter !== 'all' && (
               <>
                 <span className="text-xs text-muted-foreground"><span className="capitalize">{filter}</span> filter active</span>
-                <button onClick={() => { setFilter('all'); setPage(1); }} className="text-xs text-primary hover:underline font-medium">
+                <button onClick={() => { setFilter('all'); normalPage.current = 1; setPage(1); }} className="text-xs text-primary hover:underline font-medium">
                   Show all
                 </button>
               </>

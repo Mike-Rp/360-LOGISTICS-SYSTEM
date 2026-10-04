@@ -1,6 +1,7 @@
 import { Package, CheckCircle, AlertTriangle, FileText, ArrowRight } from 'lucide-react';
 import type { Assignment, CompletedTask } from '../../../data/assignmentTypes';
 import { parseStoredTimestamp } from '../../../data/assignmentTypes';
+import { adminHref, followAdminLink } from '../../../lib/adminNavigation';
 
 interface Props {
   assignments: Assignment[];
@@ -83,10 +84,10 @@ export default function DashboardStatCards({ assignments, completed, onNavigate 
             <Icon className={`w-4 h-4 flex-shrink-0 ${alert ? 'text-amber-600' : 'text-foreground'}`} />
             <p className="text-sm font-medium text-foreground">{label}</p>
             {headerLink && (
-              <button onClick={headerLink}
+              <a href={adminHref('Deliveries')} onClick={(event) => followAdminLink(event, headerLink)}
                 className="ml-auto inline-flex shrink-0 items-center gap-1 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
                 View all <ArrowRight className="w-3.5 h-3.5" />
-              </button>
+              </a>
             )}
           </div>
           {/* items-start: the number stays on the same line in every card even when the
@@ -96,10 +97,10 @@ export default function DashboardStatCards({ assignments, completed, onNavigate 
             <div className="text-right min-w-0">
               <p className="text-xs text-muted-foreground leading-snug">{detail}</p>
               {link && (
-                <button onClick={link.onClick}
+                <a href={adminHref('Documents')} onClick={(event) => followAdminLink(event, link.onClick)}
                   className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:text-primary/80 mt-0.5">
                   {link.label} <ArrowRight className="w-3 h-3" />
-                </button>
+                </a>
               )}
             </div>
           </div>

@@ -6,6 +6,7 @@ import DeliveryOverviewChart from './DeliveryOverviewChart';
 import RecentActivityTable from './RecentActivityTable';
 import DriversFleetCards from './DriversFleetCards';
 import DashboardHeader, { WelcomeSummary } from './DashboardHeader';
+import { adminHref, followAdminLink } from '../../../lib/adminNavigation';
 
 /* ── Redesigned admin Dashboard ──────────────────────────────────────────────
    Switched on/off by USE_NEW_DASHBOARD in AdminDashboard.tsx; the old dashboard
@@ -97,10 +98,10 @@ function WelcomeBanner({ assignments, completed, adminName, isViewOnly, onNaviga
           <WelcomeSummary assignments={assignments} completed={completed} onNavigate={onNavigate} />
         </div>
         {!isViewOnly && (
-          <button onClick={onDispatch}
+          <a href={adminHref('Monitor')} onClick={(event) => followAdminLink(event, onDispatch)}
             className="w-full sm:w-fit inline-flex items-center justify-center gap-2 px-4 py-2 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors shadow-sm text-sm font-semibold">
             <Plus className="w-4 h-4" /> Dispatch Truck
-          </button>
+          </a>
         )}
       </div>
     </div>

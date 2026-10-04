@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import {
   User, Truck, MapPin, Building2, Calendar, MessageSquare,
   Activity, X, ClipboardList, CheckCircle2,
@@ -12,7 +12,9 @@ import {
 import { RegisterDriverModal, RegisterTruckModal } from './RegisterModals';
 import { Popover, PopoverAnchor, PopoverContent } from '../ui/popover';
 import TruckImage from '../TruckImage';
+import ASNWithCopy from './ASNWithCopy';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
+import { sortNewestFirst, markLocalRecordAdded, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
 import { TRUCK_CLASSIFICATIONS, truckSideImageFor } from '../../data/truckTypes';
 import {
   verifyOwnPassword, editAssignment, cancelAssignment, AssignmentActionError,
@@ -670,7 +672,7 @@ function StatusBadge({ status, size = 'sm', acknowledged = true }: { status: Tas
 
 /* ─── Modal Shell ──────────────────────────────────── */
 function ModalShell({ title, onClose, wide = false, children }: {
-  title: string; onClose: () => void; wide?: boolean; children: React.ReactNode;
+  title: React.ReactNode; onClose: () => void; wide?: boolean; children: React.ReactNode;
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4">
@@ -883,7 +885,7 @@ function DocChip({ doc }: { doc: AssignmentDoc }) {
 }
 
 /* ─── View Details Modal ───────────────────────────── */
-function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApproveDoc, onRejectDoc, onComplete, onCancel, onSimulateLate, isViewOnly = false, adminEmail }: {
+function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApproveDoc, onRejectDoc, onComplete, onCancel, onSimulateLate, isViewOnly = false, adminEmail, reviewTarget }: {
   assignment: Assignment | null; driver: LocalDriver | null;
   /* null when the truck record was deleted — the plate saved on the assignment is still shown */
   truck: LocalTruck | null;
@@ -896,6 +898,7 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
   onSimulateLate: (id: string) => void;
   isViewOnly?:    boolean;
   adminEmail?:    string | null;
+  reviewTarget?: { docType?: string } | null;
 }) {
   const isDemoAdmin = adminEmail === DEMO_ADMIN_EMAIL;
   const [confirmCancel, setConfirmCancel] = useState(false);
@@ -904,6 +907,23 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
   const [previewDoc,    setPreviewDoc]    = useState<{ url: string; type: string } | null>(null);
   const [rejectingDoc,  setRejectingDoc]  = useState<string | null>(null);
   const [rejectReason,  setRejectReason]  = useState('');
+  const reviewSectionRef = useRef<HTMLDivElement>(null);
+  const reviewDocumentRef = useRef<HTMLDivElement>(null);
+  const [highlightReview, setHighlightReview] = useState(false);
+  const reviewDocument = reviewTarget ? assignment?.documents.find(doc => reviewTarget.docType
+    ? doc.type === reviewTarget.docType : doc.uploaded && doc.docStatus === 'pending') : undefined;
+
+  useLayoutEffect(() => {
+    setHighlightReview(false);
+    if (!reviewTarget) return;
+    const element = reviewDocumentRef.current ?? reviewSectionRef.current;
+    if (!element) return;
+    element.scrollIntoView({ block: reviewDocumentRef.current ? 'center' : 'start' });
+    element.focus({ preventScroll: true });
+    setHighlightReview(true);
+    const timer = window.setTimeout(() => setHighlightReview(false), 3000);
+    return () => window.clearTimeout(timer);
+  }, [reviewTarget, assignment?.id]);
   if (!driver) return null;
 
   const allApproved = assignment
@@ -1085,7 +1105,9 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
           )}
 
           {/* Documents */}
-          <div>
+          <div ref={reviewSectionRef} tabIndex={reviewTarget ? -1 : undefined}
+            role={reviewTarget ? 'region' : undefined} aria-label={reviewTarget ? `Document review for ${assignment.id}` : undefined}
+            className={highlightReview && !reviewDocument ? 'rounded-xl bg-primary/5 ring-2 ring-primary/40' : undefined}>
             {/* Progress ring header */}
             <div className="flex items-center gap-3 rounded-xl border border-border/70 bg-muted/25 p-4 mb-3">
               <div className="relative flex items-center justify-center">
@@ -1101,9 +1123,12 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
                 </p>
               </div>
             </div>
+            {reviewTarget?.docType && !reviewDocument && <p role="status" className="mb-3 text-sm text-muted-foreground">This item is no longer available.</p>}
             <div className="space-y-2">
               {assignment.documents.map((doc) => (
-                <div key={doc.type} className="border border-border rounded-xl bg-white overflow-hidden">
+                <div key={doc.type} ref={doc === reviewDocument ? reviewDocumentRef : undefined}
+                  tabIndex={doc === reviewDocument ? -1 : undefined} aria-label={doc === reviewDocument ? `Review ${doc.type} for ${assignment.id}` : undefined}
+                  className={`border border-border rounded-xl overflow-hidden transition-colors motion-reduce:transition-none ${highlightReview && doc === reviewDocument ? 'bg-primary/5 ring-2 ring-primary/40' : 'bg-white'}`}>
                   {/* Main row */}
                   <div className="p-3">
                     <div className="flex items-start justify-between gap-2">
@@ -1425,7 +1450,7 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, address
 
   return (
     <>
-      <ModalShell title={`Edit Delivery · ${original.id}`} onClose={onClose}>
+      <ModalShell title={<>Edit Delivery · <ASNWithCopy value={original.id} /></>} onClose={onClose}>
         {!stillEditable && (
           <div className="flex items-start gap-2 p-3 mb-5 bg-red-50 border border-red-200 rounded-xl">
             <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
@@ -1630,7 +1655,7 @@ interface Props {
   onDispatchOpened?: () => void;
   search: string;
   onSearchChange: (value: string) => void;
-  notificationTarget?: { assignmentId: string } | null;
+  notificationTarget?: { assignmentId: string; docType?: string; review?: boolean } | null;
   onNotificationTargetHandled?: () => void;
 }
 
@@ -1661,6 +1686,7 @@ export default function DriversManagement({
     onDispatchOpened?.();
   }, [openDispatchOnMount]); // eslint-disable-line react-hooks/exhaustive-deps
   const [viewDetailsId,  setViewDetailsId]  = useState<string | null>(null);
+  const [reviewTarget, setReviewTarget] = useState<{ assignmentId: string; docType?: string } | null>(null);
   const [missingTarget, setMissingTarget] = useState(false);
   const [editId,         setEditId]         = useState<string | null>(null);
   const [classificationFilter, setClassificationFilter] = useState('');
@@ -1787,6 +1813,8 @@ export default function DriversManagement({
       documents: DOCUMENT_TYPES.map((type) => ({ type, uploaded: false, docStatus: 'pending' as DocStatus })),
       assignedAt: new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
     }]);
+    markLocalRecordAdded('assignment', newAssignId);
+    activePage.setPage(1);
     setDrivers((p) => p.map((d) => d.id === taskDriverId ? { ...d, status: 'Assigned' as const } : d));
     setTrucks((p)  => p.map((t) => t.id === taskTruckId  ? { ...t, status: 'Assigned' }   : t));
     onLogActivity?.({
@@ -1886,17 +1914,19 @@ export default function DriversManagement({
   const matchingClassifications = classificationFilter
     ? validAssignments.filter((a) => trucks.find((t) => t.id === a.truckId)?.classification === classificationFilter)
     : validAssignments;
-  const visibleAssignments = sq
+  const visibleAssignments = sortNewestFirst(sq
     ? matchingClassifications.filter((a) =>
         [a.truckPlate, a.id, a.driverName, a.destination, a.company, a.taskStatus].some((f) =>
           f.toLowerCase().includes(sq)
         )
       )
-    : matchingClassifications;
+    : matchingClassifications, (assignment) => assignment.id);
   const activePage = usePagination(visibleAssignments, MONITOR_PAGE_SIZE);
+  const newAssignmentId = useLocalAddedHighlight('assignment', () => activePage.setPage(1));
   useLayoutEffect(() => { activePage.setPage(1); }, [search, activePage.setPage]);
   useEffect(() => {
     if (!notificationTarget) return;
+    setReviewTarget(null);
     const assignment = assignments.find(a => a.id === notificationTarget.assignmentId)
       ?? completed.find(a => a.id === notificationTarget.assignmentId);
     if (!assignment || !drivers.some(driver => driver.id === assignment.driverId)) {
@@ -1905,13 +1935,14 @@ export default function DriversManagement({
     } else {
       setMissingTarget(false);
       setViewDetailsId(assignment.id);
+      if (notificationTarget.review) setReviewTarget({ assignmentId: assignment.id, docType: notificationTarget.docType });
       setCompletedOpen(false);
       setClassificationFilter('');
       if (search) onSearchChange('');
       activePage.setPage(1);
     }
     onNotificationTargetHandled?.();
-  }, [notificationTarget?.assignmentId]);
+  }, [notificationTarget]);
   const recentCompleted = [...completed].reverse();
   const completedPage = usePagination(recentCompleted, COMPLETED_PAGE_SIZE);
   const activePageArea = useStablePageHeight(activePage.page, visibleAssignments.length, MONITOR_PAGE_SIZE, `${search}|${classificationFilter}`);
@@ -1983,7 +2014,7 @@ export default function DriversManagement({
                                 <Truck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#0d9488]" />
                                 <span className="min-w-0">
                                   <span className="font-semibold text-[#0d9488]">{c.truckPlate}</span>
-                                  <span className="block text-xs text-muted-foreground">{c.id}{trucks.find((t) => t.id === c.truckId)?.classification && ` · ${trucks.find((t) => t.id === c.truckId)?.classification}`}</span>
+                                  <span className="block text-xs text-muted-foreground"><ASNWithCopy value={c.id} />{trucks.find((t) => t.id === c.truckId)?.classification && ` · ${trucks.find((t) => t.id === c.truckId)?.classification}`}</span>
                                 </span>
                               </div>
                             </td>
@@ -2002,7 +2033,7 @@ export default function DriversManagement({
                       {completedPage.pageItems.map((c) => (
                         <div key={c.id} className="grid min-w-0 grid-cols-[5.5rem_minmax(0,1fr)] gap-x-3 gap-y-2 px-4 py-3 text-sm [overflow-wrap:anywhere]">
                           <span className="text-xs font-semibold text-muted-foreground">TRUCK #</span>
-                          <span className="inline-flex min-w-0 items-start gap-2 text-[#0d9488]"><Truck className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span className="min-w-0"><span className="font-semibold">{c.truckPlate}</span><span className="block text-xs text-muted-foreground">{c.id}{trucks.find((t) => t.id === c.truckId)?.classification && ` · ${trucks.find((t) => t.id === c.truckId)?.classification}`}</span></span></span>
+                          <span className="inline-flex min-w-0 items-start gap-2 text-[#0d9488]"><Truck className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span className="min-w-0"><span className="font-semibold">{c.truckPlate}</span><span className="block text-xs text-muted-foreground"><ASNWithCopy value={c.id} />{trucks.find((t) => t.id === c.truckId)?.classification && ` · ${trucks.find((t) => t.id === c.truckId)?.classification}`}</span></span></span>
                           <span className="text-xs font-semibold text-muted-foreground">DRIVER</span><span className="min-w-0 text-foreground">{c.driverName}</span>
                           <span className="text-xs font-semibold text-muted-foreground">ROUTE</span><span className="min-w-0 text-foreground">{c.destination}</span>
                           <span className="text-xs font-semibold text-muted-foreground">CUSTOMER</span><span className="min-w-0 text-foreground">{c.company}</span>
@@ -2091,6 +2122,7 @@ export default function DriversManagement({
 
             return (
               <div key={a.id}
+                style={newRecordHighlight(a.id, newAssignmentId)}
                 className={`rounded-xl border-[0.5px] overflow-hidden ${
                   sq ? 'border-yellow-400 bg-yellow-50/30' : 'border-border bg-white'
                 }`}
@@ -2102,7 +2134,7 @@ export default function DriversManagement({
                       <p className="mt-1 w-fit max-w-full rounded-md bg-muted/70 px-2 py-0.5 text-base font-semibold text-foreground break-words">
                         <Highlight text={a.truckPlate} query={search} />
                       </p>
-                      <p className="mt-1 text-xs text-muted-foreground break-words"><Highlight text={a.id} query={search} /></p>
+                      <p className="mt-1 text-xs text-muted-foreground break-words"><ASNWithCopy value={a.id}><Highlight text={a.id} query={search} /></ASNWithCopy></p>
                     </div>
                     <div className="ml-auto shrink-0"><StatusBadge status={a.taskStatus} acknowledged={!!a.driverAcknowledgedAt} /></div>
                   </div>
@@ -2395,7 +2427,7 @@ export default function DriversManagement({
           drivers={drivers}
           setDrivers={setDrivers}
           onClose={() => setQuickAdd(null)}
-          onCreated={(d) => setTaskDriverId(d.id)}
+          onCreated={(d) => { markLocalRecordAdded('driver', d.id); setTaskDriverId(d.id); }}
         />
       )}
       {quickAdd === 'truck' && (
@@ -2413,8 +2445,8 @@ export default function DriversManagement({
           assignment={viewDetailsAssign}
           driver={viewDetailsDriver}
           truck={viewDetailsAssign ? trucks.find((t) => t.id === viewDetailsAssign.truckId) ?? null : null}
-          onClose={() => setViewDetailsId(null)}
-          onEdit={() => { setEditId(viewDetailsId); setViewDetailsId(null); }}
+          onClose={() => { setViewDetailsId(null); setReviewTarget(null); }}
+          onEdit={() => { setEditId(viewDetailsId); setViewDetailsId(null); setReviewTarget(null); }}
           onApproveDoc={handleApproveDoc}
           onRejectDoc={handleRejectDoc}
           onComplete={handleComplete}
@@ -2422,6 +2454,7 @@ export default function DriversManagement({
           onSimulateLate={handleSimulateLate}
           isViewOnly={isViewOnly || !assignments.some(a => a.id === viewDetailsId)}
           adminEmail={adminEmail}
+          reviewTarget={reviewTarget?.assignmentId === viewDetailsId ? reviewTarget : null}
         />
       )}
 

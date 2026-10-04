@@ -1,6 +1,7 @@
 import { Truck, Package, ArrowRight } from 'lucide-react';
 import { taskStatusConfig, type TaskStatus } from '../../data/assignmentTypes';
 import type { Assignment, CompletedTask } from '../../data/assignmentTypes';
+import { adminHref, followAdminLink } from '../../lib/adminNavigation';
 
 interface Props {
   assignments: Assignment[];
@@ -80,12 +81,13 @@ export default function DeliveryStatusBoard({ assignments, completed, cancelled,
             </p>
           </div>
         </div>
-        <button
-          onClick={onNavigateToDeliveries}
+        <a
+          href={adminHref('Deliveries')}
+          onClick={(event) => followAdminLink(event, onNavigateToDeliveries)}
           className="flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 font-medium transition-colors px-3 py-1.5 rounded-lg hover:bg-primary/5 border border-primary/20"
         >
           View All <ArrowRight className="w-3.5 h-3.5" />
-        </button>
+        </a>
       </div>
 
       {/* Status Cards Grid */}
@@ -95,9 +97,10 @@ export default function DeliveryStatusBoard({ assignments, completed, cancelled,
           const pct = total > 0 ? Math.round((count / total) * 100) : 0;
 
           return (
-            <button
+            <a
               key={status}
-              onClick={onNavigateToDeliveries}
+              href={adminHref('Deliveries')}
+              onClick={(event) => followAdminLink(event, onNavigateToDeliveries)}
               className={`flex flex-col items-center justify-center gap-2 px-4 py-5 bg-gradient-to-b ${gradient} hover:brightness-95 transition-all group relative overflow-hidden`}
             >
               {/* Count */}
@@ -119,7 +122,7 @@ export default function DeliveryStatusBoard({ assignments, completed, cancelled,
               {/* Bottom accent bar */}
               <div className={`absolute bottom-0 left-0 h-0.5 ${cfg.dot} transition-all duration-300`}
                 style={{ width: `${pct}%` }} />
-            </button>
+            </a>
           );
         })}
       </div>

@@ -1,25 +1,21 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { CheckCircle2 } from 'lucide-react';
 import { supabase } from './lib/supabaseClient';
-import { loadAdminData, syncAdminData, resetAllData, restoreSession, signOut } from './lib/db';
+import { loadAdminData, syncAdminData, resetAllData, restoreSession, signOut, readRecordCreationTimes } from './lib/db';
 import type { StaffSession } from './lib/db';
 import AdminDashboard from './components/admin/AdminDashboard';
 import DriverInterface from './components/driver/DriverInterface';
 import LoginScreen from './components/auth/LoginScreen';
+import { ADMIN_PATHS, ADMIN_NAVIGATION_EVENT, adminPageFromUrl, startAdminNavigation, redirectToAdminLogin } from './lib/adminNavigation';
+import { pendingLocalRecordIds, confirmLocalRecordCreated } from './lib/recordOrdering';
 import type { Assignment, CompletedTask, LocalDriver, LocalTruck, AppNotification, AdminRole, AdminActivityEntry, AdminActivityInput } from './data/assignmentTypes';
 
 type AppView = 'login' | 'admin' | 'driver';
 type NavItem = 'Dashboard' | 'Monitor' | 'Deliveries' | 'Documents' | 'Reports' | 'Accounts';
-const NAV_ITEMS: NavItem[] = ['Dashboard', 'Monitor', 'Deliveries', 'Documents', 'Reports', 'Accounts'];
 
 export default function App() {
   const [view,      setView]      = useState<AppView>('login');  // ← back to login
-  /* Restore last-visited admin page so a refresh doesn't dump the user back
-     to Dashboard — same pattern as 360_display_name below. */
-  const [activeNav, setActiveNav] = useState<NavItem>(() => {
-    const saved = localStorage.getItem('360_active_nav');
-    return (NAV_ITEMS as string[]).includes(saved ?? '') ? (saved as NavItem) : 'Dashboard';
-  });
+  const [activeNav, setActiveNav] = useState<NavItem>(() => adminPageFromUrl());
 
   useEffect(() => {
     localStorage.setItem('360_active_nav', activeNav);
@@ -118,12 +114,9 @@ export default function App() {
       else localStorage.removeItem('360_display_name');
     }
     await loadData();
+    setActiveNav(startAdminNavigation());
     setView('admin');
     if (fresh) {
-      /* Only a genuinely new login should land on Dashboard — restoring an
-         existing session (e.g. on refresh) should keep whatever page the
-         localStorage-persisted activeNav state above already resolved to. */
-      setActiveNav('Dashboard');
       setLoginSuccess('Login Successful! Welcome to the Admin Portal.');
       onLogActivity({ type: 'login', adminEmail: staff.email, adminRole: staff.role });
     }
@@ -147,6 +140,30 @@ export default function App() {
     return () => { cancelled = true; };
   }, [applySession]);
 
+  useEffect(() => {
+    if (restoring || view === 'driver') return;
+    const restoreLocation = () => {
+      if (!signedInRef.current) {
+        redirectToAdminLogin();
+        return;
+      }
+      const url = new URL(window.location.href);
+      const page = adminPageFromUrl(url);
+      if (url.pathname !== ADMIN_PATHS[page]) {
+        setActiveNav(startAdminNavigation());
+      } else {
+        setActiveNav(page);
+      }
+    };
+    restoreLocation();
+    window.addEventListener('popstate', restoreLocation);
+    window.addEventListener(ADMIN_NAVIGATION_EVENT, restoreLocation);
+    return () => {
+      window.removeEventListener('popstate', restoreLocation);
+      window.removeEventListener(ADMIN_NAVIGATION_EVENT, restoreLocation);
+    };
+  }, [restoring, view]);
+
   /* Auto-dismiss login success toast after 3 seconds */
   useEffect(() => {
     if (!loginSuccess) return;
@@ -166,6 +183,20 @@ export default function App() {
     setSaveError(null);
     try {
       await syncAdminData({ drivers: d, trucks: t, assignments: a, completed: co, cancelled: ca, notifications: n, activityLog: al });
+      try {
+        const driverIds = new Set(d.map((driver) => driver.id));
+        const assignmentIds = new Set([...a, ...co, ...ca].map((assignment) => assignment.id));
+        const [driverTimes, assignmentTimes] = await Promise.all([
+          readRecordCreationTimes('drivers', pendingLocalRecordIds('driver').filter((id) => driverIds.has(id))),
+          readRecordCreationTimes('assignments', pendingLocalRecordIds('assignment').filter((id) => assignmentIds.has(id))),
+        ]);
+        if (signedInRef.current) {
+          driverTimes.forEach((record) => confirmLocalRecordCreated('driver', record.id, record.createdAt));
+          assignmentTimes.forEach((record) => confirmLocalRecordCreated('assignment', record.id, record.createdAt));
+        }
+      } catch (err) {
+        console.warn('[creation timestamps] read failed; the existing poll will reload saved timestamps:', err);
+      }
     } catch (err) {
       console.error('[saveToServer] error:', err);
       const why = err instanceof Error ? err.message : String(err);
@@ -261,6 +292,7 @@ export default function App() {
 
   /* Forget who was signed in and go back to the login screen (local state only). */
   const clearSession = useCallback(() => {
+    if (adminRoleRef.current) redirectToAdminLogin(false);
     localStorage.removeItem('360_driver_screen');
     localStorage.removeItem('360_active_nav');
     signedInRef.current   = false;

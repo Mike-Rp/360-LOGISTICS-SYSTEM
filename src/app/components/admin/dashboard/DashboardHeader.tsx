@@ -1,5 +1,6 @@
 import { Plus } from 'lucide-react';
 import type { Assignment, CompletedTask } from '../../../data/assignmentTypes';
+import { adminHref, followAdminLink } from '../../../lib/adminNavigation';
 
 interface Props {
   assignments: Assignment[];
@@ -59,12 +60,12 @@ export function WelcomeSummary({ assignments, completed, onNavigate }: Pick<Prop
   if (scheduledToday > 0) parts.push(plural(scheduledToday, 'delivery', 'deliveries') + ' scheduled today');
   if (delayed > 0) parts.push(
     /* Deliveries has no "Delayed" filter — this opens its Active tab, which includes them */
-    <button key="delayed" onClick={() => onNavigate('Deliveries')} className={linkCls}>{delayed} delayed</button>
+    <a key="delayed" href={adminHref('Deliveries')} onClick={(event) => followAdminLink(event, () => onNavigate('Deliveries'))} className={linkCls}>{delayed} delayed</a>
   );
   if (docsPending > 0) parts.push(
-    <button key="docs" onClick={() => onNavigate('Documents')} className={linkCls}>
+    <a key="docs" href={adminHref('Documents')} onClick={(event) => followAdminLink(event, () => onNavigate('Documents'))} className={linkCls}>
       {plural(docsPending, 'document', 'documents')} waiting for review
-    </button>
+    </a>
   );
 
   return (
@@ -86,10 +87,10 @@ export default function DashboardHeader({ assignments, completed, adminName, isV
         <WelcomeSummary assignments={assignments} completed={completed} onNavigate={onNavigate} />
       </div>
       {!isViewOnly && (
-        <button onClick={onDispatch}
+        <a href={adminHref('Monitor')} onClick={(event) => followAdminLink(event, onDispatch)}
           className="w-full sm:w-auto flex-shrink-0 inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors shadow-sm text-sm font-semibold">
           <Plus className="w-4 h-4" /> Dispatch Truck
-        </button>
+        </a>
       )}
     </div>
   );

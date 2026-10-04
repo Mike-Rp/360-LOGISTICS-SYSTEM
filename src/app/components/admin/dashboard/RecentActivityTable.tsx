@@ -1,4 +1,5 @@
 import { Activity } from 'lucide-react';
+import ASNWithCopy from '../ASNWithCopy';
 import type { AppNotification, CompletedTask, TaskStatus } from '../../../data/assignmentTypes';
 import { parseStoredTimestamp, taskStatusConfig } from '../../../data/assignmentTypes';
 
@@ -107,7 +108,7 @@ export default function RecentActivityTable({ notifications, completed }: Props)
             <tbody className="divide-y divide-border/60">
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td className="px-1 py-2.5 text-sm text-muted-foreground whitespace-nowrap">{r.assignmentId}</td>
+                  <td className="px-1 py-2.5 text-sm text-muted-foreground"><ASNWithCopy value={r.assignmentId} /></td>
                   <td className="px-1 py-2.5 max-w-[180px]">
                     <p className="text-sm text-foreground truncate">{r.driverName || '—'}</p>
                     {r.truckPlate && <p className="text-xs text-muted-foreground truncate">{r.truckPlate}</p>}

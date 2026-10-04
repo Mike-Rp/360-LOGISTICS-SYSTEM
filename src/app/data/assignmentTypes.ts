@@ -93,6 +93,8 @@ export interface CompletedTask extends Assignment {
 
 export interface LocalDriver {
   id: string;
+  /* Read-only timestamp from drivers.created_at; excluded from save payloads. */
+  createdAt?: string;
   name: string;
   phone: string;
   truckNumber: string;

@@ -265,6 +265,15 @@ export interface AdminData {
    auto-save (syncAdminData) can't edit or delete them — they change only via archive_*(). */
 export interface ArchivedData { archivedDrivers: LocalDriver[]; archivedTrucks: LocalTruck[] }
 
+/* Read only the database's creation metadata after an existing local save succeeds. */
+export async function readRecordCreationTimes(table: 'assignments' | 'drivers', ids: string[]): Promise<Array<{ id: string; createdAt: string }>> {
+  if (!ids.length) return [];
+  const { data, error } = await supabase.from(table).select('id, created_at').in('id', ids);
+  if (error) throw error;
+  return (data ?? []).filter((row) => typeof row.created_at === 'string')
+    .map((row) => ({ id: row.id, createdAt: row.created_at }));
+}
+
 export async function loadAdminData(): Promise<AdminData & ArchivedData> {
   const [driverRows, pinRows, truckRows, asnRows, docRows, photoRows, delayRows, notifRows, actRows] = await Promise.all([
     fetchAll('drivers',              [['created_at', true], ['id', true]]),
@@ -286,6 +295,7 @@ export async function loadAdminData(): Promise<AdminData & ArchivedData> {
     ...(pins.has(r.id) ? { pin: pins.get(r.id) } : {}),
     ...(r.shift ? { shift: r.shift } : {}),
     ...(r.archived_at ? { archivedAt: r.archived_at } : {}),
+    ...(r.created_at ? { createdAt: r.created_at } : {}),
   }));
   const allTrucks: LocalTruck[] = truckRows.map((r) => ({
     id: r.id, plateNumber: r.plate_number, status: r.status,
