@@ -30,6 +30,7 @@ export default function App() {
   const [signedIn,     setSignedIn]     = useState(false);
   const [restoring,    setRestoring]    = useState(true);   // true until the "am I already signed in?" check finishes
   const [dataLoading,  setDataLoading]  = useState(false);
+  const [adminLoadFinished, setAdminLoadFinished] = useState(false);
   const [savingToDb,   setSavingToDb]   = useState(false);
 
   /* Driver session (separate from admin) */
@@ -145,6 +146,7 @@ export default function App() {
       /* Without this the screen just rendered empty or stale with no explanation. */
       setLoadError('Could not load your data. Something went wrong, please try again.');
     } finally {
+      setAdminLoadFinished(true);
       setDataLoading(false);
       setTimeout(() => { isPollUpdate.current = false; }, 200);
     }
@@ -354,6 +356,7 @@ export default function App() {
     setAdminEmail(null);
     setAdminIsOm(false);
     setSignedIn(false);
+    setAdminLoadFinished(false);
     setDriverInfo(null);
     setView('login');
     setDrivers([]);
@@ -409,7 +412,7 @@ export default function App() {
   const isOperationManager = adminIsOm;
 
   /* ── Loading screen ── */
-  if (restoring || dataLoading) {
+  if ((restoring || dataLoading) && !signedIn) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-gradient-to-br from-green-50 to-blue-50">
         <div className="w-10 h-10 border-4 border-[#0d9488] border-t-transparent rounded-full animate-spin" />
@@ -450,7 +453,7 @@ export default function App() {
       )}
 
       {/* ── Main Content ── */}
-      {view === 'login' && (
+      {view === 'login' && !signedIn && (
         <LoginScreen
           onAdminLogin={async (staff) => { await applySession(staff, true); }}
           onDriverLogin={(info) => {
@@ -461,8 +464,10 @@ export default function App() {
         />
       )}
 
-      {view === 'admin' && (
+      {(view === 'admin' || signedIn) && (
         <AdminDashboard
+          initialLoading={dataLoading && !adminLoadFinished}
+          contentLoading={dataLoading}
           drivers={drivers}          setDrivers={setDrivers}
           trucks={trucks}            setTrucks={setTrucks}
           assignments={assignments}  setAssignments={setAssignments}

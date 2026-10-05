@@ -13,6 +13,7 @@ import SettingsPanel from './SettingsPanel';
 import HelpPanel from './HelpPanel';
 import WorkspaceSettingsPanel from './WorkspaceSettingsPanel';
 import DashboardHome from './dashboard/DashboardHome';
+import AdminContentSkeleton from './AdminContentSkeleton';
 import { Toaster } from '../ui/sonner';
 import { ADMIN_NAVIGATION_EVENT, adminPageFromUrl, pushAdminNavigation } from '../../lib/adminNavigation';
 import type { Assignment, CompletedTask, LocalDriver, LocalTruck, AppNotification, AdminRole, AdminActivityEntry, AdminActivityInput } from '../../data/assignmentTypes';
@@ -41,6 +42,8 @@ const SEARCH_PLACEHOLDERS: Partial<Record<NavItem, string>> = {
 const USE_NEW_DASHBOARD = true;
 
 interface Props {
+  initialLoading: boolean;
+  contentLoading: boolean;
   drivers: LocalDriver[];
   setDrivers: React.Dispatch<React.SetStateAction<LocalDriver[]>>;
   trucks: LocalTruck[];
@@ -70,6 +73,7 @@ interface Props {
 }
 
 export default function AdminDashboard({
+  initialLoading, contentLoading,
   drivers, setDrivers, trucks, setTrucks,
   assignments, setAssignments, completed, setCompleted,
   cancelled, setCancelled,
@@ -278,8 +282,11 @@ export default function AdminDashboard({
           searchValue={currentSearchInput}
           onSearchChange={changeSearch}
         />
-        <main className={`min-w-0 flex-1 p-4 sm:p-6 ${mobileMenuOpen || settingsOpen ? 'overflow-hidden' : 'overflow-y-auto'}`}>
-          <div className="max-w-[1600px] mx-auto space-y-4 sm:space-y-6">{renderContent()}</div>
+        <span role="status" className="sr-only">{initialLoading ? 'Loading page content…' : ''}</span>
+        <main aria-busy={contentLoading} className={`min-w-0 flex-1 p-4 sm:p-6 ${mobileMenuOpen || settingsOpen ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+          <div className="max-w-[1600px] mx-auto space-y-4 sm:space-y-6">
+            {initialLoading ? <AdminContentSkeleton page={activeNav} isViewOnly={isViewOnly} /> : renderContent()}
+          </div>
         </main>
       </div>
 
