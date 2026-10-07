@@ -21,6 +21,10 @@ export const formatCapacity = (minKg: number, maxKg: number) => {
   return `${minKg.toLocaleString('en-US')} – ${maxKg.toLocaleString('en-US')} kg (${t(minKg)}–${t(maxKg)} t)`;
 };
 
+/* Keep stored capacity text intact; omit its ton equivalent only when displaying it. */
+export const capacityKgOnly = (capacity?: string | null): string =>
+  capacity?.replace(/\s*\([^)]*\s(?:t|tons?|tonnes?)\)\s*$/i, '').trim() ?? '';
+
 /* Picture for a stored classification. undefined for a missing or retired type
    (e.g. older trucks saved as "Tanker") — callers then show a neutral fallback. */
 export const truckImageFor = (classification?: string | null): string | undefined =>

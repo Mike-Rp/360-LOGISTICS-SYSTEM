@@ -8,6 +8,7 @@ import { matchesAssignmentDate } from '../../lib/assignmentDateFilter';
 import ASNWithCopy from './ASNWithCopy';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
 import { sortNewestFirst, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
+import { capacityKgOnly } from '../../data/truckTypes';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 
 type FilterPeriod = 'all' | 'today' | 'month' | 'year';
@@ -97,7 +98,7 @@ function RemarksPreview({ remarks, onOpen }: { remarks: string; onOpen: () => vo
 }
 
 function TruckMetadata({ assignment, truck, query }: { assignment: Assignment; truck?: LocalTruck; query: string }) {
-  const capacity = truck?.capacity?.replace(/\s*\([^)]*\)\s*$/, '').trim();
+  const capacity = capacityKgOnly(truck?.capacity);
   return (
     <div className="min-w-0 leading-4">
       {(truck?.classification || capacity) && <p className="break-words text-xs text-muted-foreground">{truck?.classification}{truck?.classification && capacity && ' · '}{capacity}</p>}

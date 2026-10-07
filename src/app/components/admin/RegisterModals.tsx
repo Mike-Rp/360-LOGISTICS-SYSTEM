@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import type { LocalDriver, LocalTruck } from '../../data/assignmentTypes';
 import { normaliseMobile } from '../../lib/db';
-import { TRUCK_CLASSIFICATIONS, formatCapacity } from '../../data/truckTypes';
+import { TRUCK_CLASSIFICATIONS, formatCapacity, capacityKgOnly } from '../../data/truckTypes';
 import TruckImage from '../TruckImage';
 
 /* ── Helpers ── */
@@ -170,17 +170,7 @@ export function RegisterDriverModal({ drivers = [], setDrivers, onClose, onCreat
             <label className="block text-sm font-medium text-foreground mb-2">
               Driver Name <span className="text-red-500">*</span>
             </label>
-            <div className="grid grid-cols-2 gap-2.5">
-              <div className="space-y-1">
-                <span className="text-xs text-muted-foreground">Surname</span>
-                <input
-                  type="text" value={surname}
-                  onChange={(e) => { setSurname(e.target.value); setNameError(''); }}
-                  onBlur={checkNameOnBlur}
-                  placeholder="e.g. dela Cruz"
-                  className={`w-full px-4 py-3 rounded-xl border text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 text-sm ${nameError ? 'border-red-400 bg-red-50' : 'border-border bg-white'}`}
-                />
-              </div>
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
               <div className="space-y-1">
                 <span className="text-xs text-muted-foreground">First Name</span>
                 <input
@@ -188,6 +178,16 @@ export function RegisterDriverModal({ drivers = [], setDrivers, onClose, onCreat
                   onChange={(e) => { setFirstName(e.target.value); setNameError(''); }}
                   onBlur={checkNameOnBlur}
                   placeholder="e.g. Juan"
+                  className={`w-full px-4 py-3 rounded-xl border text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 text-sm ${nameError ? 'border-red-400 bg-red-50' : 'border-border bg-white'}`}
+                />
+              </div>
+              <div className="space-y-1">
+                <span className="text-xs text-muted-foreground">Surname</span>
+                <input
+                  type="text" value={surname}
+                  onChange={(e) => { setSurname(e.target.value); setNameError(''); }}
+                  onBlur={checkNameOnBlur}
+                  placeholder="e.g. dela Cruz"
                   className={`w-full px-4 py-3 rounded-xl border text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 text-sm ${nameError ? 'border-red-400 bg-red-50' : 'border-border bg-white'}`}
                 />
               </div>
@@ -297,6 +297,8 @@ export function RegisterTruckModal({ trucks, setTrucks, onClose, onCreated, laye
   const [plateLetters,        setPlateLetters]        = useState('');
   const [plateNumbers,        setPlateNumbers]        = useState('');
   const [plateError,          setPlateError]          = useState('');
+  const [lettersBlurred,      setLettersBlurred]      = useState(false);
+  const [numbersBlurred,      setNumbersBlurred]      = useState(false);
   const [truckClassification, setTruckClassification] = useState('');
   const [classError,          setClassError]          = useState('');
   const [truckRegistered,     setTruckRegistered]     = useState(false);
@@ -306,6 +308,11 @@ export function RegisterTruckModal({ trucks, setTrucks, onClose, onCreated, laye
   /* Capacity is derived from the chosen type — nothing for the admin to pick */
   const selectedClass = TRUCK_CLASSIFICATIONS.find((c) => c.value === truckClassification) ?? null;
   const truckCapacity = selectedClass ? formatCapacity(selectedClass.capacityMinKg, selectedClass.capacityMaxKg) : '';
+  const plateIsValid = plateLetters.length === 3 && plateNumbers.length >= 3 && plateNumbers.length <= 4;
+  const lettersInvalid = lettersBlurred && plateLetters.length !== 3;
+  const numbersInvalid = numbersBlurred && (plateNumbers.length < 3 || plateNumbers.length > 4);
+  const plateHasInput = Boolean(plateLetters || plateNumbers);
+  const platePreview = plateHasInput ? [plateLetters, plateNumbers].filter(Boolean).join(' ') : 'ABC 1234';
 
   const handlePlateLetters = (v: string) => {
     const c = v.replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 3);
@@ -341,8 +348,8 @@ export function RegisterTruckModal({ trucks, setTrucks, onClose, onCreated, laye
 
   const handleNext = () => {
     if (step === 1) {
-      if (plateLetters.length < 3 || plateNumbers.length < 3) {
-        setPlateError('Enter at least 3 letters and 3 numbers (e.g. ABC 8473).');
+      if (!plateIsValid) {
+        setPlateError('Enter exactly 3 letters and 3–4 numbers.');
         return;
       }
       const plate = `${plateLetters} ${plateNumbers}`;
@@ -404,7 +411,8 @@ export function RegisterTruckModal({ trucks, setTrucks, onClose, onCreated, laye
       </button>
       <button
         onClick={step === 3 ? handleRegisterTruck : handleNext}
-        className="flex-1 px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors text-sm font-medium flex items-center justify-center gap-2"
+        disabled={step === 1 && !plateIsValid}
+        className="flex-1 px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
       >
         {step === 3 ? <><Check className="w-4 h-4" /> Register truck</> : 'Next'}
       </button>
@@ -430,35 +438,47 @@ export function RegisterTruckModal({ trucks, setTrucks, onClose, onCreated, laye
                 Plate number <span className="text-red-500">*</span>
               </label>
               <p className="text-xs text-muted-foreground mb-3">
-                Format: 3 letters + 3–4 numbers (e.g. ABC 8473)
+                Format: 3 letters + 3–4 numbers (e.g. ABC 1234)
               </p>
-              {/* Full width, letters box a little narrower; a plain gap stands in for the space in "ABC 8473" */}
-              <div className="grid grid-cols-[2fr_3fr] gap-3">
-                <input
-                  ref={plateLettersRef} type="text" value={plateLetters}
-                  onChange={(e) => handlePlateLetters(e.target.value)}
-                  onPaste={handlePlatePaste}
-                  placeholder="ABC" maxLength={3} aria-label="Plate letters"
-                  className={`w-full min-w-0 px-4 py-3 rounded-xl border text-center tracking-[0.25em] uppercase font-mono text-lg placeholder:tracking-normal placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-primary/30 ${plateError ? 'border-red-400 bg-red-50' : 'border-border bg-white'}`}
-                />
-                <input
-                  ref={plateNumRef} type="text" inputMode="numeric" value={plateNumbers}
-                  onChange={(e) => handlePlateNumbers(e.target.value)}
-                  onPaste={handlePlatePaste}
-                  onKeyDown={handleNumbersKeyDown}
-                  placeholder="8473" maxLength={4} aria-label="Plate numbers"
-                  className={`w-full min-w-0 px-4 py-3 rounded-xl border text-center tracking-[0.25em] font-mono text-lg placeholder:tracking-normal placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-primary/30 ${plateError ? 'border-red-400 bg-red-50' : 'border-border bg-white'}`}
-                />
-              </div>
-              {(plateLetters || plateNumbers) && (
-                <div className="mt-3 px-4 py-2 bg-primary/5 border border-primary/20 rounded-lg inline-flex items-center gap-2">
-                  <Truck className="w-4 h-4 text-primary" />
-                  <span className="font-mono font-semibold text-primary tracking-widest">
-                    {plateLetters || '___'} {plateNumbers || '____'}
-                  </span>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="min-w-0">
+                  <label htmlFor="truck-plate-letters" className="mb-1 block text-xs font-medium text-muted-foreground">Letters</label>
+                  <input
+                    id="truck-plate-letters" ref={plateLettersRef} type="text" value={plateLetters}
+                    onChange={(e) => handlePlateLetters(e.target.value)}
+                    onBlur={() => setLettersBlurred(true)}
+                    onPaste={handlePlatePaste}
+                    placeholder="ABC" maxLength={3} autoCapitalize="characters"
+                    aria-invalid={lettersInvalid || !!plateError}
+                    aria-describedby={lettersInvalid ? 'truck-plate-letters-error' : plateError ? 'truck-plate-error' : undefined}
+                    className={`w-full min-w-0 px-4 py-3 rounded-xl border text-center uppercase font-mono text-lg placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-primary/30 ${lettersInvalid || plateError ? 'border-red-400 bg-red-50' : plateLetters.length === 3 ? 'border-green-400 bg-white' : 'border-border bg-white'}`}
+                  />
+                  {lettersInvalid && <p id="truck-plate-letters-error" className="mt-1 text-xs text-red-500">Enter exactly 3 letters.</p>}
                 </div>
-              )}
-              {plateError && <p className="text-xs text-red-500 mt-2">{plateError}</p>}
+                <div className="min-w-0">
+                  <label htmlFor="truck-plate-numbers" className="mb-1 block text-xs font-medium text-muted-foreground">Numbers</label>
+                  <input
+                    id="truck-plate-numbers" ref={plateNumRef} type="text" inputMode="numeric" value={plateNumbers}
+                    onChange={(e) => handlePlateNumbers(e.target.value)}
+                    onBlur={() => setNumbersBlurred(true)}
+                    onPaste={handlePlatePaste}
+                    onKeyDown={handleNumbersKeyDown}
+                    placeholder="1234" maxLength={4}
+                    aria-invalid={numbersInvalid || !!plateError}
+                    aria-describedby={numbersInvalid ? 'truck-plate-numbers-error' : plateError ? 'truck-plate-error' : undefined}
+                    className={`w-full min-w-0 px-4 py-3 rounded-xl border text-center font-mono text-lg placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-primary/30 ${numbersInvalid || plateError ? 'border-red-400 bg-red-50' : plateNumbers.length >= 3 ? 'border-green-400 bg-white' : 'border-border bg-white'}`}
+                  />
+                  {numbersInvalid && <p id="truck-plate-numbers-error" className="mt-1 text-xs text-red-500">Enter 3–4 numbers.</p>}
+                </div>
+              </div>
+              <div className={`mt-4 rounded-xl border px-4 py-3 text-center ${plateIsValid && !plateError ? 'border-green-300 bg-green-50/40' : 'border-border bg-muted/20'}`}>
+                <p className="text-xs text-muted-foreground">Plate preview</p>
+                <p className={`mt-1 font-mono text-lg font-semibold ${plateIsValid && !plateError ? 'text-foreground' : 'text-muted-foreground'}`}>{platePreview}</p>
+                {!plateHasInput && <p className="mt-1 text-xs text-muted-foreground">Enter 3 letters and 3–4 numbers to see the preview.</p>}
+                {plateHasInput && !plateIsValid && <p className="mt-1 text-xs text-muted-foreground">{lettersInvalid || numbersInvalid ? 'Please enter a valid plate number.' : 'Complete the plate number.'}</p>}
+                {plateError && <p className="mt-1 text-xs text-muted-foreground">Please enter a valid plate number.</p>}
+              </div>
+              {plateError && <p id="truck-plate-error" className="text-xs text-red-500 mt-2">{plateError}</p>}
             </div>
           )}
 
@@ -507,7 +527,7 @@ export function RegisterTruckModal({ trucks, setTrucks, onClose, onCreated, laye
                     <p className="text-sm font-semibold text-foreground mt-3 break-words">{selectedClass.value}</p>
                     <p className="text-xs text-muted-foreground mt-0.5 break-words">{selectedClass.desc}</p>
                     <p className="text-[12px] text-muted-foreground uppercase tracking-wide mt-2">{selectedClass.capacityLabel}</p>
-                    <p className="text-sm font-medium text-foreground break-words">{truckCapacity}</p>
+                    <p className="text-sm font-medium text-foreground break-words">{capacityKgOnly(truckCapacity)}</p>
                   </div>
                 ) : (
                   <div className="flex-1 flex flex-col items-center justify-center text-center py-10 px-2">
@@ -553,7 +573,7 @@ export function RegisterTruckModal({ trucks, setTrucks, onClose, onCreated, laye
                   <span className="text-xs text-muted-foreground flex items-center gap-1.5">
                     <Weight className="w-3.5 h-3.5" /> {selectedClass?.capacityLabel ?? 'Payload capacity'}
                   </span>
-                  <span className="text-xs font-medium text-foreground text-right min-w-0 break-words">{truckCapacity}</span>
+                  <span className="text-xs font-medium text-foreground text-right min-w-0 break-words">{capacityKgOnly(truckCapacity)}</span>
                 </div>
               </div>
               <p className="px-4 py-2 bg-muted/20 border-t border-border text-[12px] text-muted-foreground">
@@ -580,7 +600,7 @@ export function RegisterTruckModal({ trucks, setTrucks, onClose, onCreated, laye
             </p>
             <p className="text-xs text-blue-700">Plate: <strong className="font-mono">{plateLetters} {plateNumbers}</strong></p>
             <p className="text-xs text-blue-700">Classification: <strong>{truckClassification}</strong></p>
-            <p className="text-xs text-blue-700">Capacity: <strong>{truckCapacity}</strong></p>
+            <p className="text-xs text-blue-700">Capacity: <strong>{capacityKgOnly(truckCapacity)}</strong></p>
           </div>
           <button onClick={onClose}
             className="w-full px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors text-sm font-medium">

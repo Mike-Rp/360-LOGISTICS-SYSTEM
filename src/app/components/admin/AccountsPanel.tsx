@@ -12,6 +12,7 @@ import ConfirmPasswordDialog from './ConfirmPasswordDialog';
 import { archiveDriver, archiveTruck, resetDriverPin, AssignmentActionError } from '../../lib/db';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
 import { sortNewestFirst, markLocalRecordAdded, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
+import { capacityKgOnly } from '../../data/truckTypes';
 
 /* Plain-language text for the errors the archive / PIN database functions can return */
 const accountActionError = (err: unknown): string => {
@@ -619,7 +620,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                     <div>
                       {t.capacity ? (
                         <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded-full">
-                          <Weight className="w-3 h-3" /> {t.capacity}
+                          <Weight className="w-3 h-3" /> {capacityKgOnly(t.capacity)}
                         </span>
                       ) : (
                         <span className="text-xs text-muted-foreground italic">—</span>
@@ -674,7 +675,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                         <p className="text-muted-foreground mb-1 flex items-center gap-1"><Weight className="w-3 h-3" /> Capacity</p>
                         {t.capacity ? (
                           <span className="inline-flex items-center gap-1.5 font-medium px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-full">
-                            {t.capacity}
+                            {capacityKgOnly(t.capacity)}
                           </span>
                         ) : (
                           <span className="text-muted-foreground italic">—</span>

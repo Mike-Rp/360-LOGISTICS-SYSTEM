@@ -16,7 +16,7 @@ import ASNWithCopy from './ASNWithCopy';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
 import { sortNewestFirst, markLocalRecordAdded, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
 import { ADMIN_NAVIGATION_EVENT, adminHref, followAdminLink, pushAdminNavigation } from '../../lib/adminNavigation';
-import { TRUCK_CLASSIFICATIONS, truckSideImageFor } from '../../data/truckTypes';
+import { TRUCK_CLASSIFICATIONS, truckSideImageFor, capacityKgOnly } from '../../data/truckTypes';
 import {
   verifyOwnPassword, editAssignment, cancelAssignment, AssignmentActionError,
   type AssignmentActionErrorCode, type AssignmentEdit,
@@ -552,7 +552,7 @@ function CapacityBadge({ capacity }: { capacity?: string }) {
   if (!capacity) return <span className="text-xs text-muted-foreground whitespace-nowrap">Capacity not set</span>;
   return (
     <span className="inline-flex items-center rounded-full bg-[#1DBF73]/15 border border-[#1DBF73]/30 px-3 py-1 text-xs font-semibold text-[#0b7a47] whitespace-nowrap">
-      {capacity}
+      {capacityKgOnly(capacity)}
     </span>
   );
 }
@@ -610,7 +610,7 @@ function TruckSummary({ truck, fallbackPlate, typeFirst = false }: {
         <div className="mt-2">
           {truck?.capacity ? (
             <span className="inline-flex items-center rounded-full bg-[#1DBF73] px-3 py-1.5 text-xs font-semibold text-white break-words">
-              {truck.capacity}
+              {capacityKgOnly(truck.capacity)}
             </span>
           ) : (
             <span className="text-xs text-muted-foreground">Capacity not set</span>
