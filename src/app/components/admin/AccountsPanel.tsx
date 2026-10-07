@@ -54,6 +54,34 @@ function StatusTabs({ value, onChange, activeCount, archivedCount }: {
   );
 }
 
+type AvailabilityFilter = 'all' | 'available' | 'onDelivery';
+
+function AvailabilityFilters({ value, onChange, allCount, availableCount, onDeliveryCount, label }: {
+  value: AvailabilityFilter;
+  onChange: (value: AvailabilityFilter) => void;
+  allCount: number;
+  availableCount: number;
+  onDeliveryCount: number;
+  label: string;
+}) {
+  return (
+    <div role="group" aria-label={label} className="flex max-w-full flex-wrap items-center gap-1.5 lg:border-l lg:border-border lg:pl-3">
+      {([
+        ['all', 'All', allCount],
+        ['available', 'Available', availableCount],
+        ['onDelivery', 'On Delivery', onDeliveryCount],
+      ] as const).map(([filter, text, count]) => (
+        <button key={filter} type="button" aria-pressed={value === filter}
+          onClick={() => onChange(filter)}
+          className={`inline-flex min-h-10 items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-medium shadow-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${value === filter ? 'border-primary bg-primary text-white' : 'border-border bg-white text-foreground hover:bg-muted/50'}`}>
+          {filter !== 'all' && <span aria-hidden="true" className={`h-2.5 w-2.5 shrink-0 rounded-full ${filter === 'available' ? 'bg-green-500' : 'bg-blue-500'} ${value === filter ? 'ring-2 ring-white' : ''}`} />}
+          {text} <span className="ml-1 tabular-nums">{count}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /* ── Helpers ── */
 const generatePin = () => String(Math.floor(1000 + Math.random() * 9000));
 
@@ -118,12 +146,24 @@ type TabView = 'Drivers' | 'Trucks';
 export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, assignments = [], isViewOnly = false, onResetAll, adminRole, savingToDb, onLogActivity, onServerChange, archivedDrivers = [], archivedTrucks = [], search }: Props) {
   const [tab, setTab] = useState<TabView>('Drivers');
   const [driverView, setDriverView] = useState<'active' | 'archived'>('active');
+  const [availabilityFilter, setAvailabilityFilter] = useState<AvailabilityFilter>('all');
   const [truckView,  setTruckView]  = useState<'active' | 'archived'>('active');
+  const [truckStatusFilter, setTruckStatusFilter] = useState<AvailabilityFilter>('all');
   const query = search.trim().toLowerCase();
   const matches = (fields: (string | undefined)[]) => !query || fields.some((field) => field?.toLowerCase().includes(query));
-  const visibleDrivers = sortNewestFirst(tab === 'Drivers' && driverView === 'active' ? drivers.filter((driver) => matches([driver.name, driver.id, driver.phone])) : drivers, (driver) => driver.id, 'driver');
+  const availableCount = drivers.filter((driver) => isAvailable(driver.status)).length;
+  const onDeliveryCount = drivers.length - availableCount;
+  const availableTruckCount = trucks.filter((truck) => truck.status === 'Available').length;
+  const onDeliveryTruckCount = trucks.filter((truck) => truck.status === 'Assigned').length;
+  const visibleDrivers = sortNewestFirst(tab === 'Drivers' && driverView === 'active' ? drivers.filter((driver) =>
+    matches([driver.name, driver.id, driver.phone]) &&
+    (availabilityFilter === 'all' || isAvailable(driver.status) === (availabilityFilter === 'available'))
+  ) : drivers, (driver) => driver.id, 'driver');
   const visibleArchivedDrivers = sortNewestFirst(tab === 'Drivers' && driverView === 'archived' ? archivedDrivers.filter((driver) => matches([driver.name, driver.id, driver.phone])) : archivedDrivers, (driver) => driver.id, 'driver');
-  const visibleTrucks = tab === 'Trucks' && truckView === 'active' ? trucks.filter((truck) => matches([truck.plateNumber, truck.id, truck.classification, truck.capacity])) : trucks;
+  const visibleTrucks = tab === 'Trucks' && truckView === 'active' ? trucks.filter((truck) =>
+    matches([truck.plateNumber, truck.id, truck.classification, truck.capacity]) &&
+    (truckStatusFilter === 'all' || truck.status === (truckStatusFilter === 'available' ? 'Available' : 'Assigned'))
+  ) : trucks;
   const visibleArchivedTrucks = tab === 'Trucks' && truckView === 'archived' ? archivedTrucks.filter((truck) => matches([truck.plateNumber, truck.id, truck.classification, truck.capacity])) : archivedTrucks;
   const activeDriversPage = usePagination(visibleDrivers);
   const archivedDriversPage = usePagination(visibleArchivedDrivers);
@@ -136,9 +176,9 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
     activeTrucksPage.setPage(1);
     archivedTrucksPage.setPage(1);
   }, [search]);
-  const activeDriversArea = useStablePageHeight(activeDriversPage.page, visibleDrivers.length, 10, `${tab}|${driverView}|${search}`);
+  const activeDriversArea = useStablePageHeight(activeDriversPage.page, visibleDrivers.length, 10, `${tab}|${driverView}|${availabilityFilter}|${search}`);
   const archivedDriversArea = useStablePageHeight(archivedDriversPage.page, visibleArchivedDrivers.length, 10, `${tab}|${driverView}|${search}`);
-  const activeTrucksArea = useStablePageHeight(activeTrucksPage.page, visibleTrucks.length, 10, `${tab}|${truckView}|${search}`);
+  const activeTrucksArea = useStablePageHeight(activeTrucksPage.page, visibleTrucks.length, 10, `${tab}|${truckView}|${truckStatusFilter}|${search}`);
   const archivedTrucksArea = useStablePageHeight(archivedTrucksPage.page, visibleArchivedTrucks.length, 10, `${tab}|${truckView}|${search}`);
   const resetPages = () => {
     activeDriversPage.setPage(1);
@@ -220,8 +260,8 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
       {/* ── Header ── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-semibold text-foreground">Accounts</h2>
-          <p className="text-sm text-muted-foreground mt-1">Register drivers with PINs and manage truck fleet</p>
+          <h2 className="text-2xl font-semibold text-foreground">Drivers &amp; Trucks</h2>
+          <p className="text-sm text-muted-foreground mt-1">Manage driver accounts, availability, and truck records.</p>
         </div>
         <div className="flex items-center flex-wrap gap-3">
           <div className="flex items-center bg-muted/40 border border-border rounded-xl p-1 gap-1">
@@ -250,27 +290,18 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
       {tab === 'Drivers' && (
         <div className="space-y-4">
           {/* Bar */}
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <StatusTabs value={driverView} onChange={(view) => { setDriverView(view); resetPages(); }}
+          <div className="flex flex-wrap items-center gap-3">
+            <StatusTabs value={driverView} onChange={(view) => { setDriverView(view); setAvailabilityFilter('all'); resetPages(); }}
               activeCount={drivers.length} archivedCount={archivedDrivers.length} />
-            {driverView === 'active' && (
-            <div className="flex items-center gap-4 text-sm">
-              <div className="flex items-center gap-1.5 text-muted-foreground">
-                <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
-                <span>{drivers.filter((d) => isAvailable(d.status)).length} Available</span>
-              </div>
-              <div className="flex items-center gap-1.5 text-muted-foreground">
-                <span className="w-2 h-2 rounded-full bg-blue-500 inline-block" />
-                <span>{drivers.filter((d) => !isAvailable(d.status)).length} On Delivery</span>
-              </div>
-            </div>
-            )}
-            {!isViewOnly && driverView === 'active' && (
-              <button onClick={() => setShowAddDriver(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors text-sm">
+            {driverView === 'active' && <>
+              <AvailabilityFilters value={availabilityFilter} label="Driver availability"
+                allCount={drivers.length} availableCount={availableCount} onDeliveryCount={onDeliveryCount}
+                onChange={(value) => { setAvailabilityFilter(value); activeDriversPage.setPage(1); }} />
+              {!isViewOnly && <button onClick={() => setShowAddDriver(true)}
+                className="ml-auto flex min-h-10 w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors text-sm">
                 <Plus className="w-4 h-4" /> Register Driver
-              </button>
-            )}
+              </button>}
+            </>}
           </div>
 
           {/* Archived drivers — read-only, with the archive date */}
@@ -313,9 +344,9 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
               <div className="w-16 h-16 bg-muted/50 rounded-full flex items-center justify-center mx-auto mb-4">
                 <Users className="w-8 h-8 text-muted-foreground/40" />
               </div>
-              <p className="font-medium text-foreground mb-1">{query ? 'No accounts found' : 'No Drivers Registered Yet'}</p>
-              <p className="text-sm text-muted-foreground mb-5">{query ? 'Try a different search term.' : 'Register a driver to generate their login PIN.'}</p>
-              {!query && !isViewOnly && (
+              <p className="font-medium text-foreground mb-1">{availabilityFilter === 'available' ? (query ? 'No available drivers match your search.' : 'No available drivers found.') : availabilityFilter === 'onDelivery' ? (query ? 'No drivers on delivery match your search.' : 'No drivers are currently on delivery.') : query ? 'No accounts found' : 'No Drivers Registered Yet'}</p>
+              <p className="text-sm text-muted-foreground mb-5">{query ? 'Try a different search term.' : availabilityFilter === 'all' ? 'Register a driver to generate their login PIN.' : 'Choose All to see every active driver.'}</p>
+              {!query && availabilityFilter === 'all' && !isViewOnly && (
                 <button onClick={() => setShowAddDriver(true)}
                   className="px-5 py-2.5 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 transition-colors">
                   + Register Driver
@@ -488,27 +519,18 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
       {/* ════ TRUCKS TAB ════ */}
       {tab === 'Trucks' && (
         <div className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <StatusTabs value={truckView} onChange={(view) => { setTruckView(view); resetPages(); }}
+          <div className="flex flex-wrap items-center gap-3">
+            <StatusTabs value={truckView} onChange={(view) => { setTruckView(view); setTruckStatusFilter('all'); resetPages(); }}
               activeCount={trucks.length} archivedCount={archivedTrucks.length} />
-            {truckView === 'active' && (
-            <div className="flex items-center gap-4 text-sm">
-              <div className="flex items-center gap-1.5 text-muted-foreground">
-                <Truck className="w-4 h-4 text-green-500" />
-                <span>{trucks.filter((t) => t.status === 'Available').length} Available</span>
-              </div>
-              <div className="flex items-center gap-1.5 text-muted-foreground">
-                <Truck className="w-4 h-4 text-blue-500" />
-                <span>{trucks.filter((t) => t.status === 'Assigned').length} On Delivery</span>
-              </div>
-            </div>
-            )}
-            {!isViewOnly && truckView === 'active' && (
-              <button onClick={() => setShowAddTruck(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-secondary text-white rounded-lg hover:bg-secondary/90 transition-colors text-sm">
+            {truckView === 'active' && <>
+              <AvailabilityFilters value={truckStatusFilter} label="Truck availability"
+                allCount={trucks.length} availableCount={availableTruckCount} onDeliveryCount={onDeliveryTruckCount}
+                onChange={(value) => { setTruckStatusFilter(value); activeTrucksPage.setPage(1); }} />
+              {!isViewOnly && <button onClick={() => setShowAddTruck(true)}
+                className="ml-auto flex min-h-10 w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 bg-secondary text-white rounded-lg hover:bg-secondary/90 transition-colors text-sm">
                 <Plus className="w-4 h-4" /> Register Truck
-              </button>
-            )}
+              </button>}
+            </>}
           </div>
 
           {/* Archived trucks — read-only, with the archive date */}
@@ -550,9 +572,9 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
               <div className="w-16 h-16 bg-muted/50 rounded-full flex items-center justify-center mx-auto mb-4">
                 <Truck className="w-8 h-8 text-muted-foreground/40" />
               </div>
-              <p className="font-medium text-foreground mb-1">{query ? 'No accounts found' : 'No Trucks Registered Yet'}</p>
-              <p className="text-sm text-muted-foreground mb-5">{query ? 'Try a different search term.' : 'Register trucks so they can be assigned to deliveries.'}</p>
-              {!query && !isViewOnly && (
+              <p className="font-medium text-foreground mb-1">{truckStatusFilter === 'available' ? (query ? 'No available trucks match your search.' : 'No available trucks found.') : truckStatusFilter === 'onDelivery' ? (query ? 'No trucks on delivery match your search.' : 'No trucks are currently on delivery.') : query ? 'No accounts found' : 'No Trucks Registered Yet'}</p>
+              <p className="text-sm text-muted-foreground mb-5">{query ? 'Try a different search term.' : truckStatusFilter === 'all' ? 'Register trucks so they can be assigned to deliveries.' : 'Choose All to see every active truck.'}</p>
+              {!query && truckStatusFilter === 'all' && !isViewOnly && (
                 <button onClick={() => setShowAddTruck(true)}
                   className="px-5 py-2.5 bg-secondary text-white rounded-lg text-sm hover:bg-secondary/90 transition-colors">
                   + Register Truck
@@ -746,7 +768,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
         <RegisterDriverModal
           drivers={drivers}
           setDrivers={setDrivers}
-          onCreated={(driver) => { markLocalRecordAdded('driver', driver.id); activeDriversPage.setPage(1); }}
+          onCreated={(driver) => { setAvailabilityFilter('all'); markLocalRecordAdded('driver', driver.id); activeDriversPage.setPage(1); }}
           onClose={() => setShowAddDriver(false)}
         />
       )}

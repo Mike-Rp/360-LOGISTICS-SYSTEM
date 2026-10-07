@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { LayoutDashboard, Truck, FileText, ChartNoAxesCombined, ClipboardList, Route, Menu, X } from 'lucide-react';
+import { LayoutDashboard, Truck, FileText, ChartNoAxesCombined, ClipboardList, Route, Menu, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import imgLogo from 'figma:asset/5e73e3c08e898d68c86717993c6e7442d03e9ac4.png';
 import { adminHref, followAdminLink } from '../../lib/adminNavigation';
 
@@ -123,12 +123,12 @@ export default function Sidebar({ activeNav, setActiveNav, mobileOpen, setMobile
       {/* ── Desktop sidebar ── */}
       <aside onTransitionEnd={(event) => {
         if (event.target === event.currentTarget && event.propertyName === 'width') window.dispatchEvent(new Event('resize'));
-      }} className={`hidden flex-shrink-0 flex-col border-r border-border bg-white transition-[width] duration-150 md:flex ${collapsed ? 'w-[68px]' : 'w-64'}`}>
+      }} className={`hidden flex-shrink-0 flex-col border-r border-border bg-white transition-[width] duration-150 motion-reduce:transition-none md:flex ${collapsed ? 'w-[68px]' : 'w-64'}`}>
         <div className={`flex h-[71px] flex-shrink-0 items-center border-b border-border ${collapsed ? 'flex-col justify-center gap-1 px-2' : 'justify-between px-7'}`}>
           {!collapsed && <LogoButton />}
-          <button type="button" onClick={toggleCollapsed} aria-label={collapsed ? 'Expand menu' : 'Collapse menu'} aria-expanded={!collapsed}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40">
-            <Menu className="h-5 w-5" />
+          <button type="button" onClick={toggleCollapsed} aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} aria-expanded={!collapsed}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 motion-reduce:transition-none">
+            {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
           </button>
         </div>
         <NavContent iconOnly={collapsed} />
