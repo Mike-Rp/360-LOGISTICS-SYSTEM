@@ -1,9 +1,9 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import {
-  X, Search, HelpCircle, ChevronRight, ArrowLeft,
+  X, Search, HelpCircle, ChevronRight, ChevronDown, ArrowLeft,
   Truck, ClipboardList, FileText, BarChart3, UserCog,
   MonitorCheck, Package, Phone, Shield, Lightbulb,
-  AlertTriangle, CheckCircle2, ArrowRight, BookOpen,
+  AlertTriangle, CheckCircle2, BookOpen,
 } from 'lucide-react';
 import { useModalFocus } from './useModalFocus';
 
@@ -29,7 +29,7 @@ interface Topic {
 const TOPICS: Topic[] = [
   {
     id: 'add-driver',
-    category: 'Accounts',
+    category: 'Drivers & Trucks',
     title: 'Register a Driver',
     summary: 'Add a new driver with a mobile number and PIN so they can log in on their phone.',
     icon: UserCog,
@@ -37,16 +37,16 @@ const TOPICS: Topic[] = [
     iconBg: 'bg-purple-100',
     tags: ['driver', 'register', 'add', 'pin', 'mobile'],
     steps: [
-      { title: 'Go to Accounts → Drivers tab', body: 'Click "Accounts" in the sidebar, then make sure the "Drivers" tab is selected.' },
+      { title: 'Go to Drivers & Trucks → Drivers tab', body: 'Click "Drivers & Trucks" in the sidebar, then make sure the "Drivers" tab is selected.' },
       { title: 'Click "+ Register Driver"', body: 'Press the green button. A registration form will slide in.' },
-      { title: 'Fill in driver details', body: 'Enter full name, mobile number (e.g. 09XX XXX XXXX), and shift. The system auto-generates a 4-digit PIN.', tip: 'The mobile number is the driver\'s login username — use the number on their device.' },
+      { title: 'Fill in driver details', body: 'Enter the driver\'s first name, surname, and mobile number, then click "Generate PIN" for a 4-digit PIN.', tip: 'The mobile number is the driver\'s login username — use the number on their device.' },
       { title: 'Save', body: 'Click "Register Driver". The driver can now log in with their mobile + PIN.' },
-      { title: 'Share the PIN', body: 'Tell the driver their PIN securely. You can view or regenerate PINs anytime from the Accounts table.', warning: 'Don\'t share PINs over public channels. Use a direct call or in-person handover.' },
+      { title: 'Share the PIN', body: 'Tell the driver their PIN securely. You can view or regenerate PINs anytime from the Drivers & Trucks table.', warning: 'Don\'t share PINs over public channels. Use a direct call or in-person handover.' },
     ],
   },
   {
     id: 'add-truck',
-    category: 'Accounts',
+    category: 'Drivers & Trucks',
     title: 'Register a Truck',
     summary: 'Add a truck to your fleet with plate number, classification, and payload capacity.',
     icon: Truck,
@@ -54,16 +54,16 @@ const TOPICS: Topic[] = [
     iconBg: 'bg-teal-100',
     tags: ['truck', 'register', 'fleet', 'plate'],
     steps: [
-      { title: 'Go to Accounts → Trucks tab', body: 'Click "Accounts" in the sidebar, then switch to the "Trucks" tab.' },
+      { title: 'Go to Drivers & Trucks → Trucks tab', body: 'Click "Drivers & Trucks" in the sidebar, then switch to the "Trucks" tab.' },
       { title: 'Click "+ Register Truck"', body: 'Opens the 3-step truck wizard.' },
       { title: 'Step 1 — Plate Number', body: 'Type the plate (e.g. "ABC 1234"). Must be unique across your fleet.' },
-      { title: 'Step 2 — Classification', body: 'Choose from Micro, Light, Medium, Heavy, or Extravehicular. Selected card gets a blue border and checkmark.' },
-      { title: 'Step 3 — Capacity & Confirm', body: 'Select payload capacity from the dropdown, review the summary, then click "Register truck".', tip: 'Capacity is used in reports and helps dispatchers pick the right truck.' },
+      { title: 'Step 2 — Classification', body: 'Choose the truck classification from the available cards. The selected type determines its capacity.' },
+      { title: 'Step 3 — Review & Confirm', body: 'Review the plate, classification, and automatically assigned capacity, then click "Register truck".', tip: 'Capacity helps dispatchers pick the right truck for each delivery.' },
     ],
   },
   {
     id: 'assign-task',
-    category: 'Monitor',
+    category: 'Dispatch',
     title: 'Assign a Delivery Task',
     summary: 'Dispatch a driver and truck for a route with full trip details.',
     icon: ClipboardList,
@@ -71,16 +71,16 @@ const TOPICS: Topic[] = [
     iconBg: 'bg-blue-100',
     tags: ['assign', 'task', 'delivery', 'dispatch'],
     steps: [
-      { title: 'Go to Monitor', body: 'Click "Monitor" in the sidebar — this is the main dispatch board.' },
-      { title: 'Click "Assign Task"', body: 'The green button opens a 2-step wizard.' },
+      { title: 'Go to Dispatch', body: 'Click "Dispatch" in the sidebar — this is the main dispatch board.' },
+      { title: 'Click "Dispatch Truck"', body: 'The green button opens a 2-step assignment form.' },
       { title: 'Step 1 — Driver, truck & route', body: 'Choose an available driver, an available truck, then fill in Origin, Destination, Client, and Pickup Location.', tip: 'Only drivers and trucks not currently assigned appear in the dropdowns.' },
       { title: 'Step 2 — Schedule & notes', body: 'Set Delivery Date, Pickup Date, Pickup Time, ETA, and any remarks.' },
-      { title: 'Confirm', body: 'Click "Assign Task". The driver sees the job immediately on their phone.' },
+      { title: 'Confirm', body: 'Click "Dispatch Truck". The driver sees the job on their phone.' },
     ],
   },
   {
     id: 'monitor',
-    category: 'Monitor',
+    category: 'Dispatch',
     title: 'Monitor Active Deliveries',
     summary: 'Track real-time status of all ongoing deliveries from a single board.',
     icon: MonitorCheck,
@@ -88,27 +88,58 @@ const TOPICS: Topic[] = [
     iconBg: 'bg-green-100',
     tags: ['monitor', 'track', 'status', 'real-time'],
     steps: [
-      { title: 'Open Monitor', body: 'Each active assignment shows as a card: truck plate, driver, route, and status badge.' },
+      { title: 'Open Dispatch', body: 'Each active assignment shows as a card: truck plate, driver, route, and status badge.' },
       { title: 'Status badge colours', body: 'Assigned (purple — light purple until the driver opens it) · Picked Up (light blue) · In Transit (blue) · Delivered (green) · Failed/Issue (red) · Cancelled (gray).' },
-      { title: 'View details', body: 'Click "View Details" on any card for the full trip record: documents, photos, timestamps, delay notes.' },
+      { title: 'View details', body: 'Click "View Shipment" on any card for the full trip record: documents, photos, timestamps, delay notes.' },
       { title: 'Search & filter', body: 'Use the search bar to filter by plate, driver name, route, client, or status.', tip: 'The board refreshes automatically every 12 seconds.' },
+    ],
+  },
+  {
+    id: 'review-documents',
+    category: 'Dispatch',
+    title: 'Review Pending Documents',
+    summary: 'Use Dispatch to approve or reject documents waiting for a decision.',
+    icon: ClipboardList,
+    iconColor: 'text-blue-600',
+    iconBg: 'bg-blue-100',
+    tags: ['documents', 'review', 'approve', 'reject', 'pending'],
+    steps: [
+      { title: 'Open Dispatch', body: 'Open the assignment that has documents pending review. The review queue groups pending documents under each assignment.' },
+      { title: 'Open the review section', body: 'Click "Review documents" in the review queue, or open the assignment with "View Shipment" to find its documents.' },
+      { title: 'Check each file', body: 'Preview the uploaded document and confirm it is legible and belongs to the delivery.' },
+      { title: 'Approve or Reject', body: 'Use the existing Approve or Reject controls in Dispatch. Give a clear reason when rejecting so the driver knows what to correct.', warning: 'Document Archive is for viewing and tracking files; review decisions happen in Dispatch.' },
+    ],
+  },
+  {
+    id: 'deliveries',
+    category: 'Deliveries',
+    title: 'View Delivery Status',
+    summary: 'Find active, completed, and cancelled assignments and open their documents.',
+    icon: Package,
+    iconColor: 'text-blue-600',
+    iconBg: 'bg-blue-100',
+    tags: ['delivery', 'status', 'active', 'completed', 'cancelled', 'documents'],
+    steps: [
+      { title: 'Open Deliveries', body: 'Select "Deliveries" in the sidebar to see the assignment list.' },
+      { title: 'Choose a tab', body: 'Use Active, Completed, or Cancelled to narrow the list. Search and the date filter can help find a specific assignment.' },
+      { title: 'Check the status', body: 'Read the Status badge for the assignment workflow. Delivered does not automatically mean its document review is complete.' },
+      { title: 'Open documents', body: 'When available, click the Documents control on the delivery to open that assignment in Document Archive.' },
     ],
   },
   {
     id: 'documents',
     category: 'Documents',
-    title: 'Review & Approve Documents',
-    summary: 'Approve or reject delivery documents submitted by drivers from the field.',
+    title: 'View and Track Documents',
+    summary: 'Browse uploaded delivery files and follow their review status.',
     icon: FileText,
     iconColor: 'text-amber-600',
     iconBg: 'bg-amber-100',
-    tags: ['documents', 'approve', 'reject', 'pod'],
+    tags: ['documents', 'archive', 'status', 'pod'],
     steps: [
-      { title: 'Go to Documents', body: 'All assignments with their document status are listed here.' },
-      { title: 'Find pending docs', body: 'Amber "In Review" badges = documents waiting for your action.' },
-      { title: 'Review', body: 'Click "View" on a document to see the full photo. Check it\'s legible and complete.' },
-      { title: 'Approve or Reject', body: 'Approve to accept. Reject with a reason so the driver knows what to fix.', warning: 'Clear rejection reasons speed up resubmission — avoid vague notes.' },
-      { title: 'Track completion', body: 'The progress bar shows how many of the 6 required documents are approved.', tip: 'Required: Proof of Delivery, Receiving Acknowledgement, Dispatch Slip, Sales Invoice, Bill of Lading, Waybill / Delivery Receipt.' },
+      { title: 'Go to Documents', body: 'Assignments with uploaded documents and their review status are listed in Document Archive.' },
+      { title: 'Find a status', body: 'Use All, Pending review, All approved, or Rejected to filter documents, then expand an assignment to see its files.' },
+      { title: 'View a document', body: 'Click "View" on a document to see the full photo and its current review status.' },
+      { title: 'Track completion', body: 'The document summary shows approved, pending, and rejected files. For approval or rejection, open the assignment in Dispatch.', tip: 'Required: Proof of Delivery, Receiving Acknowledgement, Dispatch Slip, Sales Invoice, Bill of Lading, Waybill / Delivery Receipt.' },
     ],
   },
   {
@@ -121,15 +152,15 @@ const TOPICS: Topic[] = [
     iconBg: 'bg-rose-100',
     tags: ['reports', 'analytics', 'on-time', 'export', 'csv'],
     steps: [
-      { title: 'Go to Reports', body: 'Live KPI cards at the top: Total Deliveries, On-Time Rate, Delay Incidents, Active Assignments.' },
-      { title: 'On-Time Rate', body: 'Shows "—" until at least one delivery is marked completed. Green = good, no colour = no data.' },
-      { title: 'Report sections', body: 'Delivery Summary, On-Time Analysis, Delay Reports, Document Review, Driver Performance — each has a preview table.' },
-      { title: 'Export CSV', body: 'Click the download icon on any section to get a CSV for Excel or Google Sheets.', tip: 'Use the Eye icon (Preview) to check data before exporting.' },
+      { title: 'Go to Reports', body: 'Open Reports & Analytics from the sidebar.' },
+      { title: 'Choose a report', body: 'Select Weekly Performance, Monthly Delivery Summary, or Delay & Issues.' },
+      { title: 'Preview', body: 'Click "Preview" on a report card to inspect its detailed table.' },
+      { title: 'Export CSV', body: 'Click "Export" on a report card to download a CSV for Excel or Google Sheets.', tip: 'The Analytics date range below the report cards filters the charts, not the report cards.' },
     ],
   },
   {
     id: 'driver-login',
-    category: 'Drivers',
+    category: 'Drivers & Trucks',
     title: 'Driver Login Guide',
     summary: 'Step-by-step for drivers to log in to the mobile interface.',
     icon: Phone,
@@ -141,12 +172,12 @@ const TOPICS: Topic[] = [
       { title: 'Enter mobile number', body: 'Type the number the admin registered (e.g. 09XX XXX XXXX).', tip: 'Use the exact number registered — including the leading 0.' },
       { title: 'Enter 4-digit PIN', body: 'Tap each box and enter the PIN provided by the admin.' },
       { title: 'Tap Login', body: 'Correct credentials → task dashboard appears immediately.' },
-      { title: 'Forgot PIN?', body: 'Tap "Forgot PIN" — contact the admin to regenerate it from the Accounts page.', warning: 'Drivers cannot reset their own PIN. Only admins can regenerate it.' },
+      { title: 'Forgot PIN?', body: 'Tap "Forgot PIN" — contact the admin to regenerate it from Drivers & Trucks.', warning: 'Drivers cannot reset their own PIN. Only admins can regenerate it.' },
     ],
   },
   {
     id: 'driver-updates',
-    category: 'Drivers',
+    category: 'Drivers & Trucks',
     title: 'Driver Status Updates & Documents',
     summary: 'How drivers submit status changes, photos, and delivery documents.',
     icon: Package,
@@ -161,24 +192,51 @@ const TOPICS: Topic[] = [
     ],
   },
   {
+    id: 'settings',
+    category: 'Settings',
+    title: 'Update Profile and Preferences',
+    summary: 'Edit your profile, change your password, and manage notifications.',
+    icon: UserCog,
+    iconColor: 'text-slate-600',
+    iconBg: 'bg-slate-100',
+    tags: ['settings', 'profile', 'password', 'notifications'],
+    steps: [
+      { title: 'Open Settings', body: 'Open the account menu in the header and select Settings.' },
+      { title: 'Save profile changes', body: 'Edit your display name or photo, preview the change, then click "Save Changes" in the Profile section.' },
+      { title: 'Update your password', body: 'Use the separate "Update Password" action in the Password section.' },
+      { title: 'Manage notifications', body: 'Use the notification preference control in Settings to turn notifications on or off.' },
+    ],
+  },
+  {
     id: 'security',
     category: 'Admin',
     title: 'Access Roles & Security',
-    summary: 'Three admin roles control what each user can see and do.',
+    summary: 'Understand Operation Manager, CSR, and Viewer access.',
     icon: Shield,
     iconColor: 'text-green-600',
     iconBg: 'bg-green-100',
     tags: ['security', 'roles', 'access', 'admin', 'viewer'],
     steps: [
-      { title: 'Admin (full access)', body: 'Can register/delete drivers & trucks, assign tasks, approve/reject documents, reset all data.' },
-      { title: 'Demo/CSR', body: 'Can assign tasks and view all data. Cannot delete accounts or reset the system.' },
+      { title: 'Operation Manager', body: 'Can manage workspace members in Workspace Settings and use the admin operations pages.' },
+      { title: 'CSR', body: 'Can use the operational pages according to their assigned permissions, including dispatch and document review.' },
       { title: 'Viewer (read-only)', body: 'Can browse all pages but cannot make any changes. Good for auditors and stakeholders.' },
-      { title: 'Separate accounts', body: 'Each CSR/admin should use their own login — shared accounts make activity log attribution impossible.', warning: 'Never share login credentials. All actions are logged against the account that performed them.' },
+      { title: 'Separate accounts', body: 'Each team member should use their own login so activity can be attributed correctly.', warning: 'Never share login credentials.' },
     ],
   },
 ];
 
-const CATEGORIES = ['All', ...Array.from(new Set(TOPICS.map((t) => t.category)))];
+const CATEGORY_ORDER = ['Dispatch', 'Deliveries', 'Documents', 'Reports', 'Drivers & Trucks', 'Settings', 'Admin'];
+const CATEGORIES = ['All', ...CATEGORY_ORDER.filter((name) => TOPICS.some((topic) => topic.category === name))];
+const COMMON_TASK_IDS = ['add-driver', 'add-truck', 'assign-task', 'review-documents'];
+const CATEGORY_DETAILS: Record<string, { icon: React.ElementType; description: string }> = {
+  Dispatch: { icon: ClipboardList, description: 'Assign, track, and review deliveries.' },
+  Deliveries: { icon: Package, description: 'Find assignments and follow their progress.' },
+  Documents: { icon: FileText, description: 'Browse files and their review status.' },
+  Reports: { icon: BarChart3, description: 'Preview reports and understand performance.' },
+  'Drivers & Trucks': { icon: Truck, description: 'Manage the people and vehicles in your fleet.' },
+  Settings: { icon: UserCog, description: 'Update your profile and preferences.' },
+  Admin: { icon: Shield, description: 'Understand workspace access and roles.' },
+};
 
 interface Props {
   open: boolean;
@@ -189,6 +247,7 @@ export default function HelpPanel({ open, onClose }: Props) {
   const [search,      setSearch]      = useState('');
   const [category,    setCategory]    = useState('All');
   const [activeTopic, setActiveTopic] = useState<Topic | null>(null);
+  const [expandedCategories, setExpandedCategories] = useState<string[]>([]);
 
   const detailRef = useRef<HTMLDivElement>(null);
 
@@ -229,10 +288,25 @@ export default function HelpPanel({ open, onClose }: Props) {
       return matchCat && (
         t.title.toLowerCase().includes(q) ||
         t.summary.toLowerCase().includes(q) ||
+        t.category.toLowerCase().includes(q) ||
         t.tags.some((tag) => tag.includes(q))
       );
     });
   }, [search, category]);
+
+  useEffect(() => {
+    if (search.trim()) {
+      setExpandedCategories(CATEGORIES.filter((name) => filtered.some((topic) => topic.category === name)));
+    }
+  }, [search, filtered]);
+
+  const commonTasks = filtered.filter((topic) => COMMON_TASK_IDS.includes(topic.id));
+  const groupedTopics = CATEGORIES.slice(1)
+    .map((name) => ({ name, topics: filtered.filter((topic) => topic.category === name) }))
+    .filter((group) => group.topics.length > 0);
+
+  const toggleCategory = (name: string) => setExpandedCategories((current) =>
+    current.includes(name) ? current.filter((item) => item !== name) : [...current, name]);
 
   const openTopic = (topic: Topic) => setActiveTopic(topic);
   const goBack    = ()            => setActiveTopic(null);
@@ -290,7 +364,7 @@ export default function HelpPanel({ open, onClose }: Props) {
               </div>
               <div>
                 <h2 id="help-title" className="text-base font-semibold text-foreground leading-tight">Help &amp; Guide</h2>
-                <p className="text-xs text-muted-foreground">{TOPICS.length} step-by-step guides</p>
+                <p className="text-xs text-muted-foreground">Quick help for common admin tasks.</p>
               </div>
             </div>
             <button
@@ -368,28 +442,30 @@ export default function HelpPanel({ open, onClose }: Props) {
           /* ── List view ── */
           <>
             {/* Search + filter — sticky */}
-            <div className="px-6 py-4 border-b border-border/60 flex-shrink-0 space-y-3">
+            <div className="px-4 sm:px-6 py-3 border-b border-border/60 flex-shrink-0 space-y-2.5">
               <div className="relative">
                 <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <input
                   type="text"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search guides by topic or keyword…"
+                  placeholder="Search help guides..."
+                  aria-label="Search help guides"
                   className="w-full pl-10 pr-9 py-2.5 bg-[#f9fafb] border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                 />
                 {search && (
-                  <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                  <button onClick={() => setSearch('')} aria-label="Clear help search" className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary">
                     <X className="w-3.5 h-3.5" />
                   </button>
                 )}
               </div>
-              <div className="flex gap-1.5 flex-wrap">
+              <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
                 {CATEGORIES.map((cat) => (
                   <button
                     key={cat}
-                    onClick={() => setCategory(cat)}
-                    className={`px-3 py-1 rounded-full text-xs font-medium transition-colors border ${
+                    onClick={() => { setCategory(cat); setExpandedCategories(cat === 'All' ? [] : [cat]); }}
+                    aria-pressed={category === cat}
+                    className={`min-h-9 shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors border focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${
                       category === cat
                         ? 'bg-primary text-white border-primary'
                         : 'bg-white text-muted-foreground border-border hover:border-primary/40 hover:text-primary'
@@ -401,14 +477,14 @@ export default function HelpPanel({ open, onClose }: Props) {
               </div>
             </div>
 
-            {/* Topic list */}
-            <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-2">
+            {/* Common tasks and compact category list */}
+            <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-4 space-y-5">
               {filtered.length === 0 ? (
                 <div className="py-12 text-center">
                   <HelpCircle className="w-10 h-10 text-muted-foreground/25 mx-auto mb-3" />
                   <p className="text-sm text-muted-foreground">No guides found</p>
                   <button
-                    onClick={() => { setSearch(''); setCategory('All'); }}
+                    onClick={() => { setSearch(''); setCategory('All'); setExpandedCategories([]); }}
                     className="mt-3 text-xs text-primary hover:text-primary/80 underline"
                   >
                     Clear search
@@ -421,30 +497,64 @@ export default function HelpPanel({ open, onClose }: Props) {
                       <span className="font-semibold text-foreground">{filtered.length}</span> guide{filtered.length !== 1 ? 's' : ''} found
                     </p>
                   )}
-                  {filtered.map((topic) => (
-                    <button
-                      key={topic.id}
-                      onClick={() => openTopic(topic)}
-                      className="w-full text-left rounded-xl border border-border bg-white px-4 py-3.5 hover:border-primary/30 hover:bg-accent/20 hover:shadow-sm transition-all group"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className={`${topic.iconBg} ${topic.iconColor} p-2 rounded-lg flex-shrink-0`}>
-                          <topic.icon className="w-4 h-4" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-[12px] font-semibold text-muted-foreground uppercase tracking-wider mb-0.5">{topic.category}</p>
-                          <p className="text-sm font-semibold text-foreground leading-tight group-hover:text-primary transition-colors">{topic.title}</p>
-                          <p className="text-xs text-muted-foreground mt-0.5 leading-snug line-clamp-1">{topic.summary}</p>
-                        </div>
-                        <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                          <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors" />
-                          <span className="text-[12px] text-muted-foreground flex items-center gap-0.5">
-                            <ArrowRight className="w-2.5 h-2.5" />{topic.steps.length} steps
-                          </span>
-                        </div>
+                  {commonTasks.length > 0 && (
+                    <section aria-labelledby="common-tasks-title">
+                      <h3 id="common-tasks-title" className="text-sm font-semibold text-foreground">Common Tasks</h3>
+                      <p className="text-xs text-muted-foreground mt-0.5 mb-2.5">Quick access to common admin tasks.</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {commonTasks.map((topic) => (
+                          <button key={topic.id} type="button" onClick={() => openTopic(topic)}
+                            className="min-w-0 flex items-start gap-2.5 rounded-xl border border-border bg-white p-3 text-left hover:border-primary/30 hover:bg-accent/20 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary group">
+                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><topic.icon className="h-4 w-4" /></span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-sm font-semibold text-foreground group-hover:text-primary">{topic.title}</span>
+                              <span className="mt-0.5 block text-xs leading-snug text-muted-foreground line-clamp-2">{topic.summary}</span>
+                              <span className="mt-2 flex flex-wrap gap-x-2 text-[12px] text-muted-foreground"><span>{topic.category}</span><span>{topic.steps.length} steps</span></span>
+                            </span>
+                            <ChevronRight className="mt-2 h-4 w-4 shrink-0 text-muted-foreground" />
+                          </button>
+                        ))}
                       </div>
-                    </button>
-                  ))}
+                    </section>
+                  )}
+
+                  <section aria-labelledby="all-guides-title">
+                    <h3 id="all-guides-title" className="mb-2.5 text-sm font-semibold text-foreground">All Guides</h3>
+                    <div className="space-y-2">
+                      {groupedTopics.map(({ name, topics }) => {
+                        const details = CATEGORY_DETAILS[name];
+                        const expanded = expandedCategories.includes(name);
+                        const panelId = `help-category-${name.toLowerCase().replace(/[^a-z]+/g, '-')}`;
+                        return (
+                          <div key={name} className="overflow-hidden rounded-xl border border-border bg-white">
+                            <button type="button" onClick={() => toggleCategory(name)} aria-expanded={expanded} aria-controls={panelId}
+                              className="flex w-full min-w-0 items-center gap-3 p-3 text-left hover:bg-accent/20 focus-visible:outline-2 focus-visible:outline-primary">
+                              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/5 text-primary"><details.icon className="h-4 w-4" /></span>
+                              <span className="min-w-0 flex-1">
+                                <span className="block text-sm font-semibold text-foreground">{name}</span>
+                                <span className="block text-xs text-muted-foreground leading-snug line-clamp-1">{details.description}</span>
+                              </span>
+                              <span className="hidden sm:block shrink-0 text-xs text-muted-foreground">{topics.length} guide{topics.length === 1 ? '' : 's'}</span>
+                              <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${expanded ? 'rotate-180' : ''}`} />
+                            </button>
+                            <div id={panelId} hidden={!expanded} className="divide-y divide-border/60 border-t border-border/60">
+                              {topics.map((topic) => (
+                                  <button key={topic.id} type="button" onClick={() => openTopic(topic)}
+                                    className="flex w-full min-w-0 items-center gap-3 px-3 py-2.5 text-left hover:bg-accent/20 focus-visible:outline-2 focus-visible:outline-primary group">
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block text-sm font-medium text-foreground group-hover:text-primary">{topic.title}</span>
+                                      <span className="block text-xs leading-snug text-muted-foreground line-clamp-2">{topic.summary}</span>
+                                    </span>
+                                    <span className="shrink-0 text-[12px] text-muted-foreground">{topic.steps.length} steps</span>
+                                    <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                  </button>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
                 </>
               )}
 
