@@ -265,19 +265,20 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
           <p className="text-sm text-muted-foreground mt-1">Manage driver accounts, availability, and truck records.</p>
         </div>
         <div className="flex items-center flex-wrap gap-3">
-          <div className="flex items-center bg-muted/40 border border-border rounded-xl p-1 gap-1">
+          <div role="group" aria-label="Drivers or trucks" className="relative grid w-full grid-cols-2 items-center rounded-xl border border-border bg-muted/40 p-1 sm:w-auto">
+            <span aria-hidden="true" className={`pointer-events-none absolute inset-y-1 left-1 w-[calc(50%_-_4px)] rounded-lg border border-primary bg-primary shadow-sm transition-transform duration-300 ease-out motion-reduce:transition-none ${tab === 'Trucks' ? 'translate-x-full' : 'translate-x-0'}`} />
             {(['Drivers', 'Trucks'] as TabView[]).map((t) => (
-              <button key={t} onClick={() => { setTab(t); resetPages(); }}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              <button key={t} type="button" aria-pressed={tab === t} onClick={() => { setTab(t); resetPages(); }}
+                className={`relative z-10 flex min-w-0 items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary motion-reduce:transition-none ${
                   tab === t
-                    ? 'bg-white shadow-sm text-foreground border border-border'
+                    ? 'text-primary-foreground'
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
                 {t === 'Drivers' ? <Users className="w-4 h-4" /> : <Truck className="w-4 h-4" />}
                 {t}
                 <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold ${
-                  tab === t ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
+                  tab === t ? 'bg-white/20 text-primary-foreground' : 'bg-muted text-muted-foreground'
                 }`}>
                   {t === 'Drivers' ? drivers.length : trucks.length}
                 </span>

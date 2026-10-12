@@ -284,7 +284,7 @@ export default function AdminDashboard({
         />
         <span role="status" className="sr-only">{initialLoading ? 'Loading page content…' : ''}</span>
         <main aria-busy={contentLoading} className={`min-w-0 flex-1 p-4 sm:p-6 ${mobileMenuOpen || settingsOpen ? 'overflow-hidden' : 'overflow-y-auto'}`}>
-          <div className="max-w-[1600px] mx-auto space-y-4 sm:space-y-6">
+          <div className={`max-w-[1600px] mx-auto space-y-4 sm:space-y-6 ${initialLoading ? '' : 'animate-in fade-in duration-300 motion-reduce:animate-none'}`}>
             {initialLoading ? <AdminContentSkeleton page={activeNav} isViewOnly={isViewOnly} /> : renderContent()}
           </div>
         </main>

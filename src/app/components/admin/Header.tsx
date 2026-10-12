@@ -63,6 +63,31 @@ export default function Header({
   const [accountOpen, setAccountOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const mobileSearchRef = useRef<HTMLInputElement>(null);
+  const knownNotificationIds = useRef(new Set(notifications.map((n) => n.id)));
+  const [enteringNotificationIds, setEnteringNotificationIds] = useState<Set<string>>(() => new Set());
+  const entranceTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    const incoming = bellOpen ? notifications.filter((n) => !knownNotificationIds.current.has(n.id)).map((n) => n.id) : [];
+    knownNotificationIds.current = new Set(notifications.map((n) => n.id));
+    if (!bellOpen) {
+      if (entranceTimer.current !== null) window.clearTimeout(entranceTimer.current);
+      entranceTimer.current = null;
+      setEnteringNotificationIds((current) => current.size ? new Set() : current);
+      return;
+    }
+    if (incoming.length === 0) return;
+    setEnteringNotificationIds((current) => new Set([...current, ...incoming]));
+    if (entranceTimer.current !== null) window.clearTimeout(entranceTimer.current);
+    entranceTimer.current = window.setTimeout(() => {
+      setEnteringNotificationIds(new Set());
+      entranceTimer.current = null;
+    }, 350);
+  }, [bellOpen, notifications]);
+
+  useEffect(() => () => {
+    if (entranceTimer.current !== null) window.clearTimeout(entranceTimer.current);
+  }, []);
 
   useEffect(() => setSearchOpen(false), [searchPlaceholder]);
   useEffect(() => { if (searchOpen) mobileSearchRef.current?.focus(); }, [searchOpen]);
@@ -202,7 +227,7 @@ export default function Header({
                               setBellOpen(false);
                             };
                             return (
-                              <div key={n.id} className={`flex min-w-0 items-start gap-2 px-4 py-3 transition-colors hover:bg-accent/30 ${n.read ? 'bg-white' : 'bg-primary/[0.035]'}`}>
+                              <div key={n.id} className={`flex min-w-0 items-start gap-2 px-4 py-3 transition-colors hover:bg-accent/30 ${n.read ? 'bg-white' : 'bg-primary/[0.035]'} ${enteringNotificationIds.has(n.id) ? 'motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-2 motion-safe:duration-300' : ''}`}>
                                 <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" aria-hidden="true" style={{ visibility: n.read ? 'hidden' : 'visible' }} />
                                 {!n.read && <span className="sr-only">Unread notification</span>}
                                 <Icon aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />

@@ -382,21 +382,34 @@ export function RegisterTruckModal({ trucks, setTrucks, onClose, onCreated, laye
     setTruckRegistered(true);
   };
 
-  /* Progress bar — shown only during wizard steps */
+  /* Numbered stepper — the existing Next/Back handlers remain the only way to advance. */
   const progressIndicator = (
     <div className="mb-5">
-      <p className="text-xs text-muted-foreground mb-2">
+      <p className="text-xs text-muted-foreground mb-3">
         Step {step} of 3 —{' '}
         <span className="font-medium text-foreground">{TRUCK_STEP_NAMES[step - 1]}</span>
       </p>
-      <div className="flex gap-1.5">
-        {([1, 2, 3] as const).map((s) => (
-          <div
-            key={s}
-            className={`h-1 flex-1 rounded-full transition-colors duration-200 ${s <= step ? 'bg-primary' : 'bg-border'}`}
-          />
-        ))}
-      </div>
+      <ol className="flex w-full" aria-label="Truck registration steps">
+        {TRUCK_STEP_NAMES.map((name, index) => {
+          const number = index + 1;
+          const complete = number < step;
+          const current = number === step;
+          return (
+            <li key={name} aria-current={current ? 'step' : undefined}
+              className="relative flex min-w-0 flex-1 flex-col items-center text-center">
+              {index > 0 && (
+                <span aria-hidden="true" className={`absolute right-1/2 top-[13px] h-0.5 w-full transition-colors duration-300 motion-reduce:transition-none ${number <= step ? 'bg-primary' : 'bg-border'}`} />
+              )}
+              <span className={`relative z-10 flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold transition-colors duration-300 motion-reduce:transition-none ${complete || current ? 'bg-primary text-white' : 'border border-border bg-white text-muted-foreground'} ${current ? 'ring-4 ring-primary/10' : ''}`}>
+                {complete ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : number}
+              </span>
+              <span className={`mt-2 max-w-full px-1 text-[11px] leading-tight sm:text-xs ${current ? 'font-semibold text-foreground' : 'text-muted-foreground'}`}>
+                {name}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
     </div>
   );
 

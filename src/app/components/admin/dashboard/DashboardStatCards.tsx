@@ -2,6 +2,7 @@ import { Package, CheckCircle, AlertTriangle, FileText, ArrowRight } from 'lucid
 import type { Assignment, CompletedTask } from '../../../data/assignmentTypes';
 import { parseStoredTimestamp } from '../../../data/assignmentTypes';
 import { adminHref, followAdminLink, pushAdminNavigation, pendingDocumentReviewTarget } from '../../../lib/adminNavigation';
+import CountUp from './CountUp';
 
 interface Props {
   assignments: Assignment[];
@@ -94,7 +95,7 @@ export default function DashboardStatCards({ assignments, completed, onNavigate 
           {/* items-start: the number stays on the same line in every card even when the
               supporting text on the right wraps to two lines */}
           <div className="flex items-start justify-between gap-3 mt-3">
-            <p className={`text-3xl font-semibold leading-none ${alert ? 'text-amber-600' : 'text-foreground'}`}>{value}</p>
+            <p className={`text-3xl font-semibold leading-none ${alert ? 'text-amber-600' : 'text-foreground'}`}><CountUp value={value} /></p>
             <div className="text-right min-w-0">
               <p className="text-xs text-muted-foreground leading-snug">{detail}</p>
               {link && (
