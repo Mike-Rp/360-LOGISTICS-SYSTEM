@@ -3,7 +3,7 @@ import {
   LogOut, Package, CheckCircle2, XCircle, Camera, WifiOff,
   Clock, Truck, AlertTriangle, FileText, Building2,
   ChevronRight, ChevronLeft, Lock, ArrowDown,
-  RefreshCw, Timer, RotateCcw, X, Phone,
+  RefreshCw, Timer, RotateCcw, X, Phone, Bell, Menu, History,
 } from 'lucide-react';
 import type { Assignment, CompletedTask, TaskStatus, StatusPhoto, DocStatus } from '../../data/assignmentTypes';
 import { taskStatusConfig } from '../../data/assignmentTypes';
@@ -23,7 +23,7 @@ interface NormDoc {
   type: string; uploaded: boolean; docStatus: DocStatus; rejectReason?: string; fileUrl?: string;
 }
 interface DriverNotif {
-  id: string; type: 'rejection' | 'approval'; title: string; body: string;
+  id: string; type: 'rejection' | 'approval'; title: string; body: string; docType: string;
 }
 
 type HistoryDetail = CompletedTask & { documents: Array<Assignment['documents'][number] & { uploadedAt?: string }> };
@@ -51,7 +51,7 @@ const manilaStamp = (value?: string) => {
 
 /* ── Constants ── */
 const LINEAR_FLOW: TaskStatus[] = ['Assigned', 'Picked Up', 'In Transit', 'Delivered'];
-const NEEDS_PHOTO: TaskStatus[] = ['Picked Up', 'In Transit'];
+const NEEDS_PHOTO: TaskStatus[] = ['Picked Up', 'In Transit', 'Delivered'];
 
 const REQUIRED_DOCS = [
   'Proof of Delivery',
@@ -339,15 +339,18 @@ function VerticalTracker({ stepIdx, isDelivered, uploadedCt, approvedCt, totalDo
    PHOTO CAPTURE SHEET (redesigned — receipt-style meta)
    ════════════════════════════════════════════════════════════ */
 function PhotoSheet({ status, onConfirm, onCancel }: {
-  status: TaskStatus; onConfirm: (photo: StatusPhoto) => void; onCancel: () => void;
+  status: TaskStatus; onConfirm: (photo: StatusPhoto) => Promise<void>; onCancel: () => void;
 }) {
   const cfg = taskStatusConfig[status];
   const [photo,      setPhoto]      = useState<string | null>(null);
   const [meta,       setMeta]       = useState<StatusPhoto | null>(null);
   const [locLoading, setLocLoading] = useState(false);
+  const [saving,     setSaving]     = useState(false);
+  const [saveError,  setSaveError]  = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleFile = (file: File) => {
+    setSaveError('');
     const reader = new FileReader();
     reader.onload = async () => {
       const compressed = await compressImage(reader.result as string);
@@ -394,21 +397,32 @@ function PhotoSheet({ status, onConfirm, onCancel }: {
     reader.readAsDataURL(file);
   };
 
-  const canConfirm = !!meta && !locLoading;
+  const canConfirm = !!photo && !!meta && meta.url === photo && !locLoading && !saving;
+  const confirmPhoto = async () => {
+    if (!canConfirm || !meta) return;
+    setSaving(true);
+    setSaveError('');
+    try { await onConfirm(meta); }
+    catch (err) {
+      console.error('[status photo] save failed:', err);
+      setSaveError(status === 'Delivered' ? 'Could not confirm delivery. Please retry the photo.' : 'Could not save the status photo. Please try again.');
+    } finally { setSaving(false); }
+  };
+  const cancelPhoto = () => { if (!saving) onCancel(); };
 
   return (
     <div className="fixed inset-0 z-50 flex items-end">
-      <div className="absolute inset-0 bg-black/60" onClick={onCancel} />
+      <div className="absolute inset-0 bg-black/60" onClick={cancelPhoto} />
       <div className="relative bg-white w-full rounded-t-3xl shadow-2xl animate-in slide-in-from-bottom duration-300 max-h-[90vh] flex flex-col">
         <div className="w-10 h-1 bg-gray-300 rounded-full mx-auto mt-3 mb-1 flex-shrink-0" />
 
         {/* Header */}
         <div className="px-5 py-4 flex items-center justify-between border-b border-gray-100 flex-shrink-0">
           <div>
-            <h3 className="text-xl font-bold text-foreground">Take a Photo</h3>
-            <p className="text-sm text-gray-500 mt-0.5">Required to confirm <strong>{cfg.label}</strong></p>
+            <h3 className="text-xl font-bold text-foreground">{status === 'Delivered' ? 'Delivery photo required' : 'Take a Photo'}</h3>
+            <p className="text-sm text-gray-500 mt-0.5">{status === 'Delivered' ? 'Upload a photo confirming delivery at the destination.' : <>Required to confirm <strong>{cfg.label}</strong></>}</p>
           </div>
-          <button onClick={onCancel} className="w-11 h-11 bg-gray-100 rounded-full flex items-center justify-center">
+          <button onClick={cancelPhoto} disabled={saving} className="w-11 h-11 bg-gray-100 rounded-full flex items-center justify-center disabled:opacity-50" aria-label="Close photo capture">
             <X className="w-5 h-5 text-gray-500" />
           </button>
         </div>
@@ -416,7 +430,7 @@ function PhotoSheet({ status, onConfirm, onCancel }: {
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4">
           <input
-            ref={inputRef} type="file" accept="image/*" capture="environment" className="hidden"
+            ref={inputRef} type="file" accept="image/*" capture="environment" disabled={saving} className="hidden"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }}
           />
 
@@ -442,8 +456,8 @@ function PhotoSheet({ status, onConfirm, onCancel }: {
 
               {/* Retake */}
               <button
-                onClick={() => { setPhoto(null); setMeta(null); }}
-                className="flex items-center gap-2 text-base text-gray-500 font-semibold py-1"
+                onClick={() => { setPhoto(null); setMeta(null); setSaveError(''); }} disabled={saving}
+                className="flex items-center gap-2 text-base text-gray-500 font-semibold py-1 disabled:opacity-50"
               >
                 <RotateCcw className="w-4 h-4" /> Retake photo
               </button>
@@ -470,10 +484,12 @@ function PhotoSheet({ status, onConfirm, onCancel }: {
             </>
           )}
 
+          {saveError && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{saveError}</p>}
+
           {/* Confirm button */}
           <button
             disabled={!canConfirm}
-            onClick={() => meta && onConfirm(meta)}
+            onClick={confirmPhoto}
             className={`w-full py-5 rounded-2xl font-bold text-xl transition-all ${
               canConfirm
                 ? 'bg-green-700 text-white active:bg-green-800 shadow-md'
@@ -482,7 +498,8 @@ function PhotoSheet({ status, onConfirm, onCancel }: {
           >
             {!photo       ? 'Take a photo first'  :
              locLoading   ? 'Getting location…'    :
-             'Confirm'}
+             saving       ? 'Saving photo…'        :
+             status === 'Delivered' ? 'Confirm Delivered' : 'Confirm'}
           </button>
         </div>
         <div className="h-4 flex-shrink-0" />
@@ -555,11 +572,11 @@ function DeliveredSheet({ onConfirm, onCancel }: { onConfirm: () => void; onCanc
         </div>
         <div className="text-center space-y-2">
           <h3 className="text-2xl font-bold text-foreground">Confirm Delivery</h3>
-          <p className="text-base text-gray-500">Mark this delivery as <strong>Delivered</strong>?<br />This cannot be undone.</p>
+          <p className="text-base text-gray-500">Mark this delivery as <strong>Delivered</strong>?<br />A delivery photo is required before the status is saved.</p>
         </div>
         <div className="flex gap-3 pt-1">
           <button onClick={onCancel} className="flex-1 py-5 border border-gray-200 rounded-2xl text-base font-semibold text-gray-600">Not yet</button>
-          <button onClick={onConfirm} className="flex-1 py-5 bg-green-700 text-white rounded-2xl text-base font-bold">Yes, Delivered!</button>
+          <button onClick={onConfirm} className="flex-1 py-5 bg-green-700 text-white rounded-2xl text-base font-bold">Continue to photo</button>
         </div>
         <div className="h-4" />
       </div>
@@ -570,17 +587,26 @@ function DeliveredSheet({ onConfirm, onCancel }: { onConfirm: () => void; onCanc
 /* ════════════════════════════════════════════════════════════
    DOCUMENT ROW (redesigned)
    ════════════════════════════════════════════════════════════ */
-function DocRow({ doc, onUpload, isDelivered, isBlurry }: {
-  doc: NormDoc; onUpload: (type: string, file: File) => void; isDelivered: boolean; isBlurry?: boolean;
+function DocRow({ doc, onUpload, isDelivered, isBlurry, isFocused }: {
+  doc: NormDoc; onUpload: (type: string, file: File) => void; isDelivered: boolean; isBlurry?: boolean; isFocused?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const rowRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!isFocused) return;
+    const frame = requestAnimationFrame(() => {
+      rowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      rowRef.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [isFocused]);
   const isApproved  = doc.uploaded && doc.docStatus === 'approved';
   const isRejected  = doc.uploaded && doc.docStatus === 'rejected';
   const isPending   = doc.uploaded && doc.docStatus === 'pending';
   const canUpload   = isDelivered && (!doc.uploaded || isRejected);
 
   return (
-    <div className={`rounded-2xl border p-4 space-y-3 ${
+    <div ref={rowRef} tabIndex={-1} className={`rounded-2xl border p-4 space-y-3 ${isFocused ? 'ring-2 ring-green-600 ring-offset-2' : ''} ${
       isApproved  ? 'bg-green-50 border-green-200' :
       isRejected  ? 'bg-red-50 border-red-200' :
       isPending   ? 'bg-amber-50 border-amber-200' :
@@ -694,11 +720,13 @@ function PastDeliveryRow({ item, onOpen }: { item: CompletedHistoryItem; onOpen:
     <button type="button" onClick={onOpen}
       className="w-full min-w-0 min-h-20 rounded-2xl border border-gray-200 bg-white px-4 py-3 text-left flex items-center justify-between gap-3 active:bg-green-50 focus-visible:outline-2 focus-visible:outline-green-600">
       <span className="min-w-0 flex-1">
-        <span className="block font-bold text-foreground truncate">{item.truckPlate}</span>
-        <span className="block text-sm text-gray-600 truncate">{item.company}</span>
-        <span className="block text-xs text-gray-500">{manilaDate(item.deliveryDate)}</span>
+        <span className="block font-bold text-foreground break-all">{item.id}</span>
+        <span className="block text-sm text-gray-700 break-words">{item.destination}</span>
+        <span className="block text-sm text-gray-600 break-words">{item.company} · {item.truckPlate}</span>
+        <span className="block text-xs text-gray-500 mt-1">Completed {manilaStamp(item.completedAt)}</span>
+        <span className="inline-block mt-2 text-xs font-bold text-green-700 bg-green-50 border border-green-200 px-2.5 py-1 rounded-full">Completed ✓</span>
       </span>
-      <span className="shrink-0 text-xs font-bold text-green-700 bg-green-50 border border-green-200 px-2.5 py-1 rounded-full">Completed ✓</span>
+      <ChevronRight className="w-5 h-5 shrink-0 text-gray-400" aria-hidden="true" />
     </button>
   );
 }
@@ -723,16 +751,57 @@ function DriverPageControls({ page, pages, onPage }: { page: number; pages: numb
   );
 }
 
-function DriverNotificationRow({ notification }: { notification: DriverNotif }) {
+function DriverNotificationRow({ notification, index, onOpen }: { notification: DriverNotif; index: number; onOpen?: () => void }) {
   const n = notification;
-  return (
-    <div className={`min-h-20 rounded-2xl border p-4 flex items-start gap-4 ${n.type === 'rejection' ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`}>
+  const content = (
+    <>
       <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${n.type === 'rejection' ? 'bg-red-100' : 'bg-green-100'}`}>
         {n.type === 'rejection' ? <XCircle className="w-7 h-7 text-red-500" /> : <CheckCircle2 className="w-7 h-7 text-green-500" />}
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-base font-bold text-foreground break-words">{n.title}</p>
-        <p className="text-sm text-gray-600 mt-1 leading-relaxed break-words">{n.body}</p>
+        <p className="text-base font-bold text-foreground [overflow-wrap:anywhere]">{n.title}</p>
+        <p className="text-sm text-gray-600 mt-1 leading-relaxed [overflow-wrap:anywhere]">{n.body}</p>
+      </div>
+      {onOpen && <ChevronRight className="w-5 h-5 shrink-0 self-center text-red-500" aria-hidden="true" />}
+    </>
+  );
+  const className = `w-full min-w-0 min-h-20 rounded-2xl border p-4 flex items-start gap-3 text-left motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-3 motion-safe:duration-300 ${n.type === 'rejection' ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`;
+  const style = { animationDelay: `${index * 70}ms` };
+  return onOpen ? (
+    <button type="button" onClick={onOpen} style={style} className={`${className} focus-visible:outline-2 focus-visible:outline-green-700`} aria-label={`${n.title}. Open task documents`}>{content}</button>
+  ) : <div style={style} className={className}>{content}</div>;
+}
+
+function DriverDrawer({ title, onClose, children, compact = false }: { title: string; onClose: () => void; children: React.ReactNode; compact?: boolean }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const previous = document.body.style.overflow;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    document.body.style.overflow = 'hidden';
+    closeRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+      if (event.key !== 'Tab' || !panelRef.current) return;
+      const controls = Array.from(panelRef.current.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)'));
+      if (!controls.length) return;
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => { document.body.style.overflow = previous; window.removeEventListener('keydown', onKey); previousFocus?.focus(); };
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center p-3 sm:p-6">
+      <div className="absolute inset-0 bg-black/50" onClick={onClose} aria-hidden="true" />
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-label={title} className={`relative w-full max-w-md min-w-0 max-h-[min(85dvh,720px)] bg-white rounded-3xl shadow-xl flex flex-col overflow-hidden motion-safe:animate-in motion-safe:fade-in motion-safe:duration-200 ${compact ? '' : 'h-[min(85dvh,720px)]'}`}>
+        <div className="px-4 py-4 border-b border-gray-200 flex items-center justify-between gap-3 shrink-0">
+          <h2 className="text-xl font-bold text-foreground">{title}</h2>
+          <button ref={closeRef} type="button" onClick={onClose} aria-label={`Close ${title}`} className="h-11 w-11 rounded-xl border border-gray-200 flex items-center justify-center focus-visible:outline-2 focus-visible:outline-green-700"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5">{children}</div>
       </div>
     </div>
   );
@@ -867,10 +936,10 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
      connection dropped, this says a specific change of theirs did not save. */
   const [actionError, setActionError] = useState('');
 
-  /* ── Screen state: 'dashboard' or 'task' ── */
+  /* ── Main screen state ── */
   /* Persisted the same way admin's activeNav is — otherwise a refresh while
      viewing the task screen silently drops the driver back to Dashboard. */
-  const [screen, setScreen] = useState<'dashboard' | 'task' | 'history' | 'notifications'>(() => {
+  const [screen, setScreen] = useState<'dashboard' | 'task' | 'history'>(() => {
     const saved = localStorage.getItem('360_driver_screen');
     return saved === 'task' ? 'task' : 'dashboard';
   });
@@ -889,7 +958,16 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
   const [historySearch, setHistorySearch] = useState('');
   const [historyPage, setHistoryPage] = useState(1);
   const [notificationPage, setNotificationPage] = useState(1);
+  const [activeDrawer, setActiveDrawer] = useState<'notifications' | 'menu' | null>(null);
+  const [focusedDocType, setFocusedDocType] = useState<string | null>(null);
   const closeHistoryDetail = useCallback(() => setSelectedHistoryId(null), []);
+  const closeDrawer = useCallback(() => setActiveDrawer(null), []);
+
+  useEffect(() => {
+    if (!focusedDocType || screen !== 'task') return;
+    const timer = window.setTimeout(() => setFocusedDocType(null), 3000);
+    return () => window.clearTimeout(timer);
+  }, [focusedDocType, screen]);
 
   /* Per-document "please retake, this looks blurry" message — keyed by doc
      type since more than one document row can exist at once. */
@@ -961,22 +1039,41 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
   /* ── Handlers ── */
   const handlePhotoConfirmed = async (photo: StatusPhoto) => {
     if (!photoTarget || !data?.assignment) return;
-    const status = photoTarget; setPhotoTarget(null);
-    const path      = `photos/${data.assignment.id}/${status.replace(/[\s/]+/g, '_')}_${Date.now()}.jpg`;
+    const status = photoTarget;
+    const assignment = data.assignment;
+    const path      = `photos/${assignment.id}/${status.replace(/[\s/]+/g, '_')}_${Date.now()}.jpg`;
+    if (status === 'Delivered') {
+      // Keep the previous status visible until both the photo and status write succeed.
+      const storedUrl = await uploadImage(photo.url, path);
+      const updates = { taskStatus: status, statusPhotos: { ...(assignment.statusPhotos ?? {}), [status]: { ...photo, url: storedUrl } } };
+      await driverUpdate(driverName, assignment.id, updates);
+      setData((prev) => prev?.assignment?.id === assignment.id
+        ? { ...prev, assignment: { ...prev.assignment, ...updates } } : prev);
+      setActionError('');
+      setPhotoTarget(null);
+      try {
+        await driverUpdate(driverName, assignment.id, {}, {
+          type: 'status_update', message: `[${assignment.truckPlate}] Marked as Delivered`,
+          assignmentId: assignment.id, truckPlate: assignment.truckPlate,
+          statusUpdate: status, photoUrl: storedUrl, navigateTo: 'Monitor',
+        });
+      } catch (err) {
+        console.warn('[Delivered] status saved, but notification failed:', err);
+      }
+      await fetchData(true);
+      return;
+    }
+    setPhotoTarget(null);
     const storedUrl = await uploadToStorage(photo.url, path);
     await pushUpdate(
-      { taskStatus: status, statusPhotos: { ...(data.assignment.statusPhotos ?? {}), [status]: { ...photo, url: storedUrl } } },
-      { type: 'status_update', message: `[${data.assignment.truckPlate}] Marked as ${taskStatusConfig[status].label}`, assignmentId: data.assignment.id, truckPlate: data.assignment.truckPlate, statusUpdate: status, photoUrl: storedUrl, navigateTo: 'Monitor' }
+      { taskStatus: status, statusPhotos: { ...(assignment.statusPhotos ?? {}), [status]: { ...photo, url: storedUrl } } },
+      { type: 'status_update', message: `[${assignment.truckPlate}] Marked as ${taskStatusConfig[status].label}`, assignmentId: assignment.id, truckPlate: assignment.truckPlate, statusUpdate: status, photoUrl: storedUrl, navigateTo: 'Monitor' }
     );
   };
 
-  const handleDelivered = async () => {
-    if (!data?.assignment) return;
+  const openDeliveredPhoto = () => {
     setDeliveredDlg(false);
-    await pushUpdate(
-      { taskStatus: 'Delivered' },
-      { type: 'status_update', message: `[${data.assignment.truckPlate}] Marked as Delivered`, assignmentId: data.assignment.id, truckPlate: data.assignment.truckPlate, statusUpdate: 'Delivered', navigateTo: 'Monitor' }
-    );
+    setPhotoTarget('Delivered');
   };
 
   const handleDelaySubmit = async (type: 'pickup' | 'delivery', reason: string) => {
@@ -1054,7 +1151,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
     normalizedDocs.forEach((doc) => {
       if (doc.uploaded && doc.docStatus === 'rejected') {
         notifs.push({
-          id: `reject-${doc.type}`, type: 'rejection',
+          id: `reject-${doc.type}`, type: 'rejection', docType: doc.type,
           title: `${doc.type} was rejected`,
           body: doc.rejectReason
             ? `Reason: "${doc.rejectReason}" — Please take a new photo and re-upload.`
@@ -1065,7 +1162,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
     normalizedDocs.forEach((doc) => {
       if (doc.uploaded && doc.docStatus === 'approved') {
         notifs.push({
-          id: `approve-${doc.type}`, type: 'approval',
+          id: `approve-${doc.type}`, type: 'approval', docType: doc.type,
           title: `${doc.type} approved`,
           body: 'Your document has been reviewed and accepted.',
         });
@@ -1083,6 +1180,12 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
   const notificationPages = Math.max(1, Math.ceil(driverNotifs.length / 8));
   const shownNotificationPage = Math.min(notificationPage, notificationPages);
   const notificationRows = driverNotifs.slice((shownNotificationPage - 1) * 8, shownNotificationPage * 8);
+  const rejectedNotifs = driverNotifs.filter((notification) => notification.type === 'rejection');
+  const openDocumentFromNotification = (docType: string) => {
+    setActiveDrawer(null);
+    setFocusedDocType(docType);
+    setScreen('task');
+  };
 
   useEffect(() => { if (historyPage > historyPages) setHistoryPage(historyPages); }, [historyPage, historyPages]);
   useEffect(() => { if (notificationPage > notificationPages) setNotificationPage(notificationPages); }, [notificationPage, notificationPages]);
@@ -1181,16 +1284,42 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
     </div>
   );
 
-  /* ── Logout pill button (shared style) ── */
-  const LogoutPill = (
-    <button
-      onClick={() => setLogoutDlg(true)}
-      className="flex items-center gap-2 px-4 py-2.5 bg-red-50 rounded-full border border-red-200 text-sm font-bold text-red-600 flex-shrink-0 active:bg-red-100 transition-colors"
-    >
-      <LogOut className="w-4 h-4" />
-      <span>Log out</span>
+  const menuButton = (expanded = false) => (
+    <button type="button" onClick={() => setActiveDrawer('menu')} aria-haspopup="dialog"
+      className={`${expanded ? 'min-h-12 min-w-28 max-[359px]:w-full px-4 text-base' : 'min-h-11 px-2.5 text-sm'} rounded-xl border border-gray-200 bg-white text-gray-700 font-semibold flex items-center justify-center gap-1.5 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-green-700`}>
+      <Menu className={`${expanded ? 'w-5 h-5' : 'w-4 h-4'} shrink-0`} aria-hidden="true" /> Menu
     </button>
   );
+
+  const DriverDrawers = activeDrawer === 'notifications' ? (
+    <DriverDrawer title="Notifications" onClose={closeDrawer}>
+      {driverNotifs.length ? <>
+        <p className="text-sm text-gray-500 mb-4">Updates about your delivery documents.</p>
+        <div className="grid min-w-0 grid-cols-1 gap-3">
+          {notificationRows.map((notification, index) => <DriverNotificationRow key={notification.id} notification={notification} index={index}
+            onOpen={notification.type === 'rejection' ? () => openDocumentFromNotification(notification.docType) : undefined} />)}
+        </div>
+        <DriverPageControls page={shownNotificationPage} pages={notificationPages} onPage={setNotificationPage} />
+      </> : <div className="bg-gray-50 rounded-2xl border border-gray-200 px-5 py-8 text-center text-gray-500">No notifications yet</div>}
+    </DriverDrawer>
+  ) : activeDrawer === 'menu' ? (
+    <DriverDrawer title="Menu" onClose={closeDrawer} compact>
+      <div className="flex flex-col">
+        <button type="button" onClick={() => { setHistorySearch(''); setHistoryPage(1); setActiveDrawer(null); setScreen('history'); }}
+          className="w-full min-h-16 rounded-2xl border border-gray-200 bg-white px-4 py-3 text-left flex items-center gap-3 focus-visible:outline-2 focus-visible:outline-green-700">
+          <History className="w-6 h-6 text-green-700 shrink-0" aria-hidden="true" />
+          <span className="flex-1 font-bold text-foreground">Past Deliveries</span>
+          <ChevronRight className="w-5 h-5 text-gray-400 shrink-0" aria-hidden="true" />
+        </button>
+        <div className="mt-8 border-t border-gray-200 pt-5">
+          <button type="button" onClick={() => { setActiveDrawer(null); setLogoutDlg(true); }}
+            className="w-full min-h-14 rounded-2xl border border-red-200 bg-red-50 px-4 text-left flex items-center gap-3 font-bold text-red-700 focus-visible:outline-2 focus-visible:outline-red-600">
+            <LogOut className="w-5 h-5" aria-hidden="true" /> Log out
+          </button>
+        </div>
+      </div>
+    </DriverDrawer>
+  ) : null;
 
   /* ════════════════════════════════════════════════════════════
      DASHBOARD SCREEN
@@ -1200,18 +1329,37 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
       <div className="min-h-screen bg-gray-50 flex flex-col">
         {/* Header */}
         <header className="bg-white border-b border-gray-200 px-5 py-4 sticky top-0 z-20 shadow-sm">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div className="min-w-0">
               <p className="text-xs text-gray-400 font-bold uppercase tracking-widest leading-none">360 Logistics</p>
               <p className="text-2xl font-bold text-foreground mt-0.5 truncate">{driverName}</p>
             </div>
-            {LogoutPill}
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={() => { setNotificationPage(1); setActiveDrawer('notifications'); }} aria-haspopup="dialog"
+                className="min-h-11 px-2.5 rounded-xl border border-gray-200 bg-white text-gray-700 text-sm font-semibold flex items-center justify-center gap-1.5 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-green-700">
+                <Bell className="w-4 h-4 shrink-0" aria-hidden="true" /> Notifications
+                {rejectedNotifs.length > 0 && <span className="min-w-5 h-5 px-1 rounded-full bg-red-600 text-white text-xs flex items-center justify-center" aria-label={`${rejectedNotifs.length} documents need correction`}>{rejectedNotifs.length}</span>}
+              </button>
+              {menuButton()}
+            </div>
           </div>
         </header>
 
         {updating && <div className="h-1 bg-primary/20"><div className="h-full w-1/2 bg-primary animate-pulse rounded-full" /></div>}
 
-        <div className="flex-1 overflow-y-auto px-4 py-6 space-y-7 pb-10">
+        <div className="flex-1 overflow-y-auto px-4 py-6 space-y-6 pb-10">
+
+          {rejectedNotifs.length > 0 && (
+            <button type="button" onClick={() => openDocumentFromNotification(rejectedNotifs[0].docType)}
+              className="w-full rounded-2xl border border-red-200 bg-red-50 px-4 py-4 text-left flex items-center gap-3 focus-visible:outline-2 focus-visible:outline-red-600">
+              <AlertTriangle className="w-6 h-6 text-red-600 shrink-0" aria-hidden="true" />
+              <span className="flex-1 min-w-0">
+                <span className="block font-bold text-red-800">{rejectedNotifs.length} {rejectedNotifs.length === 1 ? 'document needs' : 'documents need'} correction</span>
+                <span className="block text-sm text-red-700">Review and re-upload the rejected {rejectedNotifs.length === 1 ? 'document' : 'documents'}.</span>
+              </span>
+              <ChevronRight className="w-5 h-5 text-red-600 shrink-0" aria-hidden="true" />
+            </button>
+          )}
 
           {/* ── TODAY'S TASK ── */}
           <section>
@@ -1260,38 +1408,6 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
             )}
           </section>
 
-          {/* ── NOTIFICATIONS ── */}
-          <section>
-            <h2 className="text-xl font-bold text-foreground mb-3">Notifications</h2>
-            {driverNotifs.length > 0 ? (
-              <div className="space-y-3">
-                {driverNotifs.slice(0, 5).map((n) => <DriverNotificationRow key={n.id} notification={n} />)}
-                {driverNotifs.length > 5 && <button type="button" onClick={() => { setNotificationPage(1); setScreen('notifications'); }}
-                  className="w-full min-h-11 text-green-700 font-semibold">See all</button>}
-              </div>
-            ) : (
-              <div className="bg-white rounded-2xl border border-gray-200 px-5 py-7 text-center">
-                <p className="text-base text-gray-400">No new notifications</p>
-              </div>
-            )}
-          </section>
-
-          {/* ── TASK HISTORY ── */}
-          <section>
-            <h2 className="text-xl font-bold text-foreground mb-3">Past Deliveries</h2>
-            {completedHistory.length > 0 ? (
-              <div className="space-y-2">
-                {completedHistory.slice(0, 3).map((item) => <PastDeliveryRow key={item.id} item={item} onOpen={() => setSelectedHistoryId(item.id)} />)}
-                {completedHistory.length > 3 && <button type="button" onClick={() => { setHistorySearch(''); setHistoryPage(1); setScreen('history'); }}
-                  className="w-full min-h-11 text-green-700 font-semibold">View all history</button>}
-              </div>
-            ) : (
-              <div className="bg-white rounded-2xl border border-gray-200 px-5 py-7 text-center">
-                <p className="text-base text-gray-400">No past deliveries yet</p>
-              </div>
-            )}
-          </section>
-
           {/* Offline notice */}
           {!online && (
             <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-center gap-3">
@@ -1302,8 +1418,8 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
         </div>
 
         {ActionErrorBanner}
+        {DriverDrawers}
         {LogoutDialog}
-        {selectedHistoryId && <HistoryDetailsSheet key={selectedHistoryId} driverId={driverId} assignmentId={selectedHistoryId} onClose={closeHistoryDetail} />}
       </div>
     );
   }
@@ -1315,6 +1431,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
         <h1 className="text-xl font-bold text-foreground">Past Deliveries</h1>
       </header>
       <main className="min-w-0 max-w-2xl mx-auto px-4 py-5">
+        <p className="text-sm text-gray-500 mb-4">Your completed delivery history.</p>
         <label htmlFor="driver-history-search" className="sr-only">Search past deliveries by truck or customer</label>
         <input id="driver-history-search" type="search" value={historySearch}
           onChange={(event) => { setHistorySearch(event.target.value); setHistoryPage(1); }}
@@ -1331,24 +1448,6 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
     </div>;
   }
 
-  if (screen === 'notifications') {
-    return <div className="min-h-screen min-w-0 bg-gray-50">
-      <header className="sticky top-0 z-20 bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3">
-        <button type="button" onClick={() => setScreen('dashboard')} aria-label="Back to dashboard" className="h-11 w-11 shrink-0 rounded-xl border border-gray-200 flex items-center justify-center"><ChevronLeft className="w-5 h-5" /></button>
-        <h1 className="text-xl font-bold text-foreground">Notifications</h1>
-      </header>
-      <main className="min-w-0 max-w-2xl mx-auto px-4 py-5">
-        {driverNotifs.length ? <>
-          <div className="grid gap-3">
-            {notificationRows.map((notification) => <DriverNotificationRow key={notification.id} notification={notification} />)}
-            {Array.from({ length: 8 - notificationRows.length }, (_, index) => <div key={`empty-${index}`} aria-hidden="true" className="invisible min-h-20 rounded-2xl border p-4" />)}
-          </div>
-          <DriverPageControls page={shownNotificationPage} pages={notificationPages} onPage={setNotificationPage} />
-        </> : <div className="bg-white rounded-2xl border border-gray-200 px-5 py-7 text-center text-gray-400">No new notifications</div>}
-      </main>
-    </div>;
-  }
-
   /* ════════════════════════════════════════════════════════════
      TASK SCREEN
   ════════════════════════════════════════════════════════════ */
@@ -1362,7 +1461,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
 
       {/* ── Task Header ── */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-20 shadow-sm">
-        <div className="px-4 py-3 flex items-center gap-3">
+        <div className="px-4 py-3 flex flex-wrap items-center gap-3">
           {/* Back */}
           <button
             onClick={() => setScreen('dashboard')}
@@ -1372,7 +1471,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
           </button>
 
           {/* Driver name + plate */}
-          <div className="flex-1 min-w-0">
+          <div className="flex-1 min-w-[80px]">
             <p className="text-base font-bold text-foreground truncate leading-tight">{driverName}</p>
             {a?.truckPlate && (
               <div className="flex items-center gap-1.5 mt-0.5">
@@ -1382,13 +1481,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
             )}
           </div>
 
-          {/* Live badge */}
-          <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-bold flex-shrink-0 ${online ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
-            <span className={`w-2 h-2 rounded-full ${online ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
-            {online ? 'Live' : 'Offline'}
-          </div>
-
-          {LogoutPill}
+          {menuButton(true)}
         </div>
       </header>
 
@@ -1550,7 +1643,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
                 </div>
               )}
               {normalizedDocs.map((doc) => (
-                <DocRow key={doc.type} doc={doc} onUpload={handleDocUpload} isDelivered={isDelivered} isBlurry={!!docBlurErrors[doc.type]} />
+                <DocRow key={doc.type} doc={doc} onUpload={handleDocUpload} isDelivered={isDelivered} isBlurry={!!docBlurErrors[doc.type]} isFocused={focusedDocType === doc.type} />
               ))}
             </div>
 
@@ -1580,9 +1673,10 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
               disabled={updating}
               onConfirm={() => {
                 if (!nextStatus) return;
-                if (nextStatus === 'Delivered')         setDeliveredDlg(true);
-                else if (NEEDS_PHOTO.includes(nextStatus)) setPhotoTarget(nextStatus);
-                else pushUpdate({ taskStatus: nextStatus });
+                if (NEEDS_PHOTO.includes(nextStatus)) {
+                  if (nextStatus === 'Delivered') setDeliveredDlg(true);
+                  else setPhotoTarget(nextStatus);
+                } else pushUpdate({ taskStatus: nextStatus });
               }}
             />
           )}
@@ -1591,7 +1685,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
 
       {/* ── Sheets / Modals ── */}
       {photoTarget  && <PhotoSheet    status={photoTarget}  onConfirm={handlePhotoConfirmed} onCancel={() => setPhotoTarget(null)} />}
-      {deliveredDlg && <DeliveredSheet onConfirm={handleDelivered}     onCancel={() => setDeliveredDlg(false)} />}
+      {deliveredDlg && <DeliveredSheet onConfirm={openDeliveredPhoto} onCancel={() => setDeliveredDlg(false)} />}
       {delaySheet   && (
         <ReasonSheet
           title={delaySheet === 'pickup' ? 'Pickup Delay' : 'Delivery Delay'}
@@ -1613,6 +1707,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
         />
       )}
       {ActionErrorBanner}
+      {DriverDrawers}
       {LogoutDialog}
     </div>
   );

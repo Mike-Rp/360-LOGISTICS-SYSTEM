@@ -1010,7 +1010,7 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
               </div>
               {/* Stacked cards rather than a table — the modal is only ~480px wide */}
               <div className="space-y-2">
-                {(['Picked Up', 'In Transit'] as const).map((status) => {
+                {(['Picked Up', 'In Transit', 'Delivered'] as const).map((status) => {
                   const photo = assignment.statusPhotos?.[status];
                   if (!photo) return null;
                   const cfg = taskStatusConfig[status];
