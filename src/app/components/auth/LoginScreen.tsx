@@ -3,6 +3,7 @@ import imgLogo from 'figma:asset/5e73e3c08e898d68c86717993c6e7442d03e9ac4.png';
 import { Eye, EyeOff, AlertCircle, Phone, KeySquare, Loader2, X } from 'lucide-react';
 import { signInStaff, signInDriver, LoginError } from '../../lib/db';
 import type { StaffSession } from '../../lib/db';
+import { getLastDriverLanguage, translateDriver } from '../driver/driverI18n';
 
 interface Props {
   onAdminLogin:  (session: StaffSession) => void | Promise<void>;
@@ -30,6 +31,8 @@ const ErrorBanner = ({ icon: Icon, title, sub }: { icon: React.ElementType; titl
 
 export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
   const [view, setView] = useState<'driver' | 'admin'>('driver');
+  const driverLanguage = getLastDriverLanguage();
+  const tr = (key: Parameters<typeof translateDriver>[1]) => translateDriver(driverLanguage, key);
 
   /* ── Driver form ── */
   const [mobile,        setMobile]        = useState('');
@@ -99,15 +102,15 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
 
     // mobile is the 10-digit local number (e.g. "9123456789")
     if (mobile.length !== 10) {
-      setDriverError({ type: 'mobile', msg: 'Please enter a valid 10-digit mobile number.' });
+      setDriverError({ type: 'mobile', msg: tr('login.invalidMobile') });
       return;
     }
     if (!mobile.startsWith('9')) {
-      setDriverError({ type: 'mobile', msg: 'Mobile number must start with 9 (e.g. 9XX XXX XXXX).' });
+      setDriverError({ type: 'mobile', msg: tr('login.mustStartNine') });
       return;
     }
     if (fullPin.length < 4) {
-      setDriverError({ type: 'pin', msg: 'Please enter your 4-digit PIN.' });
+      setDriverError({ type: 'pin', msg: tr('login.enterPin') });
       return;
     }
 
@@ -128,10 +131,10 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
     } catch (e) {
       console.error('[signInDriver] error:', e);
       const code = e instanceof LoginError ? e.code : 'network';
-      if (code === 'unknown_mobile')      setDriverError({ type: 'mobile_and_pin', msg: 'This mobile number is not registered.' });
-      else if (code === 'invalid_credentials') setDriverError({ type: 'pin', msg: 'Incorrect PIN. Contact your admin if you forgot your PIN.' });
-      else if (code === 'no_access')      setDriverError({ type: 'general', msg: 'This is not a driver account. Use Admin Login instead.' });
-      else                                setDriverError({ type: 'general', msg: 'Unable to reach the server. Check your internet connection.' });
+      if (code === 'unknown_mobile')      setDriverError({ type: 'mobile_and_pin', msg: tr('login.unknownMobile') });
+      else if (code === 'invalid_credentials') setDriverError({ type: 'pin', msg: tr('login.wrongPin') });
+      else if (code === 'no_access')      setDriverError({ type: 'general', msg: tr('login.notDriver') });
+      else                                setDriverError({ type: 'general', msg: tr('login.network') });
     } finally {
       setDriverLoading(false);
     }
@@ -173,7 +176,7 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
             <div className="flex flex-col items-center gap-3">
               <img src={imgLogo} alt="360 Logistics" className="h-16 object-contain" />
               <p className="text-base text-muted-foreground text-center">
-                Welcome Back, Please enter your details
+                {view === 'driver' ? tr('login.welcome') : 'Welcome Back, Please enter your details'}
               </p>
             </div>
 
@@ -191,7 +194,7 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
                     : 'font-semibold text-gray-500 hover:text-foreground'
                 }`}
               >
-                Driver
+                {view === 'driver' ? tr('login.driver') : 'Driver'}
               </button>
               <button
                 type="button"
@@ -211,7 +214,7 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
               <div className="space-y-5">
 
                 <div className="space-y-2.5">
-                  <label className="text-base font-semibold text-foreground block">Mobile Number</label>
+                  <label className="text-base font-semibold text-foreground block">{tr('login.mobile')}</label>
                   <div>
                     <div className={`flex w-full max-w-full min-w-0 items-center rounded-2xl border overflow-hidden focus-within:ring-2 transition-colors duration-150 ${
                       mobileHasError ? 'border-red-500 bg-red-50 focus-within:ring-red-500/30' : 'border-[#e5e7eb] bg-[#f9fafb] focus-within:border-primary focus-within:ring-primary/30'
@@ -242,17 +245,17 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
                     </span>
                     </div>
                     <p id="driver-mobile-start-help" aria-live="polite" className="mt-1 min-h-4 text-xs leading-4 text-red-600 break-words">
-                      {mobileStartsWrong ? 'Mobile number must start with 9' : ''}
+                      {mobileStartsWrong ? tr('login.mobileStarts') : ''}
                     </p>
                   </div>
                 </div>
 
                 {!mobileStartsWrong && (driverError?.type === 'mobile' || driverError?.type === 'mobile_and_pin') && (
-                  <ErrorBanner icon={Phone} title="Mobile Number Not Found" sub={driverError.msg} />
+                  <ErrorBanner icon={Phone} title={tr('login.mobileNotFound')} sub={driverError.msg} />
                 )}
 
                 <div className="space-y-2.5">
-                  <label className="text-base font-semibold text-foreground block">4-Digit PIN</label>
+                  <label className="text-base font-semibold text-foreground block">{tr('login.pin')}</label>
                   <div className="flex w-full max-w-full justify-center gap-2 sm:gap-4">
                     {pin.map((digit, i) => (
                       <input
@@ -271,7 +274,7 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
                 </div>
 
                 {driverError?.type === 'pin' && (
-                  <ErrorBanner icon={KeySquare} title="Incorrect PIN" sub={driverError.msg} />
+                  <ErrorBanner icon={KeySquare} title={tr('login.incorrectPin')} sub={driverError.msg} />
                 )}
                 {driverError?.type === 'general' && (
                   <div className="flex items-center gap-2 text-red-600 text-sm">
@@ -284,19 +287,19 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
                   disabled={driverLoading}
                   className="w-full py-5 bg-[#10b981] text-white rounded-2xl hover:bg-[#059669] transition-colors shadow-lg font-bold text-xl disabled:opacity-60 flex items-center justify-center gap-2"
                 >
-                  {driverLoading ? <><Loader2 className="w-5 h-5 animate-spin" /> Verifying…</> : 'Log In'}
+                  {driverLoading ? <><Loader2 className="w-5 h-5 animate-spin" /> {tr('login.verifying')}</> : tr('login.logIn')}
                 </button>
 
                 {/* "Reset PIN" opens an informational dialog only — there is no self-service
                     reset in this system, so the link must not imply one. */}
                 <div className="text-center text-sm text-gray-500">
-                  Forgot your PIN?{' '}
+                  {tr('login.forgotPin')}{' '}
                   <button
                     type="button"
                     onClick={() => setShowPinHelp(true)}
                     className="text-[#10b981] font-semibold underline underline-offset-2 hover:text-[#059669] transition-colors"
                   >
-                    Reset PIN
+                    {tr('login.resetPin')}
                   </button>
                 </div>
               </div>
@@ -381,7 +384,7 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
             <button
               type="button"
               onClick={() => setShowPinHelp(false)}
-              aria-label="Close"
+              aria-label={tr('login.close')}
               className="absolute right-4 top-4 p-1.5 rounded-lg text-muted-foreground hover:bg-gray-100 hover:text-foreground transition-colors"
             >
               <X className="w-5 h-5" />
@@ -392,11 +395,10 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
             </div>
 
             <h3 id="pin-help-title" className="text-xl font-bold text-foreground">
-              Forgot your PIN?
+              {tr('login.forgotPin')}
             </h3>
             <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
-              Your PIN can only be reset by dispatch. Give them a call and they&apos;ll
-              regenerate it for you.
+              {tr('login.pinHelp')}
             </p>
 
             {/* tel: link — taps to dial on a phone, reads as plain text on a laptop */}
@@ -413,7 +415,7 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
               onClick={() => setShowPinHelp(false)}
               className="mt-3 w-full py-4 bg-[#10b981] text-white rounded-2xl hover:bg-[#059669] transition-colors font-bold text-base"
             >
-              Got it
+              {tr('login.gotIt')}
             </button>
           </div>
         </div>

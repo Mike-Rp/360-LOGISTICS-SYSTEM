@@ -3,11 +3,12 @@ import {
   LogOut, Package, CheckCircle2, XCircle, Camera, WifiOff,
   Clock, Truck, AlertTriangle, FileText, Building2,
   ChevronRight, ChevronLeft, Lock, ArrowDown,
-  RefreshCw, Timer, RotateCcw, X, Phone, Bell, Menu, History,
+  RefreshCw, Timer, RotateCcw, X, Phone, Bell, Menu, History, Languages,
 } from 'lucide-react';
 import type { Assignment, CompletedTask, TaskStatus, StatusPhoto, DocStatus } from '../../data/assignmentTypes';
 import { taskStatusConfig } from '../../data/assignmentTypes';
 import { loadDriverData, loadDriverCompletedDelivery, driverUpdate, uploadImage } from '../../lib/db';
+import { DriverLanguageProvider, useDriverI18n, type DriverLanguage } from './driverI18n';
 
 /* ── Types ── */
 interface CompletedHistoryItem {
@@ -28,16 +29,16 @@ interface DriverNotif {
 
 type HistoryDetail = CompletedTask & { documents: Array<Assignment['documents'][number] & { uploadedAt?: string }> };
 
-const manilaDate = (value?: string) => {
-  if (!value) return 'Not available';
+const manilaDate = (value?: string, unavailable = 'Not available') => {
+  if (!value) return unavailable;
   const date = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T12:00:00+08:00`) : new Date(value);
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('en-US', {
     timeZone: 'Asia/Manila', month: 'short', day: 'numeric', year: 'numeric',
   }).format(date);
 };
 
-const manilaStamp = (value?: string) => {
-  if (!value) return 'Not available';
+const manilaStamp = (value?: string, unavailable = 'Not available') => {
+  if (!value) return unavailable;
   if (!/^\d{4}-\d{2}-\d{2}T/.test(value)) return value; // Do not invent a year for legacy display stamps.
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
@@ -177,12 +178,35 @@ async function uploadToStorage(dataUrl: string, path: string): Promise<string> {
   }
 }
 
+function DriverHomeClock() {
+  const { language } = useDriverI18n();
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const parts = new Intl.DateTimeFormat(language === 'fil' ? 'fil-PH' : 'en-US', {
+    weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true,
+  }).formatToParts(now);
+  const part = (type: string) => parts.find((item) => item.type === type)?.value ?? '';
+  const date = `${part('weekday')}, ${part('month')} ${part('day')}, ${part('year')}`;
+  const time = `${part('hour')}:${part('minute')} ${part('dayPeriod')}`;
+
+  return <time dateTime={now.toISOString()} className="block mt-1 text-xs sm:text-sm leading-snug text-gray-500">
+    <span>{date}</span><span className="whitespace-nowrap">{' • '}{time}</span>
+  </time>;
+}
+
 /* ════════════════════════════════════════════════════════════
    SLIDE-TO-CONFIRM CONTROL
    ════════════════════════════════════════════════════════════ */
 function SlideToConfirm({ label, onConfirm, disabled = false }: {
   label: string; onConfirm: () => void; disabled?: boolean;
 }) {
+  const { t } = useDriverI18n();
   const [dragX,      setDragX]      = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const [triggered,  setTriggered]  = useState(false);
@@ -233,7 +257,7 @@ function SlideToConfirm({ label, onConfirm, disabled = false }: {
       {/* Label */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
         <span className={`text-base font-bold ${disabled ? 'text-gray-400' : 'text-green-900'}`}>
-          {triggered ? 'Confirmed! ✓' : label}
+          {triggered ? t('slide.confirmed') : label}
         </span>
       </div>
       {/* Thumb */}
@@ -268,23 +292,24 @@ function VerticalTracker({ stepIdx, isDelivered, uploadedCt, approvedCt, totalDo
   stepIdx: number; isDelivered: boolean;
   uploadedCt: number; approvedCt: number; totalDocs: number;
 }) {
+  const { t } = useDriverI18n();
   type S = 'done' | 'current' | 'upcoming' | 'locked';
   const allApproved = totalDocs > 0 && approvedCt >= totalDocs;
 
   const stages: Array<{ label: string; status: S; sub?: string }> = [
-    { label: 'Assigned',          status: 'done' },
-    { label: 'Picked up',         status: stepIdx >= 1 ? 'done' : 'current' },
-    { label: 'In transit',        status: stepIdx >= 2 ? 'done' : stepIdx === 1 ? 'current' : 'upcoming' },
-    { label: 'Delivered',         status: stepIdx >= 3 ? 'done' : stepIdx === 2 ? 'current' : 'upcoming' },
+    { label: t('status.Assigned'),          status: 'done' },
+    { label: t('status.Picked Up'),         status: stepIdx >= 1 ? 'done' : 'current' },
+    { label: t('status.In Transit'),        status: stepIdx >= 2 ? 'done' : stepIdx === 1 ? 'current' : 'upcoming' },
+    { label: t('status.Delivered'),         status: stepIdx >= 3 ? 'done' : stepIdx === 2 ? 'current' : 'upcoming' },
     {
-      label: 'Upload documents',
+      label: t('progress.uploadDocuments'),
       status: !isDelivered ? 'locked' : allApproved ? 'done' : 'current',
-      sub:   isDelivered && !allApproved ? `${uploadedCt} of ${totalDocs} submitted` : undefined,
+      sub:   isDelivered && !allApproved ? t('progress.submitted', { count: uploadedCt, total: totalDocs }) : undefined,
     },
     {
-      label: 'Complete',
+      label: t('progress.complete'),
       status: allApproved ? 'done' : 'upcoming',
-      sub:   isDelivered && !allApproved ? 'Waiting for admin approval' : undefined,
+      sub:   isDelivered && !allApproved ? t('progress.waitingApproval') : undefined,
     },
   ];
 
@@ -341,7 +366,7 @@ function VerticalTracker({ stepIdx, isDelivered, uploadedCt, approvedCt, totalDo
 function PhotoSheet({ status, onConfirm, onCancel }: {
   status: TaskStatus; onConfirm: (photo: StatusPhoto) => Promise<void>; onCancel: () => void;
 }) {
-  const cfg = taskStatusConfig[status];
+  const { t, status: statusText } = useDriverI18n();
   const [photo,      setPhoto]      = useState<string | null>(null);
   const [meta,       setMeta]       = useState<StatusPhoto | null>(null);
   const [locLoading, setLocLoading] = useState(false);
@@ -405,7 +430,7 @@ function PhotoSheet({ status, onConfirm, onCancel }: {
     try { await onConfirm(meta); }
     catch (err) {
       console.error('[status photo] save failed:', err);
-      setSaveError(status === 'Delivered' ? 'Could not confirm delivery. Please retry the photo.' : 'Could not save the status photo. Please try again.');
+      setSaveError(status === 'Delivered' ? t('photo.deliveryError') : t('photo.saveError'));
     } finally { setSaving(false); }
   };
   const cancelPhoto = () => { if (!saving) onCancel(); };
@@ -419,10 +444,10 @@ function PhotoSheet({ status, onConfirm, onCancel }: {
         {/* Header */}
         <div className="px-5 py-4 flex items-center justify-between border-b border-gray-100 flex-shrink-0">
           <div>
-            <h3 className="text-xl font-bold text-foreground">{status === 'Delivered' ? 'Delivery photo required' : 'Take a Photo'}</h3>
-            <p className="text-sm text-gray-500 mt-0.5">{status === 'Delivered' ? 'Upload a photo confirming delivery at the destination.' : <>Required to confirm <strong>{cfg.label}</strong></>}</p>
+            <h3 className="text-xl font-bold text-foreground">{status === 'Delivered' ? t('photo.deliveryRequired') : t('photo.take')}</h3>
+            <p className="text-sm text-gray-500 mt-0.5">{status === 'Delivered' ? t('photo.deliveryInstruction') : t('photo.requiredToConfirm', { status: statusText(status) })}</p>
           </div>
-          <button onClick={cancelPhoto} disabled={saving} className="w-11 h-11 bg-gray-100 rounded-full flex items-center justify-center disabled:opacity-50" aria-label="Close photo capture">
+          <button onClick={cancelPhoto} disabled={saving} className="w-11 h-11 bg-gray-100 rounded-full flex items-center justify-center disabled:opacity-50" aria-label={t('photo.close')}>
             <X className="w-5 h-5 text-gray-500" />
           </button>
         </div>
@@ -443,15 +468,15 @@ function PhotoSheet({ status, onConfirm, onCancel }: {
                 <Camera className="w-12 h-12 text-green-600" />
               </div>
               <div className="text-center">
-                <p className="text-xl font-bold text-foreground">Open camera</p>
-                <p className="text-base text-gray-400 mt-1">or choose from gallery</p>
+                <p className="text-xl font-bold text-foreground">{t('photo.openCamera')}</p>
+                <p className="text-base text-gray-400 mt-1">{t('photo.gallery')}</p>
               </div>
             </button>
           ) : (
             <>
               {/* Photo preview */}
               <div className="rounded-2xl overflow-hidden border border-gray-200 bg-black">
-                <img src={photo} alt="Captured" className="w-full max-h-60 object-cover" />
+                <img src={photo} alt={t('photo.captured')} className="w-full max-h-60 object-cover" />
               </div>
 
               {/* Retake */}
@@ -459,25 +484,25 @@ function PhotoSheet({ status, onConfirm, onCancel }: {
                 onClick={() => { setPhoto(null); setMeta(null); setSaveError(''); }} disabled={saving}
                 className="flex items-center gap-2 text-base text-gray-500 font-semibold py-1 disabled:opacity-50"
               >
-                <RotateCcw className="w-4 h-4" /> Retake photo
+                <RotateCcw className="w-4 h-4" /> {t('photo.retake')}
               </button>
 
               {/* Receipt-style meta */}
               {locLoading ? (
                 <div className="bg-gray-50 border border-gray-200 rounded-2xl px-5 py-5 flex items-center gap-3">
                   <div className="w-5 h-5 border-2 border-green-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                  <span className="text-base text-gray-500">Getting your location…</span>
+                  <span className="text-base text-gray-500">{t('photo.gettingLocationLong')}</span>
                 </div>
               ) : meta && (
                 <div className="bg-green-50 border border-green-200 rounded-2xl px-5 py-5 space-y-4">
                   <div>
-                    <p className="text-xs font-bold text-green-600 uppercase tracking-widest">Date &amp; Time</p>
+                    <p className="text-xs font-bold text-green-600 uppercase tracking-widest">{t('photo.dateTime')}</p>
                     <p className="text-lg font-bold text-foreground mt-1">{meta.timestamp}</p>
                   </div>
                   <div className="h-px bg-green-200" />
                   <div>
-                    <p className="text-xs font-bold text-green-600 uppercase tracking-widest">Location</p>
-                    <p className="text-lg font-bold text-foreground mt-1 break-words leading-snug">{meta.location}</p>
+                    <p className="text-xs font-bold text-green-600 uppercase tracking-widest">{t('photo.location')}</p>
+                    <p className="text-lg font-bold text-foreground mt-1 break-words leading-snug">{meta.location === 'Location unavailable' ? t('photo.locationUnavailable') : meta.location === 'Location not supported' ? t('photo.locationUnsupported') : meta.location}</p>
                   </div>
                 </div>
               )}
@@ -496,10 +521,10 @@ function PhotoSheet({ status, onConfirm, onCancel }: {
                 : 'bg-gray-100 text-gray-400 cursor-not-allowed'
             }`}
           >
-            {!photo       ? 'Take a photo first'  :
-             locLoading   ? 'Getting location…'    :
-             saving       ? 'Saving photo…'        :
-             status === 'Delivered' ? 'Confirm Delivered' : 'Confirm'}
+            {!photo       ? t('photo.takeFirst')  :
+             locLoading   ? t('photo.gettingLocation') :
+             saving       ? t('photo.saving') :
+             status === 'Delivered' ? t('photo.confirmDelivered') : t('photo.confirm')}
           </button>
         </div>
         <div className="h-4 flex-shrink-0" />
@@ -516,6 +541,7 @@ function ReasonSheet({ title, subtitle, reasons, variant, onSubmit, onCancel }: 
   variant: 'amber' | 'red';
   onSubmit: (reason: string) => void; onCancel: () => void;
 }) {
+  const { t, reason: reasonText } = useDriverI18n();
   const [selected, setSelected] = useState('');
   const [other,    setOther]    = useState('');
   const isOther = selected === 'Other...';
@@ -534,22 +560,22 @@ function ReasonSheet({ title, subtitle, reasons, variant, onSubmit, onCancel }: 
         <div className="px-5 py-4 space-y-3">
           <select value={selected} onChange={(e) => setSelected(e.target.value)}
             className="w-full px-4 py-4 bg-gray-50 border border-gray-200 rounded-2xl text-base focus:outline-none focus:ring-2 focus:ring-primary/30">
-            <option value="">Choose a reason…</option>
-            {reasons.map((r) => <option key={r} value={r}>{r}</option>)}
+            <option value="">{t('reason.choose')}</option>
+            {reasons.map((r) => <option key={r} value={r}>{reasonText(r)}</option>)}
           </select>
           {isOther && (
             <textarea autoFocus value={other} onChange={(e) => setOther(e.target.value)}
-              placeholder="Describe the situation…" rows={3}
+              placeholder={t('reason.describe')} rows={3}
               className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-base resize-none focus:outline-none focus:ring-2 focus:ring-primary/30" />
           )}
         </div>
         <div className="px-5 pb-6 flex gap-3">
           <button onClick={onCancel} className="flex-1 py-4 border border-gray-200 rounded-2xl text-base font-semibold text-gray-600">
-            Cancel
+            {t('common.cancel')}
           </button>
           <button disabled={!canSend} onClick={() => onSubmit(isOther ? other.trim() : selected)}
             className={`flex-1 py-4 text-white rounded-2xl text-base font-bold transition-colors ${canSend ? btn : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>
-            Submit
+            {t('common.submit')}
           </button>
         </div>
         <div className="h-4" />
@@ -562,6 +588,7 @@ function ReasonSheet({ title, subtitle, reasons, variant, onSubmit, onCancel }: 
    DELIVERED CONFIRMATION SHEET
    ════════════════════════════════════════════════════════════ */
 function DeliveredSheet({ onConfirm, onCancel }: { onConfirm: () => void; onCancel: () => void }) {
+  const { t } = useDriverI18n();
   return (
     <div className="fixed inset-0 z-50 flex items-end">
       <div className="absolute inset-0 bg-black/60" onClick={onCancel} />
@@ -571,12 +598,12 @@ function DeliveredSheet({ onConfirm, onCancel }: { onConfirm: () => void; onCanc
           <CheckCircle2 className="w-11 h-11 text-green-600" />
         </div>
         <div className="text-center space-y-2">
-          <h3 className="text-2xl font-bold text-foreground">Confirm Delivery</h3>
-          <p className="text-base text-gray-500">Mark this delivery as <strong>Delivered</strong>?<br />A delivery photo is required before the status is saved.</p>
+          <h3 className="text-2xl font-bold text-foreground">{t('delivery.confirm')}</h3>
+          <p className="text-base text-gray-500">{t('delivery.markDelivered')}<br />{t('delivery.photoBeforeSave')}</p>
         </div>
         <div className="flex gap-3 pt-1">
-          <button onClick={onCancel} className="flex-1 py-5 border border-gray-200 rounded-2xl text-base font-semibold text-gray-600">Not yet</button>
-          <button onClick={onConfirm} className="flex-1 py-5 bg-green-700 text-white rounded-2xl text-base font-bold">Continue to photo</button>
+          <button onClick={onCancel} className="flex-1 py-5 border border-gray-200 rounded-2xl text-base font-semibold text-gray-600">{t('delivery.notYet')}</button>
+          <button onClick={onConfirm} className="flex-1 py-5 bg-green-700 text-white rounded-2xl text-base font-bold">{t('delivery.continuePhoto')}</button>
         </div>
         <div className="h-4" />
       </div>
@@ -590,6 +617,7 @@ function DeliveredSheet({ onConfirm, onCancel }: { onConfirm: () => void; onCanc
 function DocRow({ doc, onUpload, isDelivered, isBlurry, isFocused }: {
   doc: NormDoc; onUpload: (type: string, file: File) => void; isDelivered: boolean; isBlurry?: boolean; isFocused?: boolean;
 }) {
+  const { t, document: documentText } = useDriverI18n();
   const inputRef = useRef<HTMLInputElement>(null);
   const rowRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -629,7 +657,7 @@ function DocRow({ doc, onUpload, isDelivered, isBlurry, isFocused }: {
         </div>
         <div className="flex-1 min-w-0">
           <p className={`text-base font-semibold leading-snug ${!isDelivered ? 'text-gray-400' : 'text-foreground'}`}>
-            {doc.type}
+            {documentText(doc.type)}
           </p>
           <p className={`text-sm mt-0.5 font-medium ${
             isApproved  ? 'text-green-700' :
@@ -638,11 +666,11 @@ function DocRow({ doc, onUpload, isDelivered, isBlurry, isFocused }: {
             !isDelivered? 'text-gray-400' :
                           'text-green-700'
           }`}>
-            {!isDelivered ? 'Available after delivery' :
-             isApproved   ? 'Approved ✓' :
-             isRejected   ? 'Rejected — new photo needed' :
-             isPending    ? 'Submitted, waiting for review' :
-                            'Tap to add photo →'}
+            {!isDelivered ? t('doc.availableAfter') :
+             isApproved   ? t('doc.approved') :
+             isRejected   ? t('doc.rejected') :
+             isPending    ? t('doc.pending') :
+                            t('doc.tapPhoto')}
           </p>
         </div>
       </div>
@@ -651,7 +679,7 @@ function DocRow({ doc, onUpload, isDelivered, isBlurry, isFocused }: {
       {isRejected && doc.rejectReason && (
         <div className="bg-red-100 rounded-xl px-4 py-3">
           <p className="text-sm text-red-700 leading-snug">
-            <span className="font-bold">Reason: </span>{doc.rejectReason}
+            <span className="font-bold">{t('common.reason')} </span>{doc.rejectReason}
           </p>
         </div>
       )}
@@ -661,8 +689,8 @@ function DocRow({ doc, onUpload, isDelivered, isBlurry, isFocused }: {
         <div className="bg-red-100 rounded-xl px-4 py-3 flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
           <p className="text-sm text-red-700 leading-snug">
-            <span className="font-bold">Too blurry — </span>
-            that photo wasn't uploaded. Hold the phone steady and try again.
+            <span className="font-bold">{t('doc.tooBlurry')} </span>
+            {t('doc.blurInstruction')}
           </p>
         </div>
       )}
@@ -681,7 +709,7 @@ function DocRow({ doc, onUpload, isDelivered, isBlurry, isFocused }: {
             }`}
           >
             <Camera className="w-5 h-5" />
-            {isBlurry ? 'Retake photo' : isRejected ? 'Retake and re-upload' : 'Take photo to upload'}
+            {isBlurry ? t('photo.retake') : isRejected ? t('doc.retakeUpload') : t('doc.takeUpload')}
           </button>
         </>
       )}
@@ -693,11 +721,12 @@ function DocRow({ doc, onUpload, isDelivered, isBlurry, isFocused }: {
    STATUS BADGE
    ════════════════════════════════════════════════════════════ */
 function StatusBadge({ status }: { status: TaskStatus | string }) {
+  const { status: statusText } = useDriverI18n();
   const cfg = taskStatusConfig[status as TaskStatus] ?? { badge: 'bg-gray-100 text-gray-600 border-gray-200', dot: 'bg-gray-400', label: status };
   return (
     <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-bold border ${cfg.badge}`}>
       <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
-      {cfg.label}
+      {statusText(status)}
     </span>
   );
 }
@@ -716,6 +745,7 @@ function DetailRow({ label, value }: { label: string; value?: string | null }) {
 }
 
 function PastDeliveryRow({ item, onOpen }: { item: CompletedHistoryItem; onOpen: () => void }) {
+  const { t } = useDriverI18n();
   return (
     <button type="button" onClick={onOpen}
       className="w-full min-w-0 min-h-20 rounded-2xl border border-gray-200 bg-white px-4 py-3 text-left flex items-center justify-between gap-3 active:bg-green-50 focus-visible:outline-2 focus-visible:outline-green-600">
@@ -723,8 +753,8 @@ function PastDeliveryRow({ item, onOpen }: { item: CompletedHistoryItem; onOpen:
         <span className="block font-bold text-foreground break-all">{item.id}</span>
         <span className="block text-sm text-gray-700 break-words">{item.destination}</span>
         <span className="block text-sm text-gray-600 break-words">{item.company} · {item.truckPlate}</span>
-        <span className="block text-xs text-gray-500 mt-1">Completed {manilaStamp(item.completedAt)}</span>
-        <span className="inline-block mt-2 text-xs font-bold text-green-700 bg-green-50 border border-green-200 px-2.5 py-1 rounded-full">Completed ✓</span>
+        <span className="block text-xs text-gray-500 mt-1">{t('history.completedAtShort', { date: manilaStamp(item.completedAt, t('common.notAvailable')) })}</span>
+        <span className="inline-block mt-2 text-xs font-bold text-green-700 bg-green-50 border border-green-200 px-2.5 py-1 rounded-full">{t('history.completedCheck')}</span>
       </span>
       <ChevronRight className="w-5 h-5 shrink-0 text-gray-400" aria-hidden="true" />
     </button>
@@ -732,10 +762,11 @@ function PastDeliveryRow({ item, onOpen }: { item: CompletedHistoryItem; onOpen:
 }
 
 function DriverPageControls({ page, pages, onPage }: { page: number; pages: number; onPage: (page: number) => void }) {
+  const { t } = useDriverI18n();
   if (pages <= 1) return null;
   return (
-    <nav aria-label="Pagination" className="flex items-center justify-center gap-2 py-3 flex-wrap">
-      <button type="button" onClick={() => onPage(page - 1)} disabled={page === 1} aria-label="Previous page"
+    <nav aria-label={t('common.pagination')} className="flex items-center justify-center gap-2 py-3 flex-wrap">
+      <button type="button" onClick={() => onPage(page - 1)} disabled={page === 1} aria-label={t('common.previousPage')}
         className="h-11 w-11 rounded-xl border border-gray-200 bg-white flex items-center justify-center disabled:opacity-40"><ChevronLeft className="w-5 h-5" /></button>
       {Array.from({ length: pages }, (_, index) => index + 1).filter((number) => number === 1 || number === pages || Math.abs(number - page) <= 1).map((number, index, visible) => (
         <span key={number} className="hidden sm:contents">
@@ -745,13 +776,14 @@ function DriverPageControls({ page, pages, onPage }: { page: number; pages: numb
         </span>
       ))}
       <span className="sm:hidden h-11 min-w-11 px-3 rounded-xl bg-green-700 text-white font-semibold flex items-center justify-center">{page}</span>
-      <button type="button" onClick={() => onPage(page + 1)} disabled={page === pages} aria-label="Next page"
+      <button type="button" onClick={() => onPage(page + 1)} disabled={page === pages} aria-label={t('common.nextPage')}
         className="h-11 w-11 rounded-xl border border-gray-200 bg-white flex items-center justify-center disabled:opacity-40"><ChevronRight className="w-5 h-5" /></button>
     </nav>
   );
 }
 
 function DriverNotificationRow({ notification, index, onOpen }: { notification: DriverNotif; index: number; onOpen?: () => void }) {
+  const { t } = useDriverI18n();
   const n = notification;
   const content = (
     <>
@@ -768,11 +800,12 @@ function DriverNotificationRow({ notification, index, onOpen }: { notification: 
   const className = `w-full min-w-0 min-h-20 rounded-2xl border p-4 flex items-start gap-3 text-left motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-3 motion-safe:duration-300 ${n.type === 'rejection' ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`;
   const style = { animationDelay: `${index * 70}ms` };
   return onOpen ? (
-    <button type="button" onClick={onOpen} style={style} className={`${className} focus-visible:outline-2 focus-visible:outline-green-700`} aria-label={`${n.title}. Open task documents`}>{content}</button>
+    <button type="button" onClick={onOpen} style={style} className={`${className} focus-visible:outline-2 focus-visible:outline-green-700`} aria-label={t('notifications.openDocuments', { title: n.title })}>{content}</button>
   ) : <div style={style} className={className}>{content}</div>;
 }
 
 function DriverDrawer({ title, onClose, children, compact = false }: { title: string; onClose: () => void; children: React.ReactNode; compact?: boolean }) {
+  const { t } = useDriverI18n();
   const panelRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -799,7 +832,7 @@ function DriverDrawer({ title, onClose, children, compact = false }: { title: st
       <div ref={panelRef} role="dialog" aria-modal="true" aria-label={title} className={`relative w-full max-w-md min-w-0 max-h-[min(85dvh,720px)] bg-white rounded-3xl shadow-xl flex flex-col overflow-hidden motion-safe:animate-in motion-safe:fade-in motion-safe:duration-200 ${compact ? '' : 'h-[min(85dvh,720px)]'}`}>
         <div className="px-4 py-4 border-b border-gray-200 flex items-center justify-between gap-3 shrink-0">
           <h2 className="text-xl font-bold text-foreground">{title}</h2>
-          <button ref={closeRef} type="button" onClick={onClose} aria-label={`Close ${title}`} className="h-11 w-11 rounded-xl border border-gray-200 flex items-center justify-center focus-visible:outline-2 focus-visible:outline-green-700"><X className="w-5 h-5" /></button>
+          <button ref={closeRef} type="button" onClick={onClose} aria-label={t('common.close', { title })} className="h-11 w-11 rounded-xl border border-gray-200 flex items-center justify-center focus-visible:outline-2 focus-visible:outline-green-700"><X className="w-5 h-5" /></button>
         </div>
         <div className="min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5">{children}</div>
       </div>
@@ -808,6 +841,7 @@ function DriverDrawer({ title, onClose, children, compact = false }: { title: st
 }
 
 function HistoryDetailsSheet({ driverId, assignmentId, onClose }: { driverId: string; assignmentId: string; onClose: () => void }) {
+  const { t, document: documentText, status: statusText } = useDriverI18n();
   const [detail, setDetail] = useState<HistoryDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -822,10 +856,10 @@ function HistoryDetailsSheet({ driverId, assignmentId, onClose }: { driverId: st
     loadDriverCompletedDelivery(driverId, assignmentId).then((result) => {
       if (alive) { setDetail(result); setLoading(false); }
     }).catch(() => {
-      if (alive) { setError('Unable to load this delivery. Please try again.'); setLoading(false); }
+      if (alive) { setError(t('history.loadError')); setLoading(false); }
     });
     return () => { alive = false; };
-  }, [driverId, assignmentId]);
+  }, [driverId, assignmentId, t]);
 
   useEffect(() => {
     const previous = document.body.style.overflow;
@@ -859,62 +893,62 @@ function HistoryDetailsSheet({ driverId, assignmentId, onClose }: { driverId: st
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center sm:justify-center sm:p-4">
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <div role="dialog" aria-modal="true" aria-label="Past delivery details"
+      <div role="dialog" aria-modal="true" aria-label={t('history.details')}
         className="relative w-full min-w-0 max-h-[85dvh] sm:max-w-xl bg-white rounded-t-3xl sm:rounded-2xl shadow-xl flex flex-col overflow-hidden">
         <div className="w-10 h-1 rounded-full bg-gray-300 mx-auto mt-2 sm:hidden shrink-0" />
         <div className="px-4 sm:px-6 py-4 border-b border-gray-200 flex items-start justify-between gap-3 shrink-0">
           <div className="min-w-0">
-            <h2 className="text-xl font-bold text-foreground break-words">{detail?.truckPlate ?? 'Past delivery'}</h2>
+            <h2 className="text-xl font-bold text-foreground break-words">{detail?.truckPlate ?? t('history.pastDelivery')}</h2>
             <p className="text-xs font-mono text-gray-500 break-all">{assignmentId}</p>
-            {detail && <span className="inline-block mt-2 text-xs font-bold text-green-700 bg-green-50 border border-green-200 px-2.5 py-1 rounded-full">Completed ✓</span>}
+            {detail && <span className="inline-block mt-2 text-xs font-bold text-green-700 bg-green-50 border border-green-200 px-2.5 py-1 rounded-full">{t('history.completedCheck')}</span>}
           </div>
-          <button type="button" onClick={onClose} aria-label="Close details" className="w-11 h-11 shrink-0 flex items-center justify-center rounded-xl border border-gray-200"><X className="w-5 h-5" /></button>
+          <button type="button" onClick={onClose} aria-label={t('history.closeDetails')} className="w-11 h-11 shrink-0 flex items-center justify-center rounded-xl border border-gray-200"><X className="w-5 h-5" /></button>
         </div>
         <div className="min-w-0 overflow-y-auto overscroll-contain px-4 sm:px-6 py-4 space-y-5">
-          {loading ? <p className="text-gray-500 py-8 text-center">Loading delivery…</p> : error ? <p className="text-red-600 py-8 text-center">{error}</p> : !detail ? (
-            <p className="text-gray-500 py-8 text-center">This delivery is no longer available.</p>
+          {loading ? <p className="text-gray-500 py-8 text-center">{t('history.loading')}</p> : error ? <p className="text-red-600 py-8 text-center">{error}</p> : !detail ? (
+            <p className="text-gray-500 py-8 text-center">{t('history.unavailable')}</p>
           ) : <>
             <div className="text-sm space-y-2 break-words">
-              <p><span className="font-semibold text-gray-500">Route: </span>{detail.destination}</p>
-              <p><span className="font-semibold text-gray-500">Customer: </span>{detail.company}</p>
-              <p><span className="font-semibold text-gray-500">Delivery date: </span>{manilaDate(detail.deliveryDate)}</p>
-              <p><span className="font-semibold text-gray-500">Completed at: </span>{manilaStamp(detail.completedAt)}</p>
+              <p><span className="font-semibold text-gray-500">{t('history.route')} </span>{detail.destination}</p>
+              <p><span className="font-semibold text-gray-500">{t('history.customer')} </span>{detail.company}</p>
+              <p><span className="font-semibold text-gray-500">{t('history.deliveryDate')} </span>{manilaDate(detail.deliveryDate, t('common.notAvailable'))}</p>
+              <p><span className="font-semibold text-gray-500">{t('history.completedAt')} </span>{manilaStamp(detail.completedAt, t('common.notAvailable'))}</p>
               {detail.remarks?.trim() && <div>
-                <span className="font-semibold text-gray-500">Remarks</span>
+                <span className="font-semibold text-gray-500">{t('history.remarks')}</span>
                 <p ref={remarksRef} className={`whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${remarksOpen ? '' : 'line-clamp-3'}`}>{detail.remarks}</p>
-                {(remarksOverflow || remarksOpen) && <button type="button" onClick={() => setRemarksOpen((open) => !open)} className="min-h-11 text-green-700 font-semibold">{remarksOpen ? 'See less' : 'See more'}</button>}
+                {(remarksOverflow || remarksOpen) && <button type="button" onClick={() => setRemarksOpen((open) => !open)} className="min-h-11 text-green-700 font-semibold">{remarksOpen ? t('history.seeLess') : t('history.seeMore')}</button>}
               </div>}
             </div>
             <section>
-              <h3 className="font-bold text-foreground">Documents</h3>
-              <p className="text-sm text-gray-500 mt-0.5">{approved} of {REQUIRED_DOCS.length} documents approved</p>
+              <h3 className="font-bold text-foreground">{t('history.documents')}</h3>
+              <p className="text-sm text-gray-500 mt-0.5">{t('history.documentsApproved', { count: approved, total: REQUIRED_DOCS.length })}</p>
               {docRows.length ? <div className="mt-3 space-y-2">
                 {docRows.map((doc) => {
                   const url = safeUrl(doc.fileUrl);
-                  const status = !doc.uploaded ? 'Awaiting upload' : doc.docStatus === 'approved' ? 'Approved' : doc.docStatus === 'rejected' ? 'Rejected' : 'Pending review';
+                  const status = !doc.uploaded ? t('history.awaitingUpload') : statusText(doc.docStatus);
                   const color = !doc.uploaded ? 'bg-gray-100 text-gray-600' : doc.docStatus === 'approved' ? 'bg-green-50 text-green-700' : doc.docStatus === 'rejected' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700';
                   return <div key={doc.type} className="min-w-0 flex items-center gap-3 rounded-xl border border-gray-200 p-3">
                     {doc.type === 'Proof of Delivery' && url && isImage(url) ? (
-                      <button type="button" onClick={() => setPreviewUrl(url)} aria-label="Enlarge Proof of Delivery" className="shrink-0 w-11 h-11 rounded-lg overflow-hidden border border-gray-200">
-                        <img src={url} alt="Proof of Delivery thumbnail" loading="lazy" decoding="async" className="w-full h-full object-cover" />
+                      <button type="button" onClick={() => setPreviewUrl(url)} aria-label={t('history.enlargeProof')} className="shrink-0 w-11 h-11 rounded-lg overflow-hidden border border-gray-200">
+                        <img src={url} alt={t('history.proofThumbnail')} loading="lazy" decoding="async" className="w-full h-full object-cover" />
                       </button>
                     ) : <FileText className="w-5 h-5 text-gray-400 shrink-0" />}
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold text-foreground break-words">{doc.type}</p>
+                      <p className="text-sm font-semibold text-foreground break-words">{documentText(doc.type)}</p>
                       <span className={`inline-block text-xs rounded-full px-2 py-0.5 ${color}`}>{status}</span>
-                      {doc.uploaded && <p className="text-xs text-gray-500">{'uploadedAt' in doc && typeof doc.uploadedAt === 'string' ? manilaStamp(doc.uploadedAt) : 'Upload time unavailable'}</p>}
+                      {doc.uploaded && <p className="text-xs text-gray-500">{'uploadedAt' in doc && typeof doc.uploadedAt === 'string' ? manilaStamp(doc.uploadedAt, t('common.notAvailable')) : t('history.uploadTimeUnavailable')}</p>}
                     </div>
-                    {url && <a href={url} target="_blank" rel="noopener noreferrer" className="shrink-0 min-h-11 px-3 flex items-center text-sm font-semibold text-green-700">View</a>}
+                    {url && <a href={url} target="_blank" rel="noopener noreferrer" className="shrink-0 min-h-11 px-3 flex items-center text-sm font-semibold text-green-700">{t('common.view')}</a>}
                   </div>;
                 })}
-              </div> : <p className="text-sm text-gray-500 mt-3">No documents uploaded for this delivery.</p>}
+              </div> : <p className="text-sm text-gray-500 mt-3">{t('history.noDocuments')}</p>}
             </section>
           </>}
         </div>
       </div>
       {previewUrl && <div className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center p-4" onClick={() => setPreviewUrl(null)}>
-        <button type="button" onClick={() => setPreviewUrl(null)} aria-label="Close preview" className="absolute top-4 right-4 h-11 w-11 text-white flex items-center justify-center"><X className="w-6 h-6" /></button>
-        <img src={previewUrl} alt="Proof of Delivery" className="max-w-full max-h-full object-contain" />
+        <button type="button" onClick={() => setPreviewUrl(null)} aria-label={t('history.closePreview')} className="absolute top-4 right-4 h-11 w-11 text-white flex items-center justify-center"><X className="w-6 h-6" /></button>
+        <img src={previewUrl} alt={documentText('Proof of Delivery')} className="max-w-full max-h-full object-contain" />
       </div>}
     </div>
   );
@@ -925,7 +959,12 @@ function HistoryDetailsSheet({ driverId, assignmentId, onClose }: { driverId: st
    ════════════════════════════════════════════════════════════ */
 interface Props { driverId: string; driverName: string; onLogout: () => void; }
 
-export default function DriverInterface({ driverId, driverName, onLogout }: Props) {
+export default function DriverInterface(props: Props) {
+  return <DriverLanguageProvider key={props.driverId} driverId={props.driverId}><DriverInterfaceContent {...props} /></DriverLanguageProvider>;
+}
+
+function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
+  const { t, status: statusText, document: documentText, reason: reasonText, language, setLanguage } = useDriverI18n();
   /* ── Server state ── */
   const [data,     setData]     = useState<DriverData | null>(null);
   const [online,   setOnline]   = useState(true);
@@ -958,10 +997,25 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
   const [historySearch, setHistorySearch] = useState('');
   const [historyPage, setHistoryPage] = useState(1);
   const [notificationPage, setNotificationPage] = useState(1);
-  const [activeDrawer, setActiveDrawer] = useState<'notifications' | 'menu' | null>(null);
+  const [activeDrawer, setActiveDrawer] = useState<'notifications' | 'menu' | 'language' | null>(null);
+  const [languageNotice, setLanguageNotice] = useState<DriverLanguage | null>(null);
   const [focusedDocType, setFocusedDocType] = useState<string | null>(null);
   const closeHistoryDetail = useCallback(() => setSelectedHistoryId(null), []);
   const closeDrawer = useCallback(() => setActiveDrawer(null), []);
+
+  useEffect(() => {
+    if (!languageNotice) return;
+    const timer = window.setTimeout(() => setLanguageNotice(null), 1800);
+    return () => window.clearTimeout(timer);
+  }, [languageNotice]);
+
+  const selectLanguage = (next: DriverLanguage) => {
+    if (next !== language) {
+      setLanguage(next);
+      setLanguageNotice(next);
+    }
+    setActiveDrawer('menu');
+  };
 
   useEffect(() => {
     if (!focusedDocType || screen !== 'task') return;
@@ -1022,7 +1076,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
       /* Note: the optimistic update above is deliberately NOT rolled back here —
          changing that mid-delivery is a behaviour decision, not error handling.
          So the driver must be told the change did not reach the server. */
-      setActionError('Something went wrong, please try again. Your last change was not saved.');
+      setActionError(t('home.saveError'));
     }
     finally { setUpdating(false); }
   };
@@ -1152,10 +1206,10 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
       if (doc.uploaded && doc.docStatus === 'rejected') {
         notifs.push({
           id: `reject-${doc.type}`, type: 'rejection', docType: doc.type,
-          title: `${doc.type} was rejected`,
+          title: t('notifications.rejectedTitle', { document: documentText(doc.type) }),
           body: doc.rejectReason
-            ? `Reason: "${doc.rejectReason}" — Please take a new photo and re-upload.`
-            : 'Please re-upload a clearer photo.',
+            ? t('notifications.rejectedReason', { reason: doc.rejectReason })
+            : t('notifications.rejectedNoReason'),
         });
       }
     });
@@ -1163,13 +1217,13 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
       if (doc.uploaded && doc.docStatus === 'approved') {
         notifs.push({
           id: `approve-${doc.type}`, type: 'approval', docType: doc.type,
-          title: `${doc.type} approved`,
-          body: 'Your document has been reviewed and accepted.',
+          title: t('notifications.approvedTitle', { document: documentText(doc.type) }),
+          body: t('notifications.approvedBody'),
         });
       }
     });
     return notifs;
-  }, [normalizedDocs]);
+  }, [normalizedDocs, t, documentText]);
 
   const completedHistory = data?.completedHistory ?? [];
   const filteredHistory = completedHistory.filter((item) =>
@@ -1231,8 +1285,8 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
     return (
       <div className="min-h-screen bg-gradient-to-b from-green-50 to-white flex flex-col items-center justify-center gap-5 px-6 text-center">
         <div className="w-14 h-14 border-4 border-green-500 border-t-transparent rounded-full animate-spin" />
-        <p className="text-xl font-bold text-foreground">Loading your tasks…</p>
-        <p className="text-base text-gray-400">Welcome, {driverName}</p>
+        <p className="text-xl font-bold text-foreground">{t('home.loadingTasks')}</p>
+        <p className="text-base text-gray-400">{t('home.welcome', { name: driverName })}</p>
       </div>
     );
   }
@@ -1243,12 +1297,12 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
           <WifiOff className="w-9 h-9 text-red-500" />
         </div>
         <div>
-          <p className="text-xl font-bold text-foreground">No Connection</p>
-          <p className="text-base text-gray-400 mt-1">Check your internet and try again.</p>
+          <p className="text-xl font-bold text-foreground">{t('home.noConnection')}</p>
+          <p className="text-base text-gray-400 mt-1">{t('home.checkInternet')}</p>
         </div>
-        <button onClick={() => fetchData()} className="px-8 py-4 bg-green-700 text-white rounded-2xl font-bold text-base">Try Again</button>
-        <button onClick={() => { setData(MOCK_DATA); setOnline(false); }} className="text-base text-primary underline font-medium">Preview with demo data</button>
-        <button onClick={onLogout} className="text-base text-gray-400 underline">Log out</button>
+        <button onClick={() => fetchData()} className="px-8 py-4 bg-green-700 text-white rounded-2xl font-bold text-base">{t('home.tryAgain')}</button>
+        <button onClick={() => { setData(MOCK_DATA); setOnline(false); }} className="text-base text-primary underline font-medium">{t('home.previewDemo')}</button>
+        <button onClick={onLogout} className="text-base text-gray-400 underline">{t('menu.logout')}</button>
       </div>
     );
   }
@@ -1273,53 +1327,80 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
       <div className="absolute inset-0 bg-black/60" onClick={() => setLogoutDlg(false)} />
       <div className="relative bg-white w-full rounded-t-3xl p-6 space-y-5 animate-in slide-in-from-bottom duration-200">
         <div className="w-10 h-1 bg-gray-300 rounded-full mx-auto -mt-2 mb-2" />
-        <p className="text-2xl font-bold text-center text-foreground">Log out?</p>
-        <p className="text-base text-gray-400 text-center">You'll be returned to the login screen.</p>
+        <p className="text-2xl font-bold text-center text-foreground">{t('logout.title')}</p>
+        <p className="text-base text-gray-400 text-center">{t('logout.description')}</p>
         <div className="flex gap-3">
-          <button onClick={() => setLogoutDlg(false)} className="flex-1 py-5 border border-gray-200 rounded-2xl font-semibold text-base text-gray-600">Stay logged in</button>
-          <button onClick={onLogout} className="flex-1 py-5 bg-red-600 text-white rounded-2xl font-bold text-base">Log Out</button>
+          <button onClick={() => setLogoutDlg(false)} className="flex-1 py-5 border border-gray-200 rounded-2xl font-semibold text-base text-gray-600">{t('logout.stay')}</button>
+          <button onClick={onLogout} className="flex-1 py-5 bg-red-600 text-white rounded-2xl font-bold text-base">{t('logout.confirm')}</button>
         </div>
         <div className="h-4" />
       </div>
     </div>
   );
 
-  const menuButton = (expanded = false) => (
+  const menuButton = (expanded = false, fullWidth = false) => (
     <button type="button" onClick={() => setActiveDrawer('menu')} aria-haspopup="dialog"
-      className={`${expanded ? 'min-h-12 min-w-28 max-[359px]:w-full px-4 text-base' : 'min-h-11 px-2.5 text-sm'} rounded-xl border border-gray-200 bg-white text-gray-700 font-semibold flex items-center justify-center gap-1.5 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-green-700`}>
-      <Menu className={`${expanded ? 'w-5 h-5' : 'w-4 h-4'} shrink-0`} aria-hidden="true" /> Menu
+      className={`${expanded ? 'min-h-12 min-w-28 max-[359px]:w-full px-4 text-base' : 'min-h-11 px-2.5 text-sm'} ${fullWidth ? 'w-full' : ''} rounded-xl border border-gray-200 bg-white text-gray-700 font-semibold flex items-center justify-center gap-1.5 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-green-700`}>
+      <Menu className={`${expanded ? 'w-5 h-5' : 'w-4 h-4'} shrink-0`} aria-hidden="true" /> {t('menu.title')}
     </button>
   );
 
   const DriverDrawers = activeDrawer === 'notifications' ? (
-    <DriverDrawer title="Notifications" onClose={closeDrawer}>
+    <DriverDrawer title={t('notifications.title')} onClose={closeDrawer}>
       {driverNotifs.length ? <>
-        <p className="text-sm text-gray-500 mb-4">Updates about your delivery documents.</p>
+        <p className="text-sm text-gray-500 mb-4">{t('notifications.subtitle')}</p>
         <div className="grid min-w-0 grid-cols-1 gap-3">
           {notificationRows.map((notification, index) => <DriverNotificationRow key={notification.id} notification={notification} index={index}
             onOpen={notification.type === 'rejection' ? () => openDocumentFromNotification(notification.docType) : undefined} />)}
         </div>
         <DriverPageControls page={shownNotificationPage} pages={notificationPages} onPage={setNotificationPage} />
-      </> : <div className="bg-gray-50 rounded-2xl border border-gray-200 px-5 py-8 text-center text-gray-500">No notifications yet</div>}
+      </> : <div className="bg-gray-50 rounded-2xl border border-gray-200 px-5 py-8 text-center text-gray-500">{t('notifications.empty')}</div>}
     </DriverDrawer>
   ) : activeDrawer === 'menu' ? (
-    <DriverDrawer title="Menu" onClose={closeDrawer} compact>
+    <DriverDrawer title={t('menu.title')} onClose={closeDrawer} compact>
       <div className="flex flex-col">
         <button type="button" onClick={() => { setHistorySearch(''); setHistoryPage(1); setActiveDrawer(null); setScreen('history'); }}
           className="w-full min-h-16 rounded-2xl border border-gray-200 bg-white px-4 py-3 text-left flex items-center gap-3 focus-visible:outline-2 focus-visible:outline-green-700">
           <History className="w-6 h-6 text-green-700 shrink-0" aria-hidden="true" />
-          <span className="flex-1 font-bold text-foreground">Past Deliveries</span>
+          <span className="flex-1 font-bold text-foreground">{t('history.title')}</span>
+          <ChevronRight className="w-5 h-5 text-gray-400 shrink-0" aria-hidden="true" />
+        </button>
+        <button type="button" onClick={() => setActiveDrawer('language')}
+          className="mt-3 w-full min-h-16 rounded-2xl border border-gray-200 bg-white px-4 py-3 text-left flex items-center gap-3 focus-visible:outline-2 focus-visible:outline-green-700">
+          <Languages className="w-6 h-6 text-green-700 shrink-0" aria-hidden="true" />
+          <span className="flex-1 font-bold text-foreground">{t('menu.language')}</span>
+          <span className="text-sm text-gray-500">{language === 'fil' ? t('language.filipino') : t('language.english')}</span>
           <ChevronRight className="w-5 h-5 text-gray-400 shrink-0" aria-hidden="true" />
         </button>
         <div className="mt-8 border-t border-gray-200 pt-5">
           <button type="button" onClick={() => { setActiveDrawer(null); setLogoutDlg(true); }}
             className="w-full min-h-14 rounded-2xl border border-red-200 bg-red-50 px-4 text-left flex items-center gap-3 font-bold text-red-700 focus-visible:outline-2 focus-visible:outline-red-600">
-            <LogOut className="w-5 h-5" aria-hidden="true" /> Log out
+            <LogOut className="w-5 h-5" aria-hidden="true" /> {t('menu.logout')}
           </button>
         </div>
       </div>
     </DriverDrawer>
+  ) : activeDrawer === 'language' ? (
+    <DriverDrawer title={t('menu.language')} onClose={() => setActiveDrawer('menu')} compact>
+      <div className="space-y-3">
+        {(['en', 'fil'] as const).map((option) => (
+          <button key={option} type="button" onClick={() => selectLanguage(option)}
+            aria-pressed={language === option}
+            className={`w-full min-h-16 rounded-2xl border px-4 py-3 flex items-center justify-between text-left text-base font-bold focus-visible:outline-2 focus-visible:outline-green-700 ${language === option ? 'border-green-600 bg-green-50 text-green-800' : 'border-gray-200 bg-white text-foreground'}`}>
+            {option === 'en' ? t('language.english') : t('language.filipino')}
+            {language === option && <CheckCircle2 className="h-6 w-6 text-green-700" aria-hidden="true" />}
+          </button>
+        ))}
+      </div>
+    </DriverDrawer>
   ) : null;
+
+  const LanguageNotice = languageNotice && (
+    <div role="status" aria-live="polite" className="fixed bottom-5 left-1/2 -translate-x-1/2 z-[70] w-[min(92vw,420px)] rounded-2xl bg-gray-900 px-4 py-3 text-white shadow-xl flex items-center gap-2 text-sm font-semibold">
+      <CheckCircle2 className="h-5 w-5 shrink-0" aria-hidden="true" />
+      {languageNotice === 'fil' ? t('language.changedFil') : t('language.changedEn')}
+    </div>
+  );
 
   /* ════════════════════════════════════════════════════════════
      DASHBOARD SCREEN
@@ -1328,34 +1409,44 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col">
         {/* Header */}
-        <header className="bg-white border-b border-gray-200 px-5 py-4 sticky top-0 z-20 shadow-sm">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-xs text-gray-400 font-bold uppercase tracking-widest leading-none">360 Logistics</p>
-              <p className="text-2xl font-bold text-foreground mt-0.5 truncate">{driverName}</p>
+        <header className="bg-white border-b border-gray-200 px-4 py-3 sticky top-0 z-20 shadow-sm">
+          <div className="w-full max-w-2xl mx-auto">
+            <div className="flex items-start justify-between gap-3 sm:gap-6">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm sm:text-base text-green-700 font-extrabold uppercase tracking-wide leading-tight">360 Logistics</p>
+                <DriverHomeClock />
+              </div>
+              <div className="min-w-0 flex-1 text-right">
+                <p className="text-base sm:text-lg font-bold text-foreground leading-tight break-words [overflow-wrap:anywhere]">{driverName}</p>
+                <p className="mt-1 text-xs sm:text-sm font-medium text-gray-500">{t('home.driver')}</p>
+              </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="grid grid-cols-2 gap-2.5 mt-3">
               <button type="button" onClick={() => { setNotificationPage(1); setActiveDrawer('notifications'); }} aria-haspopup="dialog"
-                className="min-h-11 px-2.5 rounded-xl border border-gray-200 bg-white text-gray-700 text-sm font-semibold flex items-center justify-center gap-1.5 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-green-700">
-                <Bell className="w-4 h-4 shrink-0" aria-hidden="true" /> Notifications
-                {rejectedNotifs.length > 0 && <span className="min-w-5 h-5 px-1 rounded-full bg-red-600 text-white text-xs flex items-center justify-center" aria-label={`${rejectedNotifs.length} documents need correction`}>{rejectedNotifs.length}</span>}
+                aria-label={`${t('notifications.title')}${rejectedNotifs.length > 0 ? `, ${rejectedNotifs.length === 1 ? t('notifications.correctionOne') : t('notifications.correctionMany', { count: rejectedNotifs.length })}` : ''}`}
+                className="min-w-0 min-h-12 px-2 rounded-xl border border-gray-200 bg-white text-gray-700 text-sm sm:text-base font-semibold flex items-center justify-center gap-3 focus-visible:outline-2 focus-visible:outline-green-700">
+                <span className="relative shrink-0" aria-hidden="true">
+                  <Bell className="w-5 h-5" />
+                  {rejectedNotifs.length > 0 && <span className="absolute -top-2 -right-2 min-w-5 h-5 px-1 rounded-full bg-red-600 text-white text-xs flex items-center justify-center">{rejectedNotifs.length}</span>}
+                </span>
+                <span className="min-w-0 leading-tight">{t('notifications.title')}</span>
               </button>
-              {menuButton()}
+              {menuButton(true, true)}
             </div>
           </div>
         </header>
 
         {updating && <div className="h-1 bg-primary/20"><div className="h-full w-1/2 bg-primary animate-pulse rounded-full" /></div>}
 
-        <div className="flex-1 overflow-y-auto px-4 py-6 space-y-6 pb-10">
+        <div className="flex-1 overflow-y-auto w-full max-w-2xl mx-auto px-4 py-5 space-y-5 pb-10">
 
           {rejectedNotifs.length > 0 && (
             <button type="button" onClick={() => openDocumentFromNotification(rejectedNotifs[0].docType)}
-              className="w-full rounded-2xl border border-red-200 bg-red-50 px-4 py-4 text-left flex items-center gap-3 focus-visible:outline-2 focus-visible:outline-red-600">
-              <AlertTriangle className="w-6 h-6 text-red-600 shrink-0" aria-hidden="true" />
+              className="w-full rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-left flex items-center gap-3 focus-visible:outline-2 focus-visible:outline-red-600">
+              <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" aria-hidden="true" />
               <span className="flex-1 min-w-0">
-                <span className="block font-bold text-red-800">{rejectedNotifs.length} {rejectedNotifs.length === 1 ? 'document needs' : 'documents need'} correction</span>
-                <span className="block text-sm text-red-700">Review and re-upload the rejected {rejectedNotifs.length === 1 ? 'document' : 'documents'}.</span>
+                <span className="block font-bold text-red-800">{rejectedNotifs.length === 1 ? t('notifications.correctionOne') : t('notifications.correctionMany', { count: rejectedNotifs.length })}</span>
+                <span className="block text-sm text-red-700">{rejectedNotifs.length === 1 ? t('notifications.reviewOne') : t('notifications.reviewMany')}</span>
               </span>
               <ChevronRight className="w-5 h-5 text-red-600 shrink-0" aria-hidden="true" />
             </button>
@@ -1363,19 +1454,19 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
 
           {/* ── TODAY'S TASK ── */}
           <section>
-            <h2 className="text-xl font-bold text-foreground mb-3">Today's Task</h2>
+            <h2 className="text-xl font-bold text-foreground mb-3">{t('home.todayTask')}</h2>
             {a ? (
               <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
                 {/* Task header */}
-                <div className="bg-gradient-to-r from-green-50 to-teal-50 px-5 py-3 flex items-center justify-between gap-2 border-b border-gray-100">
-                  <span className="text-xs font-mono font-bold text-gray-400">{a.id}</span>
+                <div className="bg-gray-50 px-4 py-3 flex items-center justify-between gap-2 border-b border-gray-100">
+                  <span className="min-w-0 text-sm font-mono font-bold text-gray-600 break-all">{a.id}</span>
                   <StatusBadge status={a.taskStatus as TaskStatus} />
                 </div>
                 {/* Route */}
-                <div className="px-5 py-5 space-y-4">
+                <div className="px-4 py-4 space-y-3">
                   <div>
-                    <p className="text-sm font-bold text-gray-400 uppercase tracking-wide">Pick up at</p>
-                    <p className="text-lg font-bold text-foreground mt-1 leading-snug">{a.pickupLocation}</p>
+                    <p className="text-sm font-bold text-gray-400 uppercase tracking-wide">{t('home.pickupAt')}</p>
+                    <p className="text-lg font-bold text-foreground mt-1 leading-snug break-words [overflow-wrap:anywhere]">{a.pickupLocation}</p>
                   </div>
                   <div className="flex items-center gap-3">
                     <div className="flex-1 h-px bg-gray-200" />
@@ -1383,17 +1474,17 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
                     <div className="flex-1 h-px bg-gray-200" />
                   </div>
                   <div>
-                    <p className="text-sm font-bold text-gray-400 uppercase tracking-wide">Deliver to</p>
-                    <p className="text-lg font-bold text-green-700 mt-1 leading-snug">{deliveryToLocation(a.destination)}</p>
+                    <p className="text-sm font-bold text-gray-400 uppercase tracking-wide">{t('home.deliverTo')}</p>
+                    <p className="text-lg font-bold text-green-700 mt-1 leading-snug break-words [overflow-wrap:anywhere]">{deliveryToLocation(a.destination)}</p>
                   </div>
                 </div>
                 {/* View task button */}
-                <div className="px-5 pb-5">
+                <div className="px-4 pb-4">
                   <button
                     onClick={() => setScreen('task')}
-                    className="w-full py-5 bg-green-700 text-white rounded-2xl font-bold text-xl flex items-center justify-center gap-3 active:bg-green-800 shadow-md"
+                    className="w-full min-h-14 px-4 py-3 bg-green-700 text-white rounded-xl font-bold text-lg sm:text-xl flex items-center justify-center gap-3 active:bg-green-800 shadow-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-green-700"
                   >
-                    View Task <ChevronRight className="w-6 h-6" />
+                    {t('home.viewTask')} <ChevronRight className="w-6 h-6" />
                   </button>
                 </div>
               </div>
@@ -1402,8 +1493,8 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
                 <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-4">
                   <Package className="w-9 h-9 text-blue-300" />
                 </div>
-                <p className="text-xl font-bold text-gray-500">No task assigned yet</p>
-                <p className="text-base text-gray-400 mt-2 leading-relaxed">Check back later —<br />your admin will assign one soon.</p>
+                <p className="text-xl font-bold text-gray-500">{t('home.noTask')}</p>
+                <p className="text-base text-gray-400 mt-2 leading-relaxed">{t('home.checkLater')}</p>
               </div>
             )}
           </section>
@@ -1412,7 +1503,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
           {!online && (
             <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-center gap-3">
               <WifiOff className="w-5 h-5 text-amber-500 flex-shrink-0" />
-              <p className="text-sm text-amber-700 font-semibold">Offline — showing last saved data</p>
+              <p className="text-sm text-amber-700 font-semibold">{t('home.offline')}</p>
             </div>
           )}
         </div>
@@ -1420,6 +1511,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
         {ActionErrorBanner}
         {DriverDrawers}
         {LogoutDialog}
+        {LanguageNotice}
       </div>
     );
   }
@@ -1427,24 +1519,25 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
   if (screen === 'history') {
     return <div className="min-h-screen min-w-0 bg-gray-50">
       <header className="sticky top-0 z-20 bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3">
-        <button type="button" onClick={() => setScreen('dashboard')} aria-label="Back to dashboard" className="h-11 w-11 shrink-0 rounded-xl border border-gray-200 flex items-center justify-center"><ChevronLeft className="w-5 h-5" /></button>
-        <h1 className="text-xl font-bold text-foreground">Past Deliveries</h1>
+        <button type="button" onClick={() => setScreen('dashboard')} aria-label={t('history.backDashboard')} className="h-11 w-11 shrink-0 rounded-xl border border-gray-200 flex items-center justify-center"><ChevronLeft className="w-5 h-5" /></button>
+        <h1 className="text-xl font-bold text-foreground">{t('history.title')}</h1>
       </header>
       <main className="min-w-0 max-w-2xl mx-auto px-4 py-5">
-        <p className="text-sm text-gray-500 mb-4">Your completed delivery history.</p>
-        <label htmlFor="driver-history-search" className="sr-only">Search past deliveries by truck or customer</label>
+        <p className="text-sm text-gray-500 mb-4">{t('history.subtitle')}</p>
+        <label htmlFor="driver-history-search" className="sr-only">{t('history.searchLabel')}</label>
         <input id="driver-history-search" type="search" value={historySearch}
           onChange={(event) => { setHistorySearch(event.target.value); setHistoryPage(1); }}
-          placeholder="Search truck or customer" className="w-full min-w-0 h-12 px-4 rounded-xl border border-gray-200 bg-white text-base mb-4" />
+          placeholder={t('history.searchPlaceholder')} className="w-full min-w-0 h-12 px-4 rounded-xl border border-gray-200 bg-white text-base mb-4" />
         {filteredHistory.length ? <>
           <div className="grid gap-2">
             {historyRows.map((item) => <PastDeliveryRow key={item.id} item={item} onOpen={() => setSelectedHistoryId(item.id)} />)}
             {Array.from({ length: 8 - historyRows.length }, (_, index) => <div key={`empty-${index}`} aria-hidden="true" className="invisible min-h-20 rounded-2xl border px-4 py-3" />)}
           </div>
           <DriverPageControls page={shownHistoryPage} pages={historyPages} onPage={setHistoryPage} />
-        </> : <div className="bg-white rounded-2xl border border-gray-200 px-5 py-7 text-center text-gray-500">{historySearch ? 'No matching deliveries.' : 'No past deliveries yet.'}</div>}
+        </> : <div className="bg-white rounded-2xl border border-gray-200 px-5 py-7 text-center text-gray-500">{historySearch ? t('history.noMatches') : t('history.empty')}</div>}
       </main>
       {selectedHistoryId && <HistoryDetailsSheet key={selectedHistoryId} driverId={driverId} assignmentId={selectedHistoryId} onClose={closeHistoryDetail} />}
+      {LanguageNotice}
     </div>;
   }
 
@@ -1453,7 +1546,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
   ════════════════════════════════════════════════════════════ */
   const showSlider = a && !isTerminal && nextStatus && !updating;
   const sliderLabel = nextStatus
-    ? `Slide to confirm ${taskStatusConfig[nextStatus]?.label.toLowerCase() ?? nextStatus}`
+    ? t('slide.confirm', { status: statusText(nextStatus) })
     : '';
 
   return (
@@ -1467,7 +1560,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
             onClick={() => setScreen('dashboard')}
             className="flex items-center gap-1.5 text-gray-600 font-bold text-sm flex-shrink-0 py-1 pr-2"
           >
-            <ChevronLeft className="w-5 h-5" /> Back
+            <ChevronLeft className="w-5 h-5" /> {t('common.back')}
           </button>
 
           {/* Driver name + plate */}
@@ -1495,9 +1588,9 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
         {!a && (
           <div className="bg-white rounded-2xl border border-gray-200 p-8 text-center mt-4">
             <Package className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-            <p className="text-lg font-bold text-gray-500">No active task</p>
+            <p className="text-lg font-bold text-gray-500">{t('task.noActive')}</p>
             <button onClick={() => setScreen('dashboard')} className="mt-4 text-primary font-semibold text-base underline">
-              Back to Dashboard
+              {t('task.backDashboard')}
             </button>
           </div>
         )}
@@ -1507,7 +1600,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
             {/* ── Route Summary ── */}
             <div className="bg-white rounded-2xl border border-gray-200 shadow-sm px-5 py-5 space-y-4">
               <div>
-                <p className="text-sm font-bold text-gray-400 uppercase tracking-wide">Pick up at</p>
+                <p className="text-sm font-bold text-gray-400 uppercase tracking-wide">{t('home.pickupAt')}</p>
                 <p className="text-xl font-bold text-foreground mt-1 leading-snug">{a.pickupLocation}</p>
               </div>
               <div className="flex items-center gap-3">
@@ -1516,7 +1609,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
                 <div className="flex-1 h-px bg-gray-200" />
               </div>
               <div>
-                <p className="text-sm font-bold text-gray-400 uppercase tracking-wide">Deliver to</p>
+                <p className="text-sm font-bold text-gray-400 uppercase tracking-wide">{t('home.deliverTo')}</p>
                 <p className="text-xl font-bold text-green-700 mt-1 leading-snug">{deliveryToLocation(a.destination)}</p>
               </div>
             </div>
@@ -1529,8 +1622,8 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
                   <div className="bg-red-50 border border-red-200 rounded-2xl px-5 py-4 flex items-center gap-3">
                     <Timer className="w-6 h-6 text-red-500 flex-shrink-0" />
                     <div>
-                      <p className="text-base font-bold text-red-700">Delivery Overdue</p>
-                      <p className="text-sm text-red-500 mt-0.5">Due {new Date(a.deliveryDate).toLocaleDateString()}</p>
+                      <p className="text-base font-bold text-red-700">{t('task.overdue')}</p>
+                      <p className="text-sm text-red-500 mt-0.5">{t('task.due', { date: new Date(a.deliveryDate).toLocaleDateString() })}</p>
                     </div>
                   </div>
                 );
@@ -1544,9 +1637,9 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
                 <AlertTriangle className={`w-6 h-6 flex-shrink-0 mt-0.5 ${isFailed ? 'text-red-500' : 'text-gray-400'}`} />
                 <div>
                   <p className={`text-base font-bold ${isFailed ? 'text-red-700' : 'text-gray-600'}`}>
-                    {isFailed ? 'Issue Reported' : 'Delivery Cancelled'}
+                    {isFailed ? t('task.issueReported') : t('task.cancelled')}
                   </p>
-                  {a.issueReason && <p className="text-sm text-gray-500 mt-0.5 leading-snug">{a.issueReason}</p>}
+                  {a.issueReason && <p className="text-sm text-gray-500 mt-0.5 leading-snug">{reasonText(a.issueReason)}</p>}
                 </div>
               </div>
             )}
@@ -1557,12 +1650,12 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
                 <div className="flex items-start gap-3">
                   <AlertTriangle className="w-6 h-6 text-amber-600 flex-shrink-0 mt-0.5 animate-pulse" />
                   <div>
-                    <p className="text-lg font-bold text-amber-800">Pickup Time Passed</p>
-                    <p className="text-base text-amber-600 mt-0.5">You need to report a reason before continuing.</p>
+                    <p className="text-lg font-bold text-amber-800">{t('task.pickupTimePassed')}</p>
+                    <p className="text-base text-amber-600 mt-0.5">{t('task.reportReasonFirst')}</p>
                   </div>
                 </div>
                 <button onClick={() => setDelaySheet('pickup')} className="w-full py-4 bg-amber-500 text-white rounded-2xl font-bold text-base">
-                  Report Pickup Delay
+                  {t('task.reportPickupDelay')}
                 </button>
               </div>
             )}
@@ -1571,12 +1664,12 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
                 <div className="flex items-start gap-3">
                   <AlertTriangle className="w-6 h-6 text-amber-600 flex-shrink-0 mt-0.5 animate-pulse" />
                   <div>
-                    <p className="text-lg font-bold text-amber-800">Delivery Time Passed</p>
-                    <p className="text-base text-amber-600 mt-0.5">You need to report a reason before continuing.</p>
+                    <p className="text-lg font-bold text-amber-800">{t('task.deliveryTimePassed')}</p>
+                    <p className="text-base text-amber-600 mt-0.5">{t('task.reportReasonFirst')}</p>
                   </div>
                 </div>
                 <button onClick={() => setDelaySheet('delivery')} className="w-full py-4 bg-amber-500 text-white rounded-2xl font-bold text-base">
-                  Report Delivery Delay
+                  {t('task.reportDeliveryDelay')}
                 </button>
               </div>
             )}
@@ -1584,7 +1677,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
             {/* ── Progress tracker (6 stages, vertical) ── */}
             {!isFailed && !isCancelled && (
               <div className="bg-white rounded-2xl border border-gray-200 shadow-sm px-5 py-5">
-                <h3 className="text-base font-bold text-foreground mb-5">Delivery Progress</h3>
+                <h3 className="text-base font-bold text-foreground mb-5">{t('task.progress')}</h3>
                 <VerticalTracker
                   stepIdx={stepIdx}
                   isDelivered={isDelivered}
@@ -1597,32 +1690,32 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
 
             {/* ── Task Details (flat, always visible) ── */}
             <div className="bg-white rounded-2xl border border-gray-200 shadow-sm px-5 py-3">
-              <h3 className="text-base font-bold text-foreground py-3 border-b border-gray-100 mb-1">Delivery Details</h3>
-              <DetailRow label="Task ID"        value={a.id} />
-              <DetailRow label="Truck"           value={a.truckPlate} />
-              <DetailRow label="Pickup Location" value={a.pickupLocation} />
-              <DetailRow label="Cargo"           value={a.destination} />
-              <DetailRow label="Client"          value={a.company} />
-              <DetailRow label="Pickup Date"     value={a.pickedUpDate} />
-              <DetailRow label="Pickup Time"     value={a.pickupTime} />
-              <DetailRow label="Delivery Date"   value={a.deliveryDate} />
-              <DetailRow label="Delivery Due"    value={a.ata ?? a.eta} />
-              <DetailRow label="Instructions"   value={a.remarks} />
+              <h3 className="text-base font-bold text-foreground py-3 border-b border-gray-100 mb-1">{t('task.details')}</h3>
+              <DetailRow label={t('task.id')} value={a.id} />
+              <DetailRow label={t('task.truck')} value={a.truckPlate} />
+              <DetailRow label={t('task.pickupLocation')} value={a.pickupLocation} />
+              <DetailRow label={t('task.cargo')} value={a.destination} />
+              <DetailRow label={t('task.client')} value={a.company} />
+              <DetailRow label={t('task.pickupDate')} value={a.pickedUpDate} />
+              <DetailRow label={t('task.pickupTime')} value={a.pickupTime} />
+              <DetailRow label={t('task.deliveryDate')} value={a.deliveryDate} />
+              <DetailRow label={t('task.deliveryDue')} value={a.ata ?? a.eta} />
+              <DetailRow label={t('task.instructions')} value={a.remarks} />
             </div>
 
             {/* ── Delay reports history ── */}
             {(a.delayReports ?? []).length > 0 && (
               <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 space-y-3">
-                <p className="text-sm font-bold text-amber-700 uppercase tracking-wide">Delay Reports</p>
+                <p className="text-sm font-bold text-amber-700 uppercase tracking-wide">{t('task.delayReports')}</p>
                 {a.delayReports!.map((r, i) => (
                   <div key={i} className="bg-white border border-amber-100 rounded-xl px-4 py-3 space-y-1.5">
                     <div className="flex items-center justify-between gap-2">
                       <span className={`text-xs font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${r.type === 'pickup' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
-                        {r.type}
+                        {r.type === 'pickup' ? t('task.pickup') : t('task.delivery')}
                       </span>
                       <span className="text-xs text-gray-400">{r.reportedAt}</span>
                     </div>
-                    <p className="text-sm text-gray-600">{r.reason}</p>
+                    <p className="text-sm text-gray-600">{reasonText(r.reason)}</p>
                   </div>
                 ))}
               </div>
@@ -1631,14 +1724,14 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
             {/* ── Documents (always visible; locked until delivered) ── */}
             <div className="space-y-3">
               <div className="flex items-center justify-between px-1">
-                <h3 className="text-xl font-bold text-foreground">Documents</h3>
-                <span className="text-base text-gray-500 font-semibold">{approvedCt} of {REQUIRED_DOCS.length} approved</span>
+                <h3 className="text-xl font-bold text-foreground">{t('task.documents')}</h3>
+                <span className="text-base text-gray-500 font-semibold">{t('doc.approvedCount', { count: approvedCt, total: REQUIRED_DOCS.length })}</span>
               </div>
               {!isDelivered && (
                 <div className="bg-amber-50 border border-amber-200 rounded-2xl px-5 py-4 flex items-center gap-3">
                   <Lock className="w-5 h-5 text-amber-500 flex-shrink-0" />
                   <p className="text-base text-amber-700 font-semibold">
-                    Upload available after marking as <strong>Delivered</strong>
+                    {t('doc.uploadAfterDelivered')}
                   </p>
                 </div>
               )}
@@ -1654,7 +1747,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
                   onClick={() => setIssueSheet(true)}
                   className="flex items-center gap-2 text-sm text-red-400 font-semibold py-2"
                 >
-                  <AlertTriangle className="w-4 h-4" /> Having a problem? Report it here
+                  <AlertTriangle className="w-4 h-4" /> {t('task.problem')}
                 </button>
               </div>
             )}
@@ -1666,10 +1759,10 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
       {a && !isTerminal && (
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-4 pt-4 pb-6 shadow-[0_-4px_20px_rgba(0,0,0,0.10)] z-20">
           {blockSlider ? (
-            <SlideToConfirm label="Report the delay above first" onConfirm={() => {}} disabled />
+            <SlideToConfirm label={t('slide.reportDelay')} onConfirm={() => {}} disabled />
           ) : (
             <SlideToConfirm
-              label={updating ? 'Updating…' : sliderLabel}
+              label={updating ? t('slide.updating') : sliderLabel}
               disabled={updating}
               onConfirm={() => {
                 if (!nextStatus) return;
@@ -1688,8 +1781,8 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
       {deliveredDlg && <DeliveredSheet onConfirm={openDeliveredPhoto} onCancel={() => setDeliveredDlg(false)} />}
       {delaySheet   && (
         <ReasonSheet
-          title={delaySheet === 'pickup' ? 'Pickup Delay' : 'Delivery Delay'}
-          subtitle="Select the reason for the delay"
+          title={delaySheet === 'pickup' ? t('task.pickupDelay') : t('task.deliveryDelay')}
+          subtitle={t('task.delayReason')}
           reasons={delaySheet === 'pickup' ? PICKUP_DELAY_REASONS : DELIVERY_DELAY_REASONS}
           variant="amber"
           onSubmit={(r) => handleDelaySubmit(delaySheet, r)}
@@ -1698,8 +1791,8 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
       )}
       {issueSheet && (
         <ReasonSheet
-          title="Report a Problem"
-          subtitle="What happened?"
+          title={t('task.reportProblem')}
+          subtitle={t('task.whatHappened')}
           reasons={ISSUE_REASONS}
           variant="red"
           onSubmit={handleIssueSubmit}
@@ -1709,6 +1802,7 @@ export default function DriverInterface({ driverId, driverName, onLogout }: Prop
       {ActionErrorBanner}
       {DriverDrawers}
       {LogoutDialog}
+      {LanguageNotice}
     </div>
   );
 }
