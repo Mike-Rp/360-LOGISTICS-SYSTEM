@@ -218,6 +218,7 @@ export default function AdminDashboard({
             drivers={drivers}         setDrivers={setDrivers}
             trucks={trucks}           setTrucks={setTrucks}
             assignments={assignments} setAssignments={setAssignments}
+            notifications={notifications}
             completed={completed}     setCompleted={setCompleted}
             setCancelled={setCancelled}
             isViewOnly={isViewOnly}

@@ -17,7 +17,9 @@ function loadTypeScript(file, resolve = require) {
 function loadWorkflow(requiredTypes) {
   const data = loadTypeScript(join(__dirname, '../data/assignmentTypes.ts'));
   const documentTypes = requiredTypes ?? data.DOCUMENT_TYPES;
+  const timing = loadTypeScript(join(__dirname, 'assignmentTiming.ts'));
   const workflow = loadTypeScript(join(__dirname, 'assignmentWorkflow.ts'), id => {
+    if (id === './assignmentTiming') return timing;
     assert.equal(id, '../data/assignmentTypes');
     return { ...data, DOCUMENT_TYPES: documentTypes };
   });
@@ -27,6 +29,33 @@ function loadWorkflow(requiredTypes) {
 const workflow = loadWorkflow();
 const assignment = documents => ({ taskStatus: 'Delivered', documents });
 const uploads = (types, docStatus = 'approved') => types.map(type => ({ type, uploaded: true, docStatus }));
+
+test('document aging uses physical delivery evidence and only appears while uploads are missing', () => {
+  const delivered = { ...assignment([]), statusPhotos: { Delivered: { timestamp: 'Oct 12, 2026, 02:00 PM' } } };
+  const now = new Date('2026-10-15T01:00:00Z');
+  assert.deepEqual(workflow.getDocumentAgingState(delivered, now), { days: 3, deliveredOn: 'Oct 12, 2026' });
+  assert.deepEqual(workflow.getDocumentAgingState(delivered, new Date('2026-10-12T10:00:00Z')), { days: 0, deliveredOn: 'Oct 12, 2026' });
+  assert.deepEqual(workflow.getDocumentAgingState({ ...delivered, statusPhotos: {} }, now), { days: null, deliveredOn: null });
+  assert.equal(workflow.getDocumentAgingState({ ...delivered, taskStatus: 'In Transit' }, now), null);
+  assert.equal(workflow.getDocumentAgingState({ ...delivered, documents: uploads(workflow.documentTypes, 'pending') }, now), null);
+  assert.equal(workflow.getDocumentAgingState({ ...delivered, documents: [
+    ...uploads(workflow.documentTypes.slice(0, 1), 'rejected'),
+  ] }, now), null);
+  assert.equal(workflow.getDocumentAgingState({ ...delivered, documents: uploads(workflow.documentTypes) }, now), null);
+});
+
+test('older deliveries use only a matching Delivered event with a full database timestamp', () => {
+  const record = { ...assignment([]), id: 'ASN-1', deliveryDate: 'Sep 1, 2026', statusPhotos: {} };
+  const now = new Date('2026-10-15T02:00:00Z');
+  const event = { type: 'status_update', assignmentId: 'ASN-1', statusUpdate: 'Delivered',
+    timestamp: 'Sep 22, 02:00 PM', createdAt: '2026-09-22T06:00:00Z' };
+  assert.deepEqual(workflow.getDocumentAgingState(record, now, [event]), { days: 23, deliveredOn: 'Sep 22, 2026' });
+  assert.deepEqual(workflow.getDocumentAgingState(record, now, [
+    { ...event, assignmentId: 'OTHER' }, { ...event, statusUpdate: 'In Transit' }, { ...event, createdAt: undefined },
+  ]), { days: null, deliveredOn: null });
+  const withPhoto = { ...record, statusPhotos: { Delivered: { timestamp: 'Oct 12, 2026, 02:00 PM' } } };
+  assert.deepEqual(workflow.getDocumentAgingState(withPhoto, now, [event]), { days: 3, deliveredOn: 'Oct 12, 2026' });
+});
 
 for (const count of [1, 3]) {
   test(`${count} approved out of six required never shows All approved`, () => {

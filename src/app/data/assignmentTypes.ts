@@ -176,6 +176,8 @@ export interface AppNotification {
   reason?: string;
   read: boolean;
   timestamp: string;
+  /** Database event time; unlike the display label, this retains the year and timezone. */
+  createdAt?: string;
   navigateTo?: string;
 }
 

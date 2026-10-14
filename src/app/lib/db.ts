@@ -299,6 +299,7 @@ export async function loadAdminData(): Promise<AdminData & ArchivedData> {
   const notifications: AppNotification[] = notifRows.map((r) => ({
     id: r.id, type: r.type, message: r.message ?? '', assignmentId: r.assignment_id,
     driverName: r.driver_name ?? '', truckPlate: r.truck_plate ?? '', read: !!r.read, timestamp: r.time_label ?? '',
+    ...(r.created_at ? { createdAt: r.created_at } : {}),
     ...(r.doc_type ? { docType: r.doc_type } : {}),
     ...(r.status_update ? { statusUpdate: r.status_update } : {}),
     ...(r.photo_url ? { photoUrl: r.photo_url } : {}),

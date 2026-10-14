@@ -3,11 +3,13 @@ import {
   LogOut, Package, CheckCircle2, XCircle, Camera, WifiOff,
   Clock, Truck, AlertTriangle, FileText, Building2,
   ChevronRight, ChevronLeft, Lock, ArrowDown,
-  RefreshCw, Timer, RotateCcw, X, Phone, Bell, Menu, History, Languages,
+  RefreshCw, RotateCcw, X, Phone, Bell, Menu, History, Languages,
 } from 'lucide-react';
 import type { Assignment, CompletedTask, TaskStatus, StatusPhoto, DocStatus } from '../../data/assignmentTypes';
 import { taskStatusConfig } from '../../data/assignmentTypes';
 import { loadDriverData, loadDriverCompletedDelivery, driverUpdate, uploadImage } from '../../lib/db';
+import { getDeliveryTimingStatus, type DeliveryTimingStatus } from '../../lib/assignmentTiming';
+import { assignmentDisplayStatusConfig, getAssignmentDisplayStatus, getAssignmentDocumentProgress, getDocumentAgingState } from '../../lib/assignmentWorkflow';
 import { DriverLanguageProvider, useDriverI18n, type DriverLanguage } from './driverI18n';
 
 /* ── Types ── */
@@ -198,6 +200,30 @@ function DriverHomeClock() {
   return <time dateTime={now.toISOString()} className="block mt-1 text-xs sm:text-sm leading-snug text-gray-500">
     <span>{date}</span><span className="whitespace-nowrap">{' • '}{time}</span>
   </time>;
+}
+
+function DriverOverdueNotice({ timing, deliveryDate, compact = false }: {
+  timing: DeliveryTimingStatus | null; deliveryDate: string; compact?: boolean;
+}) {
+  const { t } = useDriverI18n();
+  if (timing?.kind !== 'overdue') return null;
+  const { value, unit } = timing.duration;
+  const unitText = unit === 'day' ? t(value === 1 ? 'home.day' : 'home.days')
+    : unit === 'hour' ? t(value === 1 ? 'home.hour' : 'home.hours')
+    : t(value === 1 ? 'home.minute' : 'home.minutes');
+  const scheduledDate = /^\d{4}-\d{2}-\d{2}$/.test(deliveryDate) ? manilaDate(deliveryDate) : deliveryDate;
+  const title = t('home.overdue', { count: value, unit: unitText });
+  const schedule = t('home.scheduledDelivery', { date: scheduledDate });
+  return (
+    <div role="status" aria-label={`${title}. ${schedule}`}
+      className={`${compact ? 'mx-4 mt-3 rounded-xl px-3 py-2.5' : 'rounded-2xl px-5 py-4'} flex min-w-0 items-start gap-2.5 border border-red-200 bg-red-50`}>
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" aria-hidden="true" />
+      <div className="min-w-0">
+        <p className="text-sm font-bold leading-snug text-red-700 break-words">{title}</p>
+        <p className="mt-0.5 text-xs leading-snug text-gray-600 break-words">{schedule}</p>
+      </div>
+    </div>
+  );
 }
 
 /* ════════════════════════════════════════════════════════════
@@ -722,7 +748,7 @@ function DocRow({ doc, onUpload, isDelivered, isBlurry, isFocused }: {
    ════════════════════════════════════════════════════════════ */
 function StatusBadge({ status }: { status: TaskStatus | string }) {
   const { status: statusText } = useDriverI18n();
-  const cfg = taskStatusConfig[status as TaskStatus] ?? { badge: 'bg-gray-100 text-gray-600 border-gray-200', dot: 'bg-gray-400', label: status };
+  const cfg = assignmentDisplayStatusConfig[status as keyof typeof assignmentDisplayStatusConfig] ?? { badge: 'bg-gray-100 text-gray-600 border-gray-200', dot: 'bg-gray-400', label: status };
   return (
     <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-bold border ${cfg.badge}`}>
       <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
@@ -974,6 +1000,11 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
   /* Shown when a write failed. Separate from `online`: the "Offline" banner says the
      connection dropped, this says a specific change of theirs did not save. */
   const [actionError, setActionError] = useState('');
+  const [timingNow, setTimingNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = window.setInterval(() => setTimingNow(new Date()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   /* ── Main screen state ── */
   /* Persisted the same way admin's activeNav is — otherwise a refresh while
@@ -1186,6 +1217,14 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
   const isFailed    = a?.taskStatus === 'Failed / Issue';
   const isCancelled = a?.taskStatus === 'Cancelled';
   const isTerminal  = isDelivered || isFailed || isCancelled;
+  const deliveryTiming = a ? getDeliveryTimingStatus(a, timingNow) : null;
+  const displayStatus = a ? getAssignmentDisplayStatus(a) : null;
+  const documentProgress = a ? getAssignmentDocumentProgress(a) : null;
+  const documentAge = a ? getDocumentAgingState(a, timingNow) : null;
+  const documentAgeText = documentAge?.days == null ? null : documentAge.days === 0
+    ? t('home.deliveredToday') : t(documentAge.days === 1 ? 'home.oneDaySinceDelivery' : 'home.daysSinceDelivery', { count: documentAge.days });
+  const postDelivery = displayStatus === 'Awaiting Documents' || displayStatus === 'Under Review'
+    || displayStatus === 'Needs Correction' || displayStatus === 'Completed';
 
   /* Normalized docs (all 6 required, merged with actual data) */
   const normalizedDocs: NormDoc[] = useMemo(() => {
@@ -1440,7 +1479,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
 
         <div className="flex-1 overflow-y-auto w-full max-w-2xl mx-auto px-4 py-5 space-y-5 pb-10">
 
-          {rejectedNotifs.length > 0 && (
+          {rejectedNotifs.length > 0 && displayStatus !== 'Needs Correction' && (
             <button type="button" onClick={() => openDocumentFromNotification(rejectedNotifs[0].docType)}
               className="w-full rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-left flex items-center gap-3 focus-visible:outline-2 focus-visible:outline-red-600">
               <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" aria-hidden="true" />
@@ -1460,31 +1499,87 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
                 {/* Task header */}
                 <div className="bg-gray-50 px-4 py-3 flex items-center justify-between gap-2 border-b border-gray-100">
                   <span className="min-w-0 text-sm font-mono font-bold text-gray-600 break-all">{a.id}</span>
-                  <StatusBadge status={a.taskStatus as TaskStatus} />
+                  <StatusBadge status={displayStatus ?? a.taskStatus} />
                 </div>
+                <DriverOverdueNotice timing={deliveryTiming} deliveryDate={a.deliveryDate} compact />
+                {postDelivery && documentProgress && (
+                  <div className="px-4 pt-3 space-y-3">
+                    {displayStatus === 'Awaiting Documents' && (
+                      <div className="flex min-w-0 items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-800">
+                        <Clock className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                        <div className="min-w-0 text-sm leading-snug">
+                          <p className="font-bold">{t('home.documentsNeeded')}{documentAgeText ? ` · ${documentAgeText}` : ''}</p>
+                          {documentAge?.deliveredOn && <p className="mt-0.5 text-amber-700">{t('home.deliveredOn', { date: documentAge.deliveredOn })}</p>}
+                        </div>
+                      </div>
+                    )}
+                    {displayStatus === 'Needs Correction' && (
+                      <div className="flex min-w-0 items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-red-800">
+                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                        <div className="min-w-0 text-sm leading-snug">
+                          <p className="font-bold">{t(documentProgress.rejected === 1 ? 'home.reuploadOne' : 'home.reuploadMany', { count: documentProgress.rejected })}</p>
+                          <p className="mt-0.5">{t('home.reuploadInstruction')}</p>
+                        </div>
+                      </div>
+                    )}
+                    {(displayStatus === 'Under Review' || displayStatus === 'Completed') && (
+                      <div className={`flex min-w-0 items-start gap-2 rounded-xl border px-3 py-2.5 ${displayStatus === 'Completed' ? 'border-green-200 bg-green-50 text-green-800' : 'border-blue-200 bg-blue-50 text-blue-800'}`}>
+                        {displayStatus === 'Completed' ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" /> : <Clock className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}
+                        <p className="min-w-0 text-sm font-bold leading-snug">{t(displayStatus === 'Completed' ? 'home.allApproved' : 'home.allSubmitted')}</p>
+                      </div>
+                    )}
+                    <div className="flex flex-wrap items-center justify-between gap-1 text-sm">
+                      <span className="font-semibold text-gray-600">{t('task.documents')}</span>
+                      <span className="font-bold text-gray-800">{documentProgress.uploaded} {t('home.of')} {documentProgress.required}</span>
+                    </div>
+                    {displayStatus !== 'Needs Correction' && <p className="text-xs text-gray-600">
+                      {displayStatus === 'Completed'
+                        ? t('home.approvedCount', { count: documentProgress.approved })
+                        : displayStatus === 'Awaiting Documents'
+                          ? t('home.uploadCount', { uploaded: documentProgress.uploaded, remaining: documentProgress.missing })
+                          : t('home.pendingCount', { count: documentProgress.pending })}
+                    </p>}
+                  </div>
+                )}
                 {/* Route */}
                 <div className="px-4 py-4 space-y-3">
+                  {!postDelivery && <>
+                    <div>
+                      <p className="text-sm font-bold text-gray-400 uppercase tracking-wide">{t('home.pickupAt')}</p>
+                      <p className="text-lg font-bold text-foreground mt-1 leading-snug break-words [overflow-wrap:anywhere]">{a.pickupLocation}</p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 h-px bg-gray-200" />
+                      <ArrowDown className="w-5 h-5 text-gray-400 flex-shrink-0" />
+                      <div className="flex-1 h-px bg-gray-200" />
+                    </div>
+                  </>}
                   <div>
-                    <p className="text-sm font-bold text-gray-400 uppercase tracking-wide">{t('home.pickupAt')}</p>
-                    <p className="text-lg font-bold text-foreground mt-1 leading-snug break-words [overflow-wrap:anywhere]">{a.pickupLocation}</p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <div className="flex-1 h-px bg-gray-200" />
-                    <ArrowDown className="w-5 h-5 text-gray-400 flex-shrink-0" />
-                    <div className="flex-1 h-px bg-gray-200" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-gray-400 uppercase tracking-wide">{t('home.deliverTo')}</p>
+                    <p className="text-sm font-bold text-gray-400 uppercase tracking-wide">{t(postDelivery ? 'home.deliveredTo' : 'home.deliverTo')}</p>
                     <p className="text-lg font-bold text-green-700 mt-1 leading-snug break-words [overflow-wrap:anywhere]">{deliveryToLocation(a.destination)}</p>
                   </div>
                 </div>
                 {/* View task button */}
                 <div className="px-4 pb-4">
                   <button
-                    onClick={() => setScreen('task')}
+                    onClick={() => {
+                      if (displayStatus === 'Needs Correction') {
+                        setFocusedDocType(normalizedDocs.find((doc) => doc.uploaded && doc.docStatus === 'rejected')?.type ?? null);
+                      } else if (displayStatus === 'Awaiting Documents') {
+                        setFocusedDocType(normalizedDocs.find((doc) => !doc.uploaded)?.type ?? null);
+                      } else if (displayStatus === 'Under Review' || displayStatus === 'Completed') {
+                        setFocusedDocType(normalizedDocs[0]?.type ?? null);
+                      }
+                      setScreen('task');
+                    }}
                     className="w-full min-h-14 px-4 py-3 bg-green-700 text-white rounded-xl font-bold text-lg sm:text-xl flex items-center justify-center gap-3 active:bg-green-800 shadow-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-green-700"
                   >
-                    {t('home.viewTask')} <ChevronRight className="w-6 h-6" />
+                    {t(displayStatus === 'Awaiting Documents'
+                      ? documentProgress?.uploaded ? 'home.continueUploading' : 'home.uploadDocuments'
+                      : displayStatus === 'Needs Correction'
+                        ? documentProgress?.rejected === 1 ? 'home.fixDocument' : 'home.fixDocuments'
+                        : displayStatus === 'Under Review' || displayStatus === 'Completed' ? 'home.viewDocuments' : 'home.viewTask')}
+                    <ChevronRight className="w-6 h-6 shrink-0" />
                   </button>
                 </div>
               </div>
@@ -1614,22 +1709,8 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
               </div>
             </div>
 
-            {/* ── Overdue warning ── */}
-            {a.deliveryDate && !isDelivered && !isFailed && (() => {
-              try {
-                const d = new Date(a.deliveryDate); const today = new Date(); today.setHours(0,0,0,0);
-                if (d < today) return (
-                  <div className="bg-red-50 border border-red-200 rounded-2xl px-5 py-4 flex items-center gap-3">
-                    <Timer className="w-6 h-6 text-red-500 flex-shrink-0" />
-                    <div>
-                      <p className="text-base font-bold text-red-700">{t('task.overdue')}</p>
-                      <p className="text-sm text-red-500 mt-0.5">{t('task.due', { date: new Date(a.deliveryDate).toLocaleDateString() })}</p>
-                    </div>
-                  </div>
-                );
-              } catch { return null; }
-              return null;
-            })()}
+            {/* The same schedule condition shown on Home and in Dispatch. */}
+            <DriverOverdueNotice timing={deliveryTiming} deliveryDate={a.deliveryDate} />
 
             {/* ── Failed / Cancelled banner ── */}
             {(isFailed || isCancelled) && (

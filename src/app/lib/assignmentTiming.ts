@@ -6,6 +6,7 @@ export type DeliveryTimingStatus = {
   kind: 'overdue' | 'delivered_late';
   label: string;
   accessibleLabel: string;
+  duration: { value: number; unit: 'minute' | 'hour' | 'day' };
 };
 
 const DAY_MS = 86_400_000;
@@ -60,21 +61,28 @@ function deliveredTimestamp(value?: string): number | null {
   return null;
 }
 
-function durationLabel(lateMs: number, dateOnly: boolean): string {
+/** Physical delivery evidence time, shared by schedule and document-age displays. */
+export function getPhysicalDeliveryTimestamp(assignment: Pick<Assignment, 'taskStatus' | 'statusPhotos'>): number | null {
+  return assignment.taskStatus === 'Delivered'
+    ? deliveredTimestamp(assignment.statusPhotos?.Delivered?.timestamp)
+    : null;
+}
+
+function durationParts(lateMs: number, dateOnly: boolean): DeliveryTimingStatus['duration'] {
   if (dateOnly) {
     const days = Math.floor(lateMs / DAY_MS) + 1;
-    return `${days} ${days === 1 ? 'day' : 'days'}`;
+    return { value: days, unit: 'day' };
   }
   if (lateMs >= DAY_MS) {
     const days = Math.floor(lateMs / DAY_MS);
-    return `${days} ${days === 1 ? 'day' : 'days'}`;
+    return { value: days, unit: 'day' };
   }
   if (lateMs >= 3_600_000) {
     const hours = Math.floor(lateMs / 3_600_000);
-    return `${hours} ${hours === 1 ? 'hour' : 'hours'}`;
+    return { value: hours, unit: 'hour' };
   }
   const minutes = Math.max(1, Math.floor(lateMs / 60_000));
-  return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
+  return { value: minutes, unit: 'minute' };
 }
 
 /** A display-only schedule condition; never changes the assignment workflow status. */
@@ -90,10 +98,11 @@ export function getDeliveryTimingStatus(assignment: TimingAssignment, now = new 
     : manilaTimestamp(date.year, date.month, date.day, time.hour, time.minute);
   const delivered = assignment.taskStatus === 'Delivered';
   if (!delivered && !['Assigned', 'Picked Up', 'In Transit'].includes(assignment.taskStatus)) return null;
-  const actual = delivered ? deliveredTimestamp(assignment.statusPhotos?.Delivered?.timestamp) : now.getTime();
+  const actual = delivered ? getPhysicalDeliveryTimestamp(assignment) : now.getTime();
   if (actual === null || !Number.isFinite(actual) || (dateOnly ? actual < deadline : actual <= deadline)) return null;
-  const duration = durationLabel(actual - deadline, dateOnly);
+  const duration = durationParts(actual - deadline, dateOnly);
+  const durationText = `${duration.value} ${duration.unit}${duration.value === 1 ? '' : 's'}`;
   return delivered
-    ? { kind: 'delivered_late', label: `Delivered late · ${duration}`, accessibleLabel: `Delivery was ${duration} late` }
-    : { kind: 'overdue', label: `Overdue · ${duration}`, accessibleLabel: `Delivery overdue by ${duration}` };
+    ? { kind: 'delivered_late', label: `Delivered late · ${durationText}`, accessibleLabel: `Delivery was ${durationText} late`, duration }
+    : { kind: 'overdue', label: `Overdue · ${durationText}`, accessibleLabel: `Delivery overdue by ${durationText}`, duration };
 }

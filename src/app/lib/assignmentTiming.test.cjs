@@ -21,6 +21,7 @@ test('active workflow statuses warn only after the ETA in Philippine time', () =
   for (const status of ['Assigned', 'Picked Up', 'In Transit']) {
     assert.equal(getDeliveryTimingStatus(assignment(status), at('2026-10-15T06:00:00Z')), null);
     assert.equal(getDeliveryTimingStatus(assignment(status), at('2026-10-15T08:10:00Z')).label, 'Overdue · 2 hours');
+    assert.deepEqual(getDeliveryTimingStatus(assignment(status), at('2026-10-15T08:10:00Z')).duration, { value: 2, unit: 'hour' });
   }
 });
 
@@ -28,6 +29,7 @@ test('date-only schedules stay on time through their calendar day', () => {
   const item = assignment('Assigned', 'Oct 15, 2026', '');
   assert.equal(getDeliveryTimingStatus(item, at('2026-10-15T15:59:59Z')), null);
   assert.equal(getDeliveryTimingStatus(item, at('2026-10-15T16:00:00Z')).label, 'Overdue · 1 day');
+  assert.deepEqual(getDeliveryTimingStatus(item, at('2026-10-15T16:00:00Z')).duration, { value: 1, unit: 'day' });
   assert.equal(getDeliveryTimingStatus(item, at('2026-10-16T16:00:00Z')).label, 'Overdue · 2 days');
 });
 

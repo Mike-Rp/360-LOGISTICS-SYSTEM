@@ -15,6 +15,7 @@ import TruckImage from '../TruckImage';
 import ASNWithCopy from './ASNWithCopy';
 import DeliveryTimingBadge from './DeliveryTimingBadge';
 import { getDeliveryTimingStatus } from '../../lib/assignmentTiming';
+import { assignmentDisplayStatusConfig, getAssignmentDisplayStatus, getAssignmentDocumentProgress, getDocumentAgingState, type AssignmentDisplayStatus } from '../../lib/assignmentWorkflow';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
 import { sortNewestFirst, markLocalRecordAdded, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
 import { ADMIN_NAVIGATION_EVENT, adminHref, followAdminLink, pushAdminNavigation } from '../../lib/adminNavigation';
@@ -42,7 +43,7 @@ function Highlight({ text, query }: { text: string; query: string }) {
 import {
   DOCUMENT_TYPES, taskStatusConfig, DEMO_ADMIN_EMAIL, parseStoredTimestamp,
   type Assignment, type CompletedTask, type LocalDriver, type LocalTruck,
-  type TaskStatus, type DocStatus, type AdminActivityInput, type AssignmentDoc,
+  type TaskStatus, type DocStatus, type AdminActivityInput, type AssignmentDoc, type AppNotification,
 } from '../../data/assignmentTypes';
 
 /* ─── Date & time values ───────────────────────────── */
@@ -637,8 +638,8 @@ function CharCount({ value, max = TEXT_MAX }: { value: string; max?: number }) {
 /* `acknowledged` only matters while status is 'Assigned' — it shows a lighter
    purple instead of the usual purple until the driver's app has actually loaded
    the task, so admin can tell a fresh assignment hasn't been seen yet. */
-function StatusBadge({ status, size = 'sm', acknowledged = true }: { status: TaskStatus; size?: 'sm' | 'xs'; acknowledged?: boolean }) {
-  const cfg = taskStatusConfig[status];
+function StatusBadge({ status, size = 'sm', acknowledged = true }: { status: AssignmentDisplayStatus; size?: 'sm' | 'xs'; acknowledged?: boolean }) {
+  const cfg = assignmentDisplayStatusConfig[status];
   const unseen = status === 'Assigned' && !acknowledged;
   const badge  = unseen ? 'bg-purple-50 text-purple-600 border-purple-200' : cfg.badge;
   const dot    = unseen ? 'bg-purple-300' : cfg.dot;
@@ -1624,6 +1625,7 @@ interface Props {
   drivers: LocalDriver[];     setDrivers: React.Dispatch<React.SetStateAction<LocalDriver[]>>;
   trucks: LocalTruck[];       setTrucks:  React.Dispatch<React.SetStateAction<LocalTruck[]>>;
   assignments: Assignment[];  setAssignments: React.Dispatch<React.SetStateAction<Assignment[]>>;
+  notifications: AppNotification[];
   completed: CompletedTask[]; setCompleted:   React.Dispatch<React.SetStateAction<CompletedTask[]>>;
   setCancelled: React.Dispatch<React.SetStateAction<Assignment[]>>;
   isViewOnly?: boolean;
@@ -1656,7 +1658,7 @@ function reviewQueueRequested() {
 /* ─── Main Component ───────────────────────────────── */
 export default function DriversManagement({
   drivers, setDrivers, trucks, setTrucks,
-  assignments, setAssignments, completed, setCompleted, setCancelled,
+  assignments, setAssignments, notifications, completed, setCompleted, setCancelled,
   isViewOnly = false, onLogActivity, onServerChange, adminEmail,
   openDispatchOnMount = false, onDispatchOpened, search, onSearchChange, notificationTarget, onNotificationTargetHandled,
 }: Props) {
@@ -2136,12 +2138,11 @@ export default function DriversManagement({
           {activePage.pageItems.map((a) => {
             const truck    = trucks.find((t) => t.id === a.truckId);
             const timing = getDeliveryTimingStatus(a, timingNow);
-            const total    = a.documents.length;
-            const approved = a.documents.filter((d) => d.docStatus === 'approved').length;
-            /* Uploaded but not yet approved — amber. Rejected sits here too:
-               it still needs admin/driver action, so it must not read as done. */
-            const inReview = a.documents.filter((d) => d.uploaded && d.docStatus !== 'approved').length;
-            const pendingReviewCount = a.documents.filter((d) => d.uploaded && d.docStatus === 'pending').length;
+            const displayStatus = getAssignmentDisplayStatus(a);
+            const docs = getAssignmentDocumentProgress(a);
+            const documentAge = getDocumentAgingState(a, timingNow, notifications);
+            const ageText = documentAge?.days == null ? null : documentAge.days === 0
+              ? 'Delivered today' : `${documentAge.days} day${documentAge.days === 1 ? '' : 's'} since delivery`;
 
             return (
               <div key={a.id}
@@ -2159,7 +2160,7 @@ export default function DriversManagement({
                       </p>
                       <p className="mt-1 text-xs text-muted-foreground break-words"><ASNWithCopy value={a.id}><Highlight text={a.id} query={search} /></ASNWithCopy></p>
                     </div>
-                    <div className="ml-auto shrink-0"><StatusBadge status={a.taskStatus} acknowledged={!!a.driverAcknowledgedAt} /></div>
+                    <div className="ml-auto shrink-0"><StatusBadge status={displayStatus} acknowledged={!!a.driverAcknowledgedAt} /></div>
                   </div>
 
                   <div className="mt-4 border-t border-border pt-4">
@@ -2181,32 +2182,43 @@ export default function DriversManagement({
                       <div className="min-w-0 sm:border-l sm:border-border sm:pl-4">
                         <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Delivery date</p>
                         <p className="mt-0.5 text-sm text-foreground break-words">{a.deliveryDate}</p>
-                        {timing && <div className="mt-1.5"><DeliveryTimingBadge timing={timing} /></div>}
+                        {timing && !(documentAge && timing.kind === 'delivered_late') && <div className="mt-1.5"><DeliveryTimingBadge timing={timing} /></div>}
                       </div>
                     </div>
                   </div>
+
+                  {documentAge && (
+                    <div className="mt-3 flex min-w-0 items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-800">
+                      <Clock className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                      <div className="min-w-0 text-xs leading-snug">
+                        <p className="font-semibold">Waiting for documents{ageText ? ` · ${ageText}` : ''}</p>
+                        {documentAge.deliveredOn && <p className="mt-0.5 text-amber-700">Delivery completed on {documentAge.deliveredOn}.</p>}
+                      </div>
+                    </div>
+                  )}
 
                   <div className="mt-4 rounded-lg bg-muted/40 p-3">
                     {/* Segmented document bar — green only ever means approved */}
                     <div className="flex items-center justify-between text-xs mb-1.5">
                       <span className="font-medium text-foreground">Documents</span>
-                      <span className="font-medium text-foreground">{approved} of {total}</span>
+                      <span className="font-medium text-foreground">{docs.uploaded} of {docs.required}</span>
                     </div>
                     <div className="w-full bg-gray-200 rounded-full h-1.5 flex overflow-hidden">
                       <div className="bg-green-500 h-full transition-all"
-                        style={{ width: `${total ? (approved / total) * 100 : 0}%` }} />
+                        style={{ width: `${docs.required ? (docs.approved / docs.required) * 100 : 0}%` }} />
                       <div className="bg-amber-500 h-full transition-all"
-                        style={{ width: `${total ? (inReview / total) * 100 : 0}%` }} />
+                        style={{ width: `${docs.required ? ((docs.pending + docs.rejected) / docs.required) * 100 : 0}%` }} />
                     </div>
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-[12px] text-muted-foreground">
                       <span className="inline-flex items-center gap-1">
-                        <Check className="w-3 h-3 text-green-600" />{approved} approved
+                        <Check className="w-3 h-3 text-green-600" />{docs.approved} approved
                       </span>
                       <span className="inline-flex items-center gap-1">
-                        <Clock className="w-3 h-3 text-amber-500" />{reviewQueueOpen ? pendingReviewCount : inReview} pending review
+                        <Clock className="w-3 h-3 text-amber-500" />{docs.pending} pending review
                       </span>
+                      {docs.rejected > 0 && <span className="inline-flex items-center gap-1 text-red-700"><AlertTriangle className="w-3 h-3" />{docs.rejected} needs correction</span>}
                       <span className="inline-flex items-center gap-1">
-                        <Clock className="w-3 h-3 text-gray-400" />{total - approved - inReview} awaiting upload
+                        <Clock className="w-3 h-3 text-gray-400" />{docs.missing} awaiting upload
                       </span>
                     </div>
                   </div>

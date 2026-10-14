@@ -1,5 +1,6 @@
 import { DOCUMENT_TYPES, taskStatusConfig } from '../data/assignmentTypes';
-import type { Assignment, TaskStatus } from '../data/assignmentTypes';
+import type { AppNotification, Assignment, TaskStatus } from '../data/assignmentTypes';
+import { getPhysicalDeliveryTimestamp } from './assignmentTiming';
 
 export type AssignmentDisplayStatus = TaskStatus | 'Awaiting Documents' | 'Under Review' | 'Needs Correction' | 'Completed';
 
@@ -64,4 +65,27 @@ export function getAssignmentDisplayStatus(assignment: Assignment): AssignmentDi
   if (docs.missing) return 'Awaiting Documents';
   if (docs.pending) return 'Under Review';
   return 'Delivered';
+}
+
+/** Factual age of missing documents after physical delivery; no upload SLA is implied.
+ * A Delivered status photo is preferred. Older deliveries can use the matching
+ * driver status event's database timestamp, which preserves year and timezone. */
+export function getDocumentAgingState(assignment: Assignment, now = new Date(), notifications: readonly AppNotification[] = []) {
+  if (getAssignmentDisplayStatus(assignment) !== 'Awaiting Documents') return null;
+  const photoTime = getPhysicalDeliveryTimestamp(assignment);
+  const eventTimes = notifications
+    .filter(event => event.assignmentId === assignment.id && event.type === 'status_update' && event.statusUpdate === 'Delivered')
+    .map(event => event.createdAt)
+    .filter((value): value is string => !!value && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}.*(?:Z|[+-]\d{2}:?\d{2})$/i.test(value))
+    .map(value => Date.parse(value))
+    .filter(Number.isFinite);
+  const deliveredAt = photoTime ?? (eventTimes.length ? Math.max(...eventTimes) : null);
+  if (deliveredAt === null || deliveredAt > now.getTime()) return { days: null, deliveredOn: null };
+  const manilaOffset = 8 * 60 * 60 * 1000;
+  const days = Math.floor((now.getTime() + manilaOffset) / 86_400_000)
+    - Math.floor((deliveredAt + manilaOffset) / 86_400_000);
+  const deliveredOn = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila', month: 'short', day: 'numeric', year: 'numeric',
+  }).format(new Date(deliveredAt));
+  return { days, deliveredOn };
 }
