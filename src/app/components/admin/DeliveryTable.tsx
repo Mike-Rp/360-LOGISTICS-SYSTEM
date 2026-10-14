@@ -6,6 +6,8 @@ import { assignmentDisplayStatusConfig, getAssignmentDisplayStatus, getAssignmen
 import { ADMIN_NAVIGATION_EVENT, adminHref, followAdminLink, pushAdminNavigation } from '../../lib/adminNavigation';
 import { matchesAssignmentDate } from '../../lib/assignmentDateFilter';
 import ASNWithCopy from './ASNWithCopy';
+import DeliveryTimingBadge from './DeliveryTimingBadge';
+import { getDeliveryTimingStatus } from '../../lib/assignmentTiming';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
 import { sortNewestFirst, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
 import { capacityKgOnly } from '../../data/truckTypes';
@@ -209,6 +211,7 @@ export default function DeliveryTable({
   if (!fullView) {
     return <RecentActivities assignments={assignments} completed={completed} />;
   }
+  const timingNow = new Date();
 
   const [tab, setTab]       = useState<'active' | 'completed' | 'cancelled'>(() => new URLSearchParams(window.location.search).get('tab') === 'completed' ? 'completed' : 'active');
   const [period, setPeriod] = useState<FilterPeriod>('all');
@@ -393,6 +396,7 @@ export default function DeliveryTable({
                         <td className="px-2 py-3"><AssignmentStatusBadge assignment={a} /></td>
                         <td className="px-2 py-3 min-w-0 break-words">
                           <p className="font-medium text-foreground">{a.deliveryDate}</p>
+                          <DeliveryTimingBadge timing={getDeliveryTimingStatus(a, timingNow)} />
                           <p className="text-xs text-muted-foreground break-words">{secondaryTimestamp(a)}</p>
                         </td>
                         <td className="px-2 py-3"><DocumentsAction assignment={a} /></td>
@@ -421,6 +425,7 @@ export default function DeliveryTable({
                       <p className="min-w-0 font-medium text-foreground break-all"><Highlight text={a.company} query={search} /></p>
                       <div className="min-w-0 text-sm">
                         <p className="font-medium text-foreground break-words">{a.deliveryDate}</p>
+                        <DeliveryTimingBadge timing={getDeliveryTimingStatus(a, timingNow)} />
                         <p className="text-xs text-muted-foreground break-words">{secondaryTimestamp(a)}</p>
                       </div>
                     </div>
@@ -488,6 +493,7 @@ export default function DeliveryTable({
                         <td className="px-2 py-3"><AssignmentStatusBadge assignment={c} /></td>
                         <td className="px-2 py-3 break-words text-foreground">
                           <p className="font-medium">{c.deliveryDate}</p>
+                          <DeliveryTimingBadge timing={getDeliveryTimingStatus(c, timingNow)} />
                           <p className="text-xs text-muted-foreground break-words">{secondaryTimestamp(c)}</p>
                         </td>
                         <td className="px-2 py-3"><DocumentsAction assignment={c} /></td>
@@ -516,6 +522,7 @@ export default function DeliveryTable({
                       <p className="min-w-0 font-medium text-foreground break-all"><Highlight text={c.company} query={search} /></p>
                       <div className="min-w-0">
                         <p className="font-medium text-foreground break-words">{c.deliveryDate}</p>
+                        <DeliveryTimingBadge timing={getDeliveryTimingStatus(c, timingNow)} />
                         <p className="text-xs text-muted-foreground break-words">{secondaryTimestamp(c)}</p>
                       </div>
                     </div>

@@ -7,7 +7,7 @@ export const ADMIN_PATHS = {
   Deliveries: '/deliveries',
   Documents: '/documents',
   Reports: '/reports',
-  Accounts: '/accounts',
+  Accounts: '/drivers-trucks',
 } as const;
 
 export type AdminPage = keyof typeof ADMIN_PATHS;
@@ -23,6 +23,7 @@ export function pendingDocumentReviewTarget(assignments: readonly Pick<Assignmen
 
 export function adminPageFromUrl(url = new URL(window.location.href)): AdminPage {
   const path = url.pathname.replace(/\/$/, '') || '/';
+  if (path === '/accounts') return 'Accounts'; // Keep existing bookmarks working.
   const page = (Object.keys(ADMIN_PATHS) as AdminPage[]).find((item) => ADMIN_PATHS[item] === path);
   if (page) return page;
   if (path === '/') {

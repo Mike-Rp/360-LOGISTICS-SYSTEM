@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import imgLogo from 'figma:asset/5e73e3c08e898d68c86717993c6e7442d03e9ac4.png';
-import { Eye, EyeOff, AlertCircle, Phone, KeySquare, Loader2, X } from 'lucide-react';
+import { Eye, EyeOff, AlertCircle, Phone, Loader2, X } from 'lucide-react';
 import { signInStaff, signInDriver, LoginError } from '../../lib/db';
 import type { StaffSession } from '../../lib/db';
 import { getLastDriverLanguage, translateDriver } from '../driver/driverI18n';
@@ -17,18 +17,6 @@ interface Props {
 const DISPATCH_TEL     = '09384033610';
 const DISPATCH_DISPLAY = '0938 403 3610';
 
-const ErrorBanner = ({ icon: Icon, title, sub }: { icon: React.ElementType; title: string; sub: string }) => (
-  <div className="flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-2xl">
-    <div className="w-8 h-8 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0 mt-0.5">
-      <Icon className="w-4 h-4 text-red-600" />
-    </div>
-    <div>
-      <p className="text-base font-semibold text-red-700">{title}</p>
-      <p className="text-sm text-red-500 mt-0.5 leading-snug">{sub}</p>
-    </div>
-  </div>
-);
-
 export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
   const [view, setView] = useState<'driver' | 'admin'>('driver');
   const driverLanguage = getLastDriverLanguage();
@@ -37,12 +25,9 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
   /* ── Driver form ── */
   const [mobile,        setMobile]        = useState('');
   const [pin,           setPin]           = useState(['', '', '', '']);
-  /* 'mobile_and_pin' marks BOTH fields — used when the number itself is not registered,
-   so neither the number nor whatever PIN was typed can be the right one. */
-  const [driverError,   setDriverError]   = useState<{ type: 'mobile' | 'pin' | 'mobile_and_pin' | 'general'; msg: string } | null>(null);
+  const [driverError,   setDriverError]   = useState<{ type: 'mobile' | 'pin' | 'general'; msg: string } | null>(null);
   const [driverLoading, setDriverLoading] = useState(false);
-  const mobileStartsWrong = mobile.length > 0 && !mobile.startsWith('9');
-  const mobileHasError = mobileStartsWrong || driverError?.type === 'mobile' || driverError?.type === 'mobile_and_pin';
+  const mobileHasError = driverError?.type === 'mobile';
   /* "Forgot your PIN?" dialog — purely informational, it starts no reset flow. */
   const [showPinHelp,   setShowPinHelp]   = useState(false);
 
@@ -58,6 +43,7 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
   const [password,     setPassword]     = useState('');
   const [showPass,     setShowPass]     = useState(false);
   const [adminError,   setAdminError]   = useState('');
+  const [adminFieldError, setAdminFieldError] = useState<{ field: 'email' | 'password'; msg: string } | null>(null);
   const [adminLoading, setAdminLoading] = useState(false);
 
   /* Escape closes the PIN-help dialog. The listener is only attached while the dialog is
@@ -98,15 +84,12 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
   };
 
   const handleDriverLogin = async () => {
+    if (driverLoading) return;
     const fullPin = pin.join('');
 
     // mobile is the 10-digit local number (e.g. "9123456789")
-    if (mobile.length !== 10) {
+    if (!/^9\d{9}$/.test(mobile)) {
       setDriverError({ type: 'mobile', msg: tr('login.invalidMobile') });
-      return;
-    }
-    if (!mobile.startsWith('9')) {
-      setDriverError({ type: 'mobile', msg: tr('login.mustStartNine') });
       return;
     }
     if (fullPin.length < 4) {
@@ -117,23 +100,16 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
     setDriverLoading(true);
     setDriverError(null);
 
-    /* Supabase Auth itself answers only "valid" or "invalid". When it rejects an attempt,
-       signInDriver additionally asks the database whether the number is registered, so the
-       two cases can be told apart:
-         unknown_mobile      -> number not registered   -> flag BOTH fields
-         invalid_credentials -> number exists, PIN wrong -> flag the PIN field only
-       If that lookup cannot run it stays invalid_credentials, and the PIN message is shown
-       rather than wrongly claiming the number is unregistered.
-       There is no offline fallback any more: driver data is private until you are signed in. */
     try {
       const driver = await signInDriver(mobile, fullPin);
       onDriverLogin(driver);
     } catch (e) {
       console.error('[signInDriver] error:', e);
       const code = e instanceof LoginError ? e.code : 'network';
-      if (code === 'unknown_mobile')      setDriverError({ type: 'mobile_and_pin', msg: tr('login.unknownMobile') });
-      else if (code === 'invalid_credentials') setDriverError({ type: 'pin', msg: tr('login.wrongPin') });
+      if (code === 'invalid_credentials') setDriverError({ type: 'general', msg: tr('login.wrongPin') });
       else if (code === 'no_access')      setDriverError({ type: 'general', msg: tr('login.notDriver') });
+      else if (code === 'server')         setDriverError({ type: 'general', msg: tr('login.server') });
+      else if (code === 'rate_limited')   setDriverError({ type: 'general', msg: tr('login.rateLimited') });
       else                                setDriverError({ type: 'general', msg: tr('login.network') });
     } finally {
       setDriverLoading(false);
@@ -141,10 +117,14 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
   };
 
   const handleAdminLogin = async () => {
+    if (adminLoading) return;
     setAdminError('');
+    setAdminFieldError(null);
     const inputEmail = email.trim().toLowerCase();
     const inputPass  = password.trim();
-    if (!inputEmail || !inputPass) { setAdminError('Please enter your email and password.'); return; }
+    if (!inputEmail) { setAdminFieldError({ field: 'email', msg: 'Enter your email address.' }); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(inputEmail)) { setAdminFieldError({ field: 'email', msg: 'Enter a valid email address.' }); return; }
+    if (!inputPass) { setAdminFieldError({ field: 'password', msg: 'Enter your password.' }); return; }
 
     setAdminLoading(true);
     try {
@@ -155,9 +135,11 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
     } catch (e) {
       console.error('[signInStaff] error:', e);
       const code = e instanceof LoginError ? e.code : 'network';
-      if (code === 'invalid_credentials') setAdminError('Invalid email or password.');
+      if (code === 'invalid_credentials') setAdminError('Incorrect email or password.');
       else if (code === 'no_access')      setAdminError('This account does not have access to the admin portal. Contact the Operation Manager.');
-      else                                setAdminError('Unable to reach the server. Check your internet connection.');
+      else if (code === 'server')         setAdminError('Unable to log in right now. Please try again.');
+      else if (code === 'rate_limited')   setAdminError('Too many login requests. Please try again shortly.');
+      else                                setAdminError('Unable to connect to the server. Please try again.');
     } finally {
       setAdminLoading(false);
     }
@@ -198,7 +180,7 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
               </button>
               <button
                 type="button"
-                onClick={() => { setView('admin'); setAdminError(''); setEmail(''); setPassword(''); }}
+                onClick={() => { setView('admin'); setAdminError(''); setAdminFieldError(null); setEmail(''); setPassword(''); }}
                 className={`flex-1 py-3 rounded-xl text-base transition-all duration-200 ${
                   view === 'admin'
                     ? 'bg-white shadow-sm font-bold text-foreground'
@@ -231,7 +213,7 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
                       value={mobile}
                       onChange={(e) => handleMobile(e.target.value)}
                       aria-invalid={mobileHasError || undefined}
-                      aria-describedby={mobileStartsWrong ? 'driver-mobile-start-help' : undefined}
+                      aria-describedby={mobileHasError ? 'driver-mobile-error' : undefined}
                       placeholder="9XX XXX XXXX"
                       maxLength={10}
                       onKeyDown={(e) => e.key === 'Enter' && handleDriverLogin()}
@@ -239,20 +221,14 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
                     />
                     {/* Character counter */}
                     <span className={`shrink-0 px-2 sm:px-4 text-xs sm:text-sm font-semibold tabular-nums ${
-                      mobileStartsWrong ? 'text-red-600' : mobile.length === 10 ? 'text-green-600' : 'text-muted-foreground'
+                      mobileHasError ? 'text-red-600' : mobile.length === 10 ? 'text-green-600' : 'text-muted-foreground'
                     }`}>
                       {mobile.length}/10
                     </span>
                     </div>
-                    <p id="driver-mobile-start-help" aria-live="polite" className="mt-1 min-h-4 text-xs leading-4 text-red-600 break-words">
-                      {mobileStartsWrong ? tr('login.mobileStarts') : ''}
-                    </p>
+                    {mobileHasError && <p id="driver-mobile-error" role="alert" className="mt-1 text-sm leading-5 text-red-600 break-words">{driverError?.msg}</p>}
                   </div>
                 </div>
-
-                {!mobileStartsWrong && (driverError?.type === 'mobile' || driverError?.type === 'mobile_and_pin') && (
-                  <ErrorBanner icon={Phone} title={tr('login.mobileNotFound')} sub={driverError.msg} />
-                )}
 
                 <div className="space-y-2.5">
                   <label className="text-base font-semibold text-foreground block">{tr('login.pin')}</label>
@@ -263,22 +239,23 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
                         type="password" inputMode="numeric" maxLength={1} value={digit}
                         onChange={(e) => handlePin(i, e.target.value)}
                         onKeyDown={(e) => handlePinKey(i, e)}
+                        aria-label={`PIN digit ${i + 1}`}
+                        aria-invalid={driverError?.type === 'pin' || undefined}
+                        aria-describedby={driverError?.type === 'pin' ? 'driver-pin-error' : undefined}
                         className={`min-w-0 w-full max-w-[64px] flex-1 h-[60px] text-center text-2xl font-bold border-0 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all ${
-                          driverError?.type === 'pin' || driverError?.type === 'mobile_and_pin'
+                          driverError?.type === 'pin'
                             ? 'bg-red-100 ring-2 ring-red-300'
                             : digit ? 'bg-primary/20 text-primary' : 'bg-[#e5e7eb]'
                         }`}
                       />
                     ))}
                   </div>
+                  {driverError?.type === 'pin' && <p id="driver-pin-error" role="alert" className="text-sm leading-5 text-red-600">{driverError.msg}</p>}
                 </div>
 
-                {driverError?.type === 'pin' && (
-                  <ErrorBanner icon={KeySquare} title={tr('login.incorrectPin')} sub={driverError.msg} />
-                )}
                 {driverError?.type === 'general' && (
-                  <div className="flex items-center gap-2 text-red-600 text-sm">
-                    <AlertCircle className="w-4 h-4 flex-shrink-0" /> {driverError.msg}
+                  <div role="alert" className="flex items-start gap-2 text-red-600 text-sm leading-5">
+                    <AlertCircle aria-hidden="true" className="w-4 h-4 flex-shrink-0 mt-0.5" /> <span>{driverError.msg}</span>
                   </div>
                 )}
 
@@ -313,11 +290,14 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
                   <label className="text-base font-semibold text-foreground block">Company Email</label>
                   <input
                     type="email" value={email}
-                    onChange={(e) => { setEmail(e.target.value); setAdminError(''); }}
+                    onChange={(e) => { setEmail(e.target.value); setAdminError(''); setAdminFieldError(null); }}
                     placeholder="e.g. 360logistics@email.ph"
                     onKeyDown={(e) => e.key === 'Enter' && handleAdminLogin()}
-                    className="w-full px-4 py-4 text-base bg-[#f9fafb] border border-[#e5e7eb] rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
+                    aria-invalid={adminFieldError?.field === 'email' || undefined}
+                    aria-describedby={adminFieldError?.field === 'email' ? 'admin-email-error' : undefined}
+                    className={`w-full px-4 py-4 text-base bg-[#f9fafb] border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all ${adminFieldError?.field === 'email' ? 'border-red-500' : 'border-[#e5e7eb]'}`}
                   />
+                  {adminFieldError?.field === 'email' && <p id="admin-email-error" role="alert" className="text-sm leading-5 text-red-600">{adminFieldError.msg}</p>}
                 </div>
 
                 <div className="space-y-2">
@@ -325,23 +305,27 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
                   <div className="relative">
                     <input
                       type={showPass ? 'text' : 'password'} value={password}
-                      onChange={(e) => { setPassword(e.target.value); setAdminError(''); }}
+                      onChange={(e) => { setPassword(e.target.value); setAdminError(''); setAdminFieldError(null); }}
                       placeholder="Enter password"
                       onKeyDown={(e) => e.key === 'Enter' && handleAdminLogin()}
-                      className="w-full px-4 py-4 text-base bg-[#f9fafb] border border-[#e5e7eb] rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all pr-12"
+                      aria-invalid={adminFieldError?.field === 'password' || undefined}
+                      aria-describedby={adminFieldError?.field === 'password' ? 'admin-password-error' : undefined}
+                      className={`w-full px-4 py-4 text-base bg-[#f9fafb] border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all pr-12 ${adminFieldError?.field === 'password' ? 'border-red-500' : 'border-[#e5e7eb]'}`}
                     />
                     <button
                       type="button" onClick={() => setShowPass(!showPass)}
+                      aria-label={showPass ? 'Hide password' : 'Show password'}
                       className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                     >
                       {showPass ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                     </button>
                   </div>
+                  {adminFieldError?.field === 'password' && <p id="admin-password-error" role="alert" className="text-sm leading-5 text-red-600">{adminFieldError.msg}</p>}
                 </div>
 
                 {adminError && (
-                  <div className="flex items-center gap-2 text-red-600 text-sm">
-                    <AlertCircle className="w-4 h-4 flex-shrink-0" /> <span>{adminError}</span>
+                  <div role="alert" className="flex items-start gap-2 text-red-600 text-sm leading-5">
+                    <AlertCircle aria-hidden="true" className="w-4 h-4 flex-shrink-0 mt-0.5" /> <span>{adminError}</span>
                   </div>
                 )}
 

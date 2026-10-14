@@ -13,6 +13,8 @@ import { RegisterDriverModal, RegisterTruckModal } from './RegisterModals';
 import { Popover, PopoverAnchor, PopoverContent } from '../ui/popover';
 import TruckImage from '../TruckImage';
 import ASNWithCopy from './ASNWithCopy';
+import DeliveryTimingBadge from './DeliveryTimingBadge';
+import { getDeliveryTimingStatus } from '../../lib/assignmentTiming';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
 import { sortNewestFirst, markLocalRecordAdded, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
 import { ADMIN_NAVIGATION_EVENT, adminHref, followAdminLink, pushAdminNavigation } from '../../lib/adminNavigation';
@@ -863,7 +865,7 @@ function DocChip({ doc }: { doc: AssignmentDoc }) {
 }
 
 /* ─── View Details Modal ───────────────────────────── */
-function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApproveDoc, onRejectDoc, onComplete, onCancel, onSimulateLate, isViewOnly = false, adminEmail, reviewTarget }: {
+function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApproveDoc, onRejectDoc, onComplete, onCancel, onSimulateLate, isViewOnly = false, adminEmail, reviewTarget, timingNow }: {
   assignment: Assignment | null; driver: LocalDriver | null;
   /* null when the truck record was deleted — the plate saved on the assignment is still shown */
   truck: LocalTruck | null;
@@ -877,6 +879,7 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
   isViewOnly?:    boolean;
   adminEmail?:    string | null;
   reviewTarget?: { docType?: string } | null;
+  timingNow: Date;
 }) {
   const isDemoAdmin = adminEmail === DEMO_ADMIN_EMAIL;
   const [confirmCancel, setConfirmCancel] = useState(false);
@@ -989,6 +992,7 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
               <DetailRow icon={<Calendar className="w-4 h-4" />} label="Delivery Date"  value={assignment.deliveryDate} />
               <DetailRow icon={<AlarmClock className="w-4 h-4" />} label="ATA"          value={assignment.ata} />
             </div>
+            <DeliveryTimingBadge timing={getDeliveryTimingStatus(assignment, timingNow)} />
             <DetailRow icon={<Clock className="w-4 h-4" />} label="Assigned At" value={assignment.assignedAt} />
           </DetailCard>
 
@@ -1657,6 +1661,11 @@ export default function DriversManagement({
   openDispatchOnMount = false, onDispatchOpened, search, onSearchChange, notificationTarget, onNotificationTargetHandled,
 }: Props) {
 
+  const [timingNow, setTimingNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = window.setInterval(() => setTimingNow(new Date()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const [showAssignTask, setShowAssignTask] = useState(false);
 
@@ -2126,6 +2135,7 @@ export default function DriversManagement({
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {activePage.pageItems.map((a) => {
             const truck    = trucks.find((t) => t.id === a.truckId);
+            const timing = getDeliveryTimingStatus(a, timingNow);
             const total    = a.documents.length;
             const approved = a.documents.filter((d) => d.docStatus === 'approved').length;
             /* Uploaded but not yet approved — amber. Rejected sits here too:
@@ -2137,7 +2147,7 @@ export default function DriversManagement({
               <div key={a.id}
                 style={newRecordHighlight(a.id, newAssignmentId)}
                 className={`rounded-xl border-[0.5px] overflow-hidden ${
-                  sq ? 'border-yellow-400 bg-yellow-50/30' : 'border-border bg-white'
+                  sq ? 'border-yellow-400 bg-yellow-50/30' : timing?.kind === 'overdue' ? 'border-red-200 bg-white' : 'border-border bg-white'
                 }`}
               >
                 <div className="p-4 sm:p-5">
@@ -2171,6 +2181,7 @@ export default function DriversManagement({
                       <div className="min-w-0 sm:border-l sm:border-border sm:pl-4">
                         <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Delivery date</p>
                         <p className="mt-0.5 text-sm text-foreground break-words">{a.deliveryDate}</p>
+                        {timing && <div className="mt-1.5"><DeliveryTimingBadge timing={timing} /></div>}
                       </div>
                     </div>
                   </div>
@@ -2472,6 +2483,7 @@ export default function DriversManagement({
           isViewOnly={isViewOnly || !assignments.some(a => a.id === viewDetailsId)}
           adminEmail={adminEmail}
           reviewTarget={reviewTarget?.assignmentId === viewDetailsId ? reviewTarget : null}
+          timingNow={timingNow}
         />
       )}
 
