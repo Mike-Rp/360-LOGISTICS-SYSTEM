@@ -1763,7 +1763,7 @@ export default function DriversManagement({
     if (!taskDriverId)              e.driver         = 'Select a driver.';
     if (!taskTruckId)               e.truck          = 'Select a truck.';
     if (!taskFrom.trim())           e.from           = 'Enter an origin.';
-    if (!taskTo.trim())             e.to             = 'Enter a destination.';
+    if (!taskTo.trim())             e.to             = 'Enter a delivery location.';
     if (!taskCompany.trim())        e.company        = 'Enter a client name.';
     if (!taskPickupLocation.trim()) e.pickupLocation = 'Enter a pickup location.';
     setTaskErrors(e);
@@ -2301,25 +2301,25 @@ export default function DriversManagement({
                   ) : null;
                 })()}
 
-                {/* Route — From / To */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Route — keep the existing origin/destination bindings */}
+                <div className="space-y-4">
                   <div>
-                    <FieldLabel required>From</FieldLabel>
+                    <FieldLabel required>Origin</FieldLabel>
                     <LocationInput
                       value={taskFrom}
                       onChange={(v) => { setTaskFrom(v); setTaskErrors((p) => ({ ...p, from: '' })); }}
-                      placeholder="e.g. Origin city or municipality"
+                      placeholder="e.g. Cabuyao Bayan"
                       hasError={!!taskErrors.from}
                       icon={<MapPin className="w-3.5 h-3.5" />}
                     />
                     {taskErrors.from && <p className="text-xs text-red-500 mt-1">{taskErrors.from}</p>}
                   </div>
                   <div>
-                    <FieldLabel required>To</FieldLabel>
+                    <FieldLabel required>Delivery Location</FieldLabel>
                     <LocationInput
                       value={taskTo}
                       onChange={(v) => { setTaskTo(v); setTaskErrors((p) => ({ ...p, to: '' })); }}
-                      placeholder="e.g. Destination city or municipality"
+                      placeholder="e.g. Vista Mall Makati, Chino Roces Ave., Makati City"
                       hasError={!!taskErrors.to}
                       icon={<Navigation className="w-3.5 h-3.5" />}
                     />
@@ -2334,7 +2334,7 @@ export default function DriversManagement({
                     <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
                     <input type="text" value={taskCompany}
                       onChange={(e) => { setTaskCompany(e.target.value); setTaskErrors((p) => ({ ...p, company: '' })); }}
-                      placeholder="e.g. ABC Retail Corp"
+                      placeholder="e.g. Vista Mall"
                       className={`${fieldBase} ${fieldTone(!!taskErrors.company)} pl-9`}
                     />
                   </div>
@@ -2347,7 +2347,7 @@ export default function DriversManagement({
                   <LocationInput
                     value={taskPickupLocation}
                     onChange={(v) => { setTaskPickupLocation(v); setTaskErrors((p) => ({ ...p, pickupLocation: '' })); }}
-                    placeholder="e.g. Warehouse A, Valenzuela City"
+                    placeholder="e.g. Cabuyao Bayan Warehouse"
                     hasError={!!taskErrors.pickupLocation}
                     icon={<Package className="w-3.5 h-3.5" />}
                   />
