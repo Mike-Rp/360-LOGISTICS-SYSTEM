@@ -9,7 +9,7 @@ const source = ts.transpileModule(readFileSync(join(__dirname, 'assignmentTiming
 }).outputText;
 const moduleForTest = { exports: {} };
 new Function('require', 'module', 'exports', source)(require, moduleForTest, moduleForTest.exports);
-const { getDeliveryTimingStatus } = moduleForTest.exports;
+const { getDeliveryTimingStatus, getPickupTimingStatus, getDispatchTimingNotices } = moduleForTest.exports;
 
 const assignment = (taskStatus, deliveryDate = 'Oct 15, 2026', eta = '2:00 PM', timestamp) => ({
   taskStatus, deliveryDate, eta,
@@ -49,4 +49,38 @@ test('cancelled, failed, future and invalid records do not warn', () => {
   assert.equal(getDeliveryTimingStatus(assignment('Failed / Issue'), after), null);
   assert.equal(getDeliveryTimingStatus(assignment('Assigned', 'Oct 30, 2026'), after), null);
   assert.equal(getDeliveryTimingStatus(assignment('Assigned', 'Feb 30, 2026'), after), null);
+});
+
+const pickupAssignment = (taskStatus, timestamp) => ({
+  ...assignment(taskStatus, 'Oct 17, 2026', '2:00 PM'),
+  pickedUpDate: 'Oct 16, 2026', pickupTime: '1:00 AM',
+  statusPhotos: timestamp ? { 'Picked Up': { timestamp } } : {},
+});
+
+test('assigned pickup becomes overdue only after its scheduled Philippine time', () => {
+  const item = pickupAssignment('Assigned');
+  assert.equal(getPickupTimingStatus(item, at('2026-10-15T17:00:00Z')), null);
+  assert.equal(getPickupTimingStatus(item, at('2026-10-15T17:45:00Z'))?.label, 'Pickup overdue · 45 minutes');
+  assert.equal(getPickupTimingStatus(item, at('2026-10-15T20:00:00Z'))?.label, 'Pickup overdue · 3 hours');
+  assert.match(getPickupTimingStatus(item, at('2026-10-15T20:00:00Z'))?.scheduledPickup ?? '', /Oct 16, 2026.*1:00 AM/);
+});
+
+test('photo evidence turns an active pickup warning into historical late timing', () => {
+  const late = pickupAssignment('Picked Up', 'Oct 16, 2026, 09:21 AM');
+  assert.equal(getPickupTimingStatus(late, at('2026-10-20T00:00:00Z'))?.label, 'Picked up late · 8 hours 21 minutes');
+  assert.equal(getPickupTimingStatus({ ...late, taskStatus: 'In Transit' })?.kind, 'picked_up_late');
+  assert.equal(getPickupTimingStatus({ ...late, taskStatus: 'Delivered' })?.kind, 'picked_up_late');
+  assert.equal(getPickupTimingStatus(pickupAssignment('Picked Up', 'Oct 16, 2026, 12:59 AM')), null);
+  assert.equal(getPickupTimingStatus(pickupAssignment('Picked Up')), null);
+  assert.equal(getPickupTimingStatus(pickupAssignment('Cancelled', 'Oct 16, 2026, 09:21 AM')), null);
+});
+
+test('Dispatch prioritizes active delivery overdue over pickup overdue', () => {
+  const item = { ...pickupAssignment('Assigned'), deliveryDate: 'Oct 16, 2026', eta: '2:00 AM' };
+  const beforeDelivery = getDispatchTimingNotices(item, at('2026-10-15T17:30:00Z'));
+  assert.equal(beforeDelivery.delivery, null);
+  assert.equal(beforeDelivery.pickup?.kind, 'pickup_overdue');
+  const afterDelivery = getDispatchTimingNotices(item, at('2026-10-15T19:00:00Z'));
+  assert.equal(afterDelivery.delivery?.kind, 'overdue');
+  assert.equal(afterDelivery.pickup, null);
 });

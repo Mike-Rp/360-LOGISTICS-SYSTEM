@@ -4,6 +4,27 @@ import { getPhysicalDeliveryTimestamp } from './assignmentTiming';
 
 export type AssignmentDisplayStatus = TaskStatus | 'Awaiting Documents' | 'Under Review' | 'Needs Correction' | 'Completed';
 
+/** Workflow order used by status summaries. Failed / Issue remains a supported
+ * driver-reported state; Cancelled is the terminal override. */
+export const ASSIGNMENT_DISPLAY_STATUSES = [
+  'Assigned', 'Picked Up', 'In Transit', 'Delivered', 'Awaiting Documents',
+  'Under Review', 'Needs Correction', 'Completed', 'Failed / Issue', 'Cancelled',
+] as const satisfies readonly AssignmentDisplayStatus[];
+
+/** SVG colours matching the shared badge/dot colour families below. */
+export const assignmentDisplayStatusChartColors: Record<AssignmentDisplayStatus, string> = {
+  'Assigned': '#a855f7',
+  'Picked Up': '#38bdf8',
+  'In Transit': '#1d4ed8',
+  'Delivered': '#22c55e',
+  'Awaiting Documents': '#f59e0b',
+  'Under Review': '#d97706',
+  'Needs Correction': '#ef4444',
+  'Completed': '#15803d',
+  'Failed / Issue': '#b91c1c',
+  'Cancelled': '#9ca3af',
+};
+
 export const assignmentDisplayStatusConfig = {
   ...taskStatusConfig,
   'Awaiting Documents': { label: 'Awaiting Documents', badge: 'bg-amber-50 text-amber-700 border-amber-200', dot: 'bg-amber-400' },

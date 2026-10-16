@@ -282,13 +282,19 @@ export default function App() {
         what the server is about to change.
      2. Run the change. Errors are re-thrown for the calling screen to show.
      3. Reload quietly (like the poll — no full-screen loading spinner). */
-  const onServerChange = useCallback(async (action: () => Promise<void>): Promise<void> => {
+  const onServerChange = useCallback(async (action: () => Promise<void>, onActionSuccess?: () => void): Promise<void> => {
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
       await saveToServer(drivers, trucks, assignments, completed, cancelled, notifications, activityLog);
     }
     await action();
+    if (onActionSuccess) {
+      // The database mutation has succeeded. Reflect it immediately while the
+      // full reload catches up, and do not auto-save this server-owned change.
+      isPollUpdate.current = true;
+      onActionSuccess();
+    }
     try {
       const data = await loadAdminData();
       isPollUpdate.current = true;
@@ -301,10 +307,12 @@ export default function App() {
       setActivityLog(data.activityLog);
       setArchivedDrivers(data.archivedDrivers);
       setArchivedTrucks(data.archivedTrucks);
-      setTimeout(() => { isPollUpdate.current = false; }, 100);
     } catch (err) {
-      /* The change itself succeeded — the next 12 s poll will pick it up */
+      /* The change itself succeeded; keep the immediate local update until the
+         next poll can replace it with the database state. */
       console.warn('[onServerChange] reload failed, the next poll will retry:', err);
+    } finally {
+      setTimeout(() => { isPollUpdate.current = false; }, 100);
     }
   }, [saveToServer, restoreNotifications, drivers, trucks, assignments, completed, cancelled, notifications, activityLog]);
 

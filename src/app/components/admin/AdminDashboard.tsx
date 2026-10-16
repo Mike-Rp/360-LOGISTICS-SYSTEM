@@ -58,7 +58,7 @@ interface Props {
   setNotifications: React.Dispatch<React.SetStateAction<AppNotification[]>>;
   activityLog: AdminActivityEntry[];
   onLogActivity: (entry: AdminActivityInput) => void;
-  onServerChange: (action: () => Promise<void>) => Promise<void>;
+  onServerChange: (action: () => Promise<void>, onActionSuccess?: () => void) => Promise<void>;
   archivedDrivers: LocalDriver[];
   archivedTrucks: LocalTruck[];
   activeNav: NavItem;
@@ -220,7 +220,7 @@ export default function AdminDashboard({
             assignments={assignments} setAssignments={setAssignments}
             notifications={notifications}
             completed={completed}     setCompleted={setCompleted}
-            setCancelled={setCancelled}
+            cancelled={cancelled}     setCancelled={setCancelled}
             isViewOnly={isViewOnly}
             onLogActivity={onLogActivity}
             onServerChange={onServerChange}

@@ -1,4 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import { toast } from 'sonner';
 import {
   User, Truck, MapPin, Building2, Calendar, MessageSquare,
   Activity, X, ClipboardList, CheckCircle2,
@@ -14,7 +15,8 @@ import { Popover, PopoverAnchor, PopoverContent } from '../ui/popover';
 import TruckImage from '../TruckImage';
 import ASNWithCopy from './ASNWithCopy';
 import DeliveryTimingBadge from './DeliveryTimingBadge';
-import { getDeliveryTimingStatus } from '../../lib/assignmentTiming';
+import PickupTimingNotice from './PickupTimingNotice';
+import { getDispatchTimingNotices } from '../../lib/assignmentTiming';
 import { assignmentDisplayStatusConfig, getAssignmentDisplayStatus, getAssignmentDocumentProgress, getDocumentAgingState, type AssignmentDisplayStatus } from '../../lib/assignmentWorkflow';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
 import { sortNewestFirst, markLocalRecordAdded, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
@@ -912,6 +914,8 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
     ? assignment.documents.every((d) => d.uploaded && d.docStatus === 'approved') : false;
 
   const approvedCount = assignment?.documents.filter((d) => d.docStatus === 'approved').length ?? 0;
+  const { delivery: deliveryTiming, pickup: pickupTiming } = assignment
+    ? getDispatchTimingNotices(assignment, timingNow) : { delivery: null, pickup: null };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4">
@@ -993,7 +997,8 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
               <DetailRow icon={<Calendar className="w-4 h-4" />} label="Delivery Date"  value={assignment.deliveryDate} />
               <DetailRow icon={<AlarmClock className="w-4 h-4" />} label="ATA"          value={assignment.ata} />
             </div>
-            <DeliveryTimingBadge timing={getDeliveryTimingStatus(assignment, timingNow)} />
+            <DeliveryTimingBadge timing={deliveryTiming} />
+            <PickupTimingNotice timing={pickupTiming} />
             <DetailRow icon={<Clock className="w-4 h-4" />} label="Assigned At" value={assignment.assignedAt} />
           </DetailCard>
 
@@ -1289,7 +1294,7 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose
   drivers: LocalDriver[]; trucks: LocalTruck[]; assignments: Assignment[];
   onClose: () => void;
   onSaved: (id: string) => void;
-  onServerChange: (action: () => Promise<void>) => Promise<void>;
+  onServerChange: (action: () => Promise<void>, onActionSuccess?: () => void) => Promise<void>;
 }) {
   /* The version the form was opened with */
   const [original] = useState(assignment);
@@ -1627,11 +1632,11 @@ interface Props {
   assignments: Assignment[];  setAssignments: React.Dispatch<React.SetStateAction<Assignment[]>>;
   notifications: AppNotification[];
   completed: CompletedTask[]; setCompleted:   React.Dispatch<React.SetStateAction<CompletedTask[]>>;
-  setCancelled: React.Dispatch<React.SetStateAction<Assignment[]>>;
+  cancelled: Assignment[];    setCancelled: React.Dispatch<React.SetStateAction<Assignment[]>>;
   isViewOnly?: boolean;
   onLogActivity?: (entry: AdminActivityInput) => void;
   /* Runs a database-function change (edit / cancel), then reloads — see App.tsx */
-  onServerChange: (action: () => Promise<void>) => Promise<void>;
+  onServerChange: (action: () => Promise<void>, onActionSuccess?: () => void) => Promise<void>;
   adminEmail?: string | null;
   /* Dashboard "Dispatch Truck": open this screen's Dispatch Truck form once on arrival */
   openDispatchOnMount?: boolean;
@@ -1658,7 +1663,7 @@ function reviewQueueRequested() {
 /* ─── Main Component ───────────────────────────────── */
 export default function DriversManagement({
   drivers, setDrivers, trucks, setTrucks,
-  assignments, setAssignments, notifications, completed, setCompleted, setCancelled,
+  assignments, setAssignments, notifications, completed, setCompleted, cancelled, setCancelled,
   isViewOnly = false, onLogActivity, onServerChange, adminEmail,
   openDispatchOnMount = false, onDispatchOpened, search, onSearchChange, notificationTarget, onNotificationTargetHandled,
 }: Props) {
@@ -1897,7 +1902,29 @@ export default function DriversManagement({
   /* Goes through the cancel_assignment() database function, not the auto-save: it refuses
      unless the delivery is still 'Assigned', frees the driver + truck, and writes the
      audit-log entry itself. The screen reloads afterwards (onServerChange). */
-  const handleCancel = (id: string) => onServerChange(() => cancelAssignment(id));
+  const handleCancel = async (id: string) => {
+    const assignment = assignments.find((item) => item.id === id);
+    try {
+      await onServerChange(() => cancelAssignment(id), () => {
+        if (!assignment) return;
+        setAssignments((current) => current.filter((item) => item.id !== id));
+        setCancelled((current) => current.some((item) => item.id === id)
+          ? current : [{ ...assignment, taskStatus: 'Cancelled' }, ...current]);
+        if (!assignments.some((item) => item.id !== id && item.driverId === assignment.driverId)) {
+          setDrivers((current) => current.map((driver) => driver.id === assignment.driverId
+            ? { ...driver, status: 'Pending' } : driver));
+        }
+        if (!assignments.some((item) => item.id !== id && item.truckId === assignment.truckId)) {
+          setTrucks((current) => current.map((truck) => truck.id === assignment.truckId
+            ? { ...truck, status: 'Available' } : truck));
+        }
+      });
+      toast.success('Assignment cancelled successfully.', { duration: 3000 });
+    } catch (error) {
+      toast.error('Unable to cancel this assignment. Please try again.', { duration: 3000 });
+      throw error;
+    }
+  };
 
   const sq = search.trim().toLowerCase();
   /* Only show assignments with an active driver and truck. */
@@ -1953,7 +1980,8 @@ export default function DriversManagement({
   const activePageArea = useStablePageHeight(activePage.page, visibleAssignments.length, MONITOR_PAGE_SIZE, `${search}|${classificationFilter}`);
 
   const viewDetailsAssign = viewDetailsId
-    ? assignments.find((a) => a.id === viewDetailsId) ?? completed.find((a) => a.id === viewDetailsId) ?? null
+    ? assignments.find((a) => a.id === viewDetailsId) ?? completed.find((a) => a.id === viewDetailsId)
+      ?? cancelled.find((a) => a.id === viewDetailsId) ?? null
     : null;
   const viewDetailsDriver = viewDetailsAssign ? drivers.find((d) => d.id === viewDetailsAssign.driverId) ?? null : null;
 
@@ -2137,7 +2165,7 @@ export default function DriversManagement({
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {activePage.pageItems.map((a) => {
             const truck    = trucks.find((t) => t.id === a.truckId);
-            const timing = getDeliveryTimingStatus(a, timingNow);
+            const { delivery: timing, pickup: pickupTiming } = getDispatchTimingNotices(a, timingNow);
             const displayStatus = getAssignmentDisplayStatus(a);
             const docs = getAssignmentDocumentProgress(a);
             const documentAge = getDocumentAgingState(a, timingNow, notifications);
@@ -2148,7 +2176,7 @@ export default function DriversManagement({
               <div key={a.id}
                 style={newRecordHighlight(a.id, newAssignmentId)}
                 className={`rounded-xl border-[0.5px] overflow-hidden ${
-                  sq ? 'border-yellow-400 bg-yellow-50/30' : timing?.kind === 'overdue' ? 'border-red-200 bg-white' : 'border-border bg-white'
+                  sq ? 'border-yellow-400 bg-yellow-50/30' : timing?.kind === 'overdue' || pickupTiming?.kind === 'pickup_overdue' ? 'border-red-200 bg-white' : 'border-border bg-white'
                 }`}
               >
                 <div className="p-4 sm:p-5">
@@ -2186,6 +2214,10 @@ export default function DriversManagement({
                       </div>
                     </div>
                   </div>
+
+                  {pickupTiming?.kind === 'pickup_overdue' && (
+                    <div className="mt-3"><PickupTimingNotice timing={pickupTiming} /></div>
+                  )}
 
                   {documentAge && (
                     <div className="mt-3 flex min-w-0 items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-800">

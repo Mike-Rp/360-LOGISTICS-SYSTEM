@@ -1,12 +1,20 @@
 import type { Assignment } from '../data/assignmentTypes';
 
 type TimingAssignment = Pick<Assignment, 'taskStatus' | 'deliveryDate' | 'eta' | 'statusPhotos'>;
+type PickupTimingAssignment = Pick<Assignment, 'taskStatus' | 'pickedUpDate' | 'pickupTime' | 'statusPhotos'>;
 
 export type DeliveryTimingStatus = {
   kind: 'overdue' | 'delivered_late';
   label: string;
   accessibleLabel: string;
   duration: { value: number; unit: 'minute' | 'hour' | 'day' };
+};
+
+export type PickupTimingStatus = {
+  kind: 'pickup_overdue' | 'picked_up_late';
+  label: string;
+  accessibleLabel: string;
+  scheduledPickup: string;
 };
 
 const DAY_MS = 86_400_000;
@@ -44,7 +52,7 @@ function manilaTimestamp(year: number, month: number, day: number, hour: number,
   return Date.UTC(year, month - 1, day, hour, minute) - MANILA_OFFSET_MS;
 }
 
-function deliveredTimestamp(value?: string): number | null {
+function statusPhotoTimestamp(value?: string): number | null {
   if (!value) return null;
   // New driver photo evidence stores a year-bearing local display stamp without an offset.
   const local = /^(.+\d{4}),?\s+(.+)$/.exec(value.trim());
@@ -64,8 +72,55 @@ function deliveredTimestamp(value?: string): number | null {
 /** Physical delivery evidence time, shared by schedule and document-age displays. */
 export function getPhysicalDeliveryTimestamp(assignment: Pick<Assignment, 'taskStatus' | 'statusPhotos'>): number | null {
   return assignment.taskStatus === 'Delivered'
-    ? deliveredTimestamp(assignment.statusPhotos?.Delivered?.timestamp)
+    ? statusPhotoTimestamp(assignment.statusPhotos?.Delivered?.timestamp)
     : null;
+}
+
+const unitText = (value: number, unit: 'minute' | 'hour' | 'day') =>
+  `${value} ${unit}${value === 1 ? '' : 's'}`;
+
+function historicalPickupDuration(lateMs: number): string {
+  const days = Math.floor(lateMs / DAY_MS);
+  if (days) return unitText(days, 'day');
+  const hours = Math.floor(lateMs / 3_600_000);
+  const minutes = Math.floor((lateMs % 3_600_000) / 60_000);
+  if (hours) return [unitText(hours, 'hour'), ...(minutes ? [unitText(minutes, 'minute')] : [])].join(' ');
+  return unitText(Math.max(1, minutes), 'minute');
+}
+
+/** Pickup timing comes from the planned pickup moment and its status-photo evidence.
+ * Delay reports record the driver's reason; they are not the actual pickup timestamp. */
+export function getPickupTimingStatus(assignment: PickupTimingAssignment, now = new Date()): PickupTimingStatus | null {
+  if (assignment.taskStatus === 'Cancelled' || assignment.taskStatus === 'Failed / Issue') return null;
+  const date = parseDate(assignment.pickedUpDate ?? '');
+  const time = parseTime(assignment.pickupTime ?? '');
+  if (!date || !time) return null;
+  const scheduledAt = manilaTimestamp(date.year, date.month, date.day, time.hour, time.minute);
+  const scheduledPickup = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila', month: 'short', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit',
+  }).format(new Date(scheduledAt));
+
+  if (assignment.taskStatus === 'Assigned') {
+    const lateMs = now.getTime() - scheduledAt;
+    if (lateMs <= 0) return null;
+    const duration = durationParts(lateMs, false);
+    const text = unitText(duration.value, duration.unit);
+    return {
+      kind: 'pickup_overdue', label: `Pickup overdue · ${text}`,
+      accessibleLabel: `Pickup overdue by ${text}. Scheduled pickup: ${scheduledPickup}`,
+      scheduledPickup,
+    };
+  }
+
+  const pickedUpAt = statusPhotoTimestamp(assignment.statusPhotos?.['Picked Up']?.timestamp);
+  if (pickedUpAt === null || pickedUpAt <= scheduledAt) return null;
+  const text = historicalPickupDuration(pickedUpAt - scheduledAt);
+  return {
+    kind: 'picked_up_late', label: `Picked up late · ${text}`,
+    accessibleLabel: `Picked up ${text} late. Scheduled pickup: ${scheduledPickup}`,
+    scheduledPickup,
+  };
 }
 
 function durationParts(lateMs: number, dateOnly: boolean): DeliveryTimingStatus['duration'] {
@@ -105,4 +160,11 @@ export function getDeliveryTimingStatus(assignment: TimingAssignment, now = new 
   return delivered
     ? { kind: 'delivered_late', label: `Delivered late · ${durationText}`, accessibleLabel: `Delivery was ${durationText} late`, duration }
     : { kind: 'overdue', label: `Overdue · ${durationText}`, accessibleLabel: `Delivery overdue by ${durationText}`, duration };
+}
+
+/** Dispatch shows one active red deadline at a time; delivery takes precedence. */
+export function getDispatchTimingNotices(assignment: TimingAssignment & PickupTimingAssignment, now = new Date()) {
+  const delivery = getDeliveryTimingStatus(assignment, now);
+  const pickup = delivery?.kind === 'overdue' ? null : getPickupTimingStatus(assignment, now);
+  return { delivery, pickup };
 }

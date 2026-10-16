@@ -8,7 +8,7 @@ import {
 import type { Assignment, CompletedTask, TaskStatus, StatusPhoto, DocStatus } from '../../data/assignmentTypes';
 import { taskStatusConfig } from '../../data/assignmentTypes';
 import { loadDriverData, loadDriverCompletedDelivery, driverUpdate, uploadImage } from '../../lib/db';
-import { getDeliveryTimingStatus, type DeliveryTimingStatus } from '../../lib/assignmentTiming';
+import { getDeliveryTimingStatus, getPickupTimingStatus, type DeliveryTimingStatus } from '../../lib/assignmentTiming';
 import { assignmentDisplayStatusConfig, getAssignmentDisplayStatus, getAssignmentDocumentProgress, getDocumentAgingState } from '../../lib/assignmentWorkflow';
 import { DriverLanguageProvider, useDriverI18n, type DriverLanguage } from './driverI18n';
 
@@ -1301,10 +1301,8 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
     return scheduled < new Date();
   };
 
-  const isPickupLate = (() => {
-    if (!a || a.taskStatus !== 'Assigned' || isFailed) return false;
-    try { return isPastScheduled(a.pickedUpDate, a.pickupTime); } catch { return false; }
-  })();
+  const isPickupLate = a && !isFailed
+    ? getPickupTimingStatus(a, timingNow)?.kind === 'pickup_overdue' : false;
 
   const isDeliveryLate = (() => {
     if (!a || a.taskStatus !== 'In Transit' || isFailed) return false;
