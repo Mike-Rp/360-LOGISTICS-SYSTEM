@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import type { Assignment, CompletedTask } from '../../../data/assignmentTypes';
+import type { Assignment, CompletedTask, AppNotification, AdminActivityEntry } from '../../../data/assignmentTypes';
 import { ASSIGNMENT_DISPLAY_STATUSES, assignmentDisplayStatusChartColors } from '../../../lib/assignmentWorkflow';
 import { buildOverviewBars, emptyOverviewCounts, type OverviewPeriod } from '../../../lib/deliveryOverview';
 
@@ -7,6 +7,8 @@ interface Props {
   assignments: Assignment[];
   completed: CompletedTask[];
   cancelled: Assignment[];
+  notifications: AppNotification[];
+  activityLog: AdminActivityEntry[];
 }
 
 const SERIES = ASSIGNMENT_DISPLAY_STATUSES.map(status => ({
@@ -21,7 +23,7 @@ const PERIODS = [
   { value: 'all', label: 'All Time', subtitle: 'at any time' },
 ] as const;
 
-export default function DeliveryOverviewChart({ assignments, completed, cancelled }: Props) {
+export default function DeliveryOverviewChart({ assignments, completed, cancelled, notifications, activityLog }: Props) {
   const [period, setPeriod] = useState<OverviewPeriod>('today');
   const [hovered, setHovered] = useState<number | null>(null);
 
@@ -40,7 +42,7 @@ export default function DeliveryOverviewChart({ assignments, completed, cancelle
     return () => ro.disconnect();
   }, []);
 
-  const bars = buildOverviewBars(assignments, completed, cancelled, period, new Date(), window.innerWidth < 640 && box.w < 480);
+  const bars = buildOverviewBars(assignments, completed, cancelled, period, new Date(), window.innerWidth < 640 && box.w < 480, notifications, activityLog);
 
   /* Legend totals — the same selected period as the bars */
   const totals = emptyOverviewCounts();
@@ -74,7 +76,9 @@ export default function DeliveryOverviewChart({ assignments, completed, cancelle
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h3 className="text-lg font-semibold text-foreground leading-tight">Delivery Overview</h3>
-          <p className="text-sm text-muted-foreground">Current status of assignments created {PERIODS.find(option => option.value === period)?.subtitle}</p>
+          <p className="text-sm text-muted-foreground">
+            {period === 'all' ? 'Current status of all assignments' : `Current status of assignments updated ${PERIODS.find(option => option.value === period)?.subtitle}`}
+          </p>
         </div>
         <select aria-label="Delivery overview time range" value={period}
           onChange={(event) => { setPeriod(event.target.value as OverviewPeriod); setHovered(null); }}

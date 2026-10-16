@@ -52,7 +52,7 @@ function manilaTimestamp(year: number, month: number, day: number, hour: number,
   return Date.UTC(year, month - 1, day, hour, minute) - MANILA_OFFSET_MS;
 }
 
-function statusPhotoTimestamp(value?: string): number | null {
+export function statusPhotoTimestamp(value?: string): number | null {
   if (!value) return null;
   // New driver photo evidence stores a year-bearing local display stamp without an offset.
   const local = /^(.+\d{4}),?\s+(.+)$/.exec(value.trim());

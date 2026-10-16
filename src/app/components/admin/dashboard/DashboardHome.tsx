@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Plus } from 'lucide-react';
-import type { Assignment, CompletedTask, LocalDriver, LocalTruck, AppNotification } from '../../../data/assignmentTypes';
+import type { Assignment, CompletedTask, LocalDriver, LocalTruck, AppNotification, AdminActivityEntry } from '../../../data/assignmentTypes';
 import DashboardStatCards from './DashboardStatCards';
 import DeliveryOverviewChart from './DeliveryOverviewChart';
 import RecentActivityTable from './RecentActivityTable';
@@ -26,6 +26,7 @@ interface Props {
   completed: CompletedTask[];
   cancelled: Assignment[];
   notifications: AppNotification[];
+  activityLog: AdminActivityEntry[];
   adminName?: string;
   isViewOnly: boolean;
   onNavigate: (page: Page) => void;
@@ -33,7 +34,7 @@ interface Props {
 }
 
 export default function DashboardHome({
-  drivers, trucks, assignments, completed, cancelled, notifications,
+  drivers, trucks, assignments, completed, cancelled, notifications, activityLog,
   adminName, isViewOnly, onNavigate, onDispatch,
 }: Props) {
   return (
@@ -55,6 +56,7 @@ export default function DashboardHome({
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 sm:gap-6">
         <DeliveryOverviewChart
           assignments={assignments} completed={completed} cancelled={cancelled}
+          notifications={notifications} activityLog={activityLog}
         />
         <RecentActivityTable notifications={notifications} completed={completed} />
         <DriversFleetCards drivers={drivers} trucks={trucks} assignments={assignments} onViewAll={() => onNavigate('Accounts')} />

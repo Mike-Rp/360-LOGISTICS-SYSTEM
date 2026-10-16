@@ -187,7 +187,7 @@ export default function AdminDashboard({
             <DashboardHome
               drivers={drivers} trucks={trucks}
               assignments={assignments} completed={completed} cancelled={cancelled}
-              notifications={notifications}
+              notifications={notifications} activityLog={activityLog}
               adminName={adminName}
               isViewOnly={isViewOnly}
               onNavigate={navigateToModule}

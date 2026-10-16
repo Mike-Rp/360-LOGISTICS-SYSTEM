@@ -23,6 +23,7 @@ const workflow = loadTypeScript(join(__dirname, 'assignmentWorkflow.ts'), id => 
 const ordering = loadTypeScript(join(__dirname, 'recordOrdering.ts'));
 const overview = loadTypeScript(join(__dirname, 'deliveryOverview.ts'), id => {
   if (id === './assignmentWorkflow') return workflow;
+  if (id === './assignmentTiming') return timing;
   assert.equal(id, './recordOrdering');
   return ordering;
 });
@@ -69,13 +70,15 @@ test('current status mix covers the full workflow, real issue status, and cancel
   assert.equal(Object.values(counts).reduce((sum, count) => sum + count, 0), 10);
 });
 
-test('creation date filters every status alike; All Time includes older Picked Up work', () => {
+test('an older assignment updated today appears under its current status', () => {
   const active = [record('picked-yesterday', 'Picked Up', '2026-10-15T01:00:00Z')];
-  const cancelled = [record('cancelled-today', 'Cancelled', '2026-10-16T01:00:00Z')];
-  const today = totals(overview.buildOverviewBars(active, [], cancelled, 'today', now));
-  assert.equal(today['Picked Up'], 0);
+  const cancelled = [record('cancelled-yesterday', 'Cancelled', '2026-10-15T01:00:00Z')];
+  const notifications = [{ assignmentId: 'picked-yesterday', createdAt: '2026-10-16T01:30:00Z' }];
+  const activity = [{ assignmentId: 'cancelled-yesterday', timestamp: '2026-10-16T02:00:00Z' }];
+  const today = totals(overview.buildOverviewBars(active, [], cancelled, 'today', now, false, notifications, activity));
+  assert.equal(today['Picked Up'], 1);
   assert.equal(today.Cancelled, 1);
-  const week = totals(overview.buildOverviewBars(active, [], cancelled, 'week', now));
+  const week = totals(overview.buildOverviewBars(active, [], cancelled, 'week', now, false, notifications, activity));
   assert.equal(week['Picked Up'], 1);
   assert.equal(week.Cancelled, 1);
   const all = totals(overview.buildOverviewBars(active, [], cancelled, 'all', now));
@@ -84,23 +87,49 @@ test('creation date filters every status alike; All Time includes older Picked U
 });
 
 test('status transitions replace the old category, and overlapping records count once', () => {
-  const assigned = record('same-id', 'Assigned', '2026-10-16T01:00:00Z');
+  const assigned = record('same-id', 'Assigned', '2026-10-15T01:00:00Z');
   const picked = { ...assigned, taskStatus: 'Picked Up' };
-  const before = totals(overview.buildOverviewBars([assigned], [], [], 'all', now));
-  const after = totals(overview.buildOverviewBars([picked], [], [], 'all', now));
+  const notification = [{ assignmentId: 'same-id', createdAt: '2026-10-16T01:30:00Z' }];
+  const before = totals(overview.buildOverviewBars([assigned], [], [], 'today', now, false, notification));
+  const after = totals(overview.buildOverviewBars([picked], [], [], 'today', now, false, notification));
   assert.equal(before.Assigned, 1);
   assert.equal(after.Assigned, 0);
   assert.equal(after['Picked Up'], 1);
-  const cancelled = totals(overview.buildOverviewBars([picked], [], [{ ...assigned, taskStatus: 'Cancelled' }], 'all', now));
+  const cancellation = [{ assignmentId: 'same-id', timestamp: '2026-10-16T02:00:00Z' }];
+  const cancelled = totals(overview.buildOverviewBars([picked], [], [{ ...assigned, taskStatus: 'Cancelled' }], 'today', now, false, notification, cancellation));
   assert.equal(cancelled['Picked Up'], 0);
   assert.equal(cancelled.Cancelled, 1);
   assert.equal(Object.values(cancelled).reduce((sum, count) => sum + count, 0), 1);
 });
 
-test('records without trustworthy creation time appear only in All Time', () => {
+test('records without trustworthy activity time appear only in All Time', () => {
   const active = [record('no-date', 'Picked Up', undefined)];
   assert.equal(totals(overview.buildOverviewBars(active, [], [], 'today', now))['Picked Up'], 0);
   assert.equal(totals(overview.buildOverviewBars(active, [], [], 'all', now))['Picked Up'], 1);
+});
+
+test('status photo evidence can date a workflow change when its notification is missing', () => {
+  const active = [{
+    ...record('picked', 'Picked Up', '2026-10-15T01:00:00Z'),
+    statusPhotos: { 'Picked Up': { timestamp: 'Oct 16, 2026, 09:21 AM' } },
+  }];
+  assert.equal(totals(overview.buildOverviewBars(active, [], [], 'today', now))['Picked Up'], 1);
+});
+
+test('later document activity moves a delivered assignment into the selected day only once', () => {
+  const active = [record('review', 'Delivered', '2026-10-14T01:00:00Z', docs('pending'))];
+  const notifications = [{ assignmentId: 'review', createdAt: '2026-10-16T02:00:00Z' }];
+  const counts = totals(overview.buildOverviewBars(active, [], [], 'today', now, false, notifications));
+  assert.equal(counts['Under Review'], 1);
+  assert.equal(Object.values(counts).reduce((sum, count) => sum + count, 0), 1);
+});
+
+test('the newest activity determines the week, month, and year bucket', () => {
+  const active = [record('old', 'In Transit', '2025-12-01T01:00:00Z')];
+  const notifications = [{ assignmentId: 'old', createdAt: '2026-10-16T01:00:00Z' }];
+  for (const period of ['week', 'month', 'year']) {
+    assert.equal(totals(overview.buildOverviewBars(active, [], [], period, now, false, notifications))['In Transit'], 1);
+  }
 });
 
 test('today uses Manila calendar boundaries for all statuses', () => {

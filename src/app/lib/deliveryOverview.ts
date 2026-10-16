@@ -1,9 +1,10 @@
-import type { Assignment, CompletedTask } from '../data/assignmentTypes';
+import type { Assignment, CompletedTask, AppNotification, AdminActivityEntry } from '../data/assignmentTypes';
 import {
   ASSIGNMENT_DISPLAY_STATUSES, getAssignmentDisplayStatus,
   type AssignmentDisplayStatus,
 } from './assignmentWorkflow';
 import { creationTime } from './recordOrdering';
+import { statusPhotoTimestamp } from './assignmentTiming';
 
 export type OverviewPeriod = 'today' | 'week' | 'month' | 'year' | 'all';
 export type OverviewCounts = Record<AssignmentDisplayStatus, number>;
@@ -13,7 +14,7 @@ const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 type ManilaParts = { year: number; month: number; day: number; hour: number };
-type OverviewItem = { id: string; createdAt: number | null; status: AssignmentDisplayStatus };
+type OverviewItem = { id: string; activityAt: number | null; status: AssignmentDisplayStatus };
 type DatedItem = { date: ManilaParts; status: AssignmentDisplayStatus };
 
 const manilaFormatter = new Intl.DateTimeFormat('en-US', {
@@ -34,37 +35,56 @@ export const emptyOverviewCounts = (): OverviewCounts =>
 const makeBar = (key: string, label: string, detail: string, title: string): OverviewBar =>
   ({ key, label, detail, title, counts: emptyOverviewCounts() });
 
+/** Server event times retain the year and offset. Display-only timestamps do not. */
+function eventTime(value?: string): number | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}.*(?:Z|[+-]\d{2}:?\d{2})$/i.test(value)) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 /** One current status per assignment ID, using the same workflow calculation as
- * Dispatch and Deliveries. The cancelled archive wins if arrays briefly overlap. */
+ * Dispatch and Deliveries. The cancelled archive wins if arrays briefly overlap.
+ * The most recent known assignment activity determines its date bucket. */
 export function getOverviewItems(
   assignments: readonly Assignment[], completed: readonly CompletedTask[], cancelled: readonly Assignment[],
+  notifications: readonly AppNotification[] = [], activityLog: readonly AdminActivityEntry[] = [],
 ): OverviewItem[] {
   const byId = new Map<string, OverviewItem>();
+  const add = (record: Assignment, status: AssignmentDisplayStatus) => {
+    const evidenceTimes = Object.values(record.statusPhotos ?? {})
+      .map(photo => statusPhotoTimestamp(photo.timestamp))
+      .filter((time): time is number => time !== null);
+    const times = [creationTime(record.createdAt, record.id), ...evidenceTimes].filter((time): time is number => time !== null);
+    byId.set(record.id, { id: record.id, activityAt: times.length ? Math.max(...times) : null, status });
+  };
   for (const record of [...completed, ...assignments]) {
-    byId.set(record.id, {
-      id: record.id,
-      createdAt: creationTime(record.createdAt, record.id),
-      status: getAssignmentDisplayStatus(record),
-    });
+    add(record, getAssignmentDisplayStatus(record));
   }
   for (const record of cancelled) {
-    byId.set(record.id, {
-      id: record.id,
-      createdAt: creationTime(record.createdAt, record.id),
-      status: 'Cancelled',
-    });
+    add(record, 'Cancelled');
+  }
+  const noteActivity = (id: string | undefined, time: number | null) => {
+    const item = id ? byId.get(id) : undefined;
+    if (item && time !== null) item.activityAt = Math.max(item.activityAt ?? time, time);
+  };
+  for (const notification of notifications) {
+    noteActivity(notification.assignmentId, eventTime(notification.createdAt));
+  }
+  for (const entry of activityLog) {
+    noteActivity(entry.assignmentId, eventTime(entry.timestamp));
   }
   return [...byId.values()];
 }
 
-/** The selected period is based on assignment creation time, as in Deliveries.
+/** The selected period is based on the latest known assignment activity.
  * Each record is grouped once by its CURRENT workflow status, not by transitions.
  * Calendar buckets use Manila time, matching the previous chart behaviour. */
 export function buildOverviewBars(
   assignments: readonly Assignment[], completed: readonly CompletedTask[], cancelled: readonly Assignment[],
   period: OverviewPeriod, now = new Date(), compactMonth = false,
+  notifications: readonly AppNotification[] = [], activityLog: readonly AdminActivityEntry[] = [],
 ): OverviewBar[] {
-  const items = getOverviewItems(assignments, completed, cancelled);
+  const items = getOverviewItems(assignments, completed, cancelled, notifications, activityLog);
   if (period === 'all') {
     const bar = makeBar('all', 'All', 'time', 'All time');
     items.forEach(item => { bar.counts[item.status] += 1; });
@@ -72,8 +92,8 @@ export function buildOverviewBars(
   }
 
   const current = manilaParts(now);
-  const dated: DatedItem[] = items.flatMap(item => item.createdAt === null ? [] : [{
-    date: manilaParts(new Date(item.createdAt)), status: item.status,
+  const dated: DatedItem[] = items.flatMap(item => item.activityAt === null ? [] : [{
+    date: manilaParts(new Date(item.activityAt)), status: item.status,
   }]);
 
   let bars: OverviewBar[];
