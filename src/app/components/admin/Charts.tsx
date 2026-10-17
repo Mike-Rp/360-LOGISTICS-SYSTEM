@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import type { Assignment, CompletedTask, AppNotification } from '../../data/assignmentTypes';
 import { parseStoredTimestamp } from '../../data/assignmentTypes';
+import { getAssignmentRoute } from '../../data/assignmentRoute';
 
 /* Placeholder Mon–Sun breakdown — not yet computed from real assignment data. */
 const weeklyDeliveryData = [
@@ -157,7 +158,7 @@ function buildFleetEvents(
       iconCls: 'bg-green-100 text-green-600',
       driverName: c.driverName,
       truckPlate: c.truckPlate,
-      description: `Delivery completed — ${c.destination}`,
+      description: `Delivery completed — ${getAssignmentRoute(c)}`,
       timestamp: c.completedAt!,
     }));
 

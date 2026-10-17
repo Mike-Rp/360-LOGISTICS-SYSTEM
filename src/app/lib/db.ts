@@ -17,6 +17,7 @@
 
 import { supabase } from './supabaseClient';
 import { DOCUMENT_TYPES } from '../data/assignmentTypes';
+import { destinationAreaEnabled } from '../data/assignmentRoute';
 import type {
   Assignment, AssignmentDoc, CompletedTask, LocalDriver, LocalTruck, AppNotification,
   AdminActivityEntry, AdminRole, StatusPhoto, DelayReport, TeamMember,
@@ -210,7 +211,7 @@ function assignmentFromRow(r: Row, docs: Row[], photos: Row[], delays: Row[]): A
   return {
     id: r.id, driverName: r.driver_name ?? '', driverId: r.driver_id ?? '',
     truckPlate: r.truck_plate ?? '', truckId: r.truck_id ?? '',
-    destination: r.destination ?? '', company: r.company ?? '',
+    destination: r.destination ?? '', destinationArea: r.destination_area ?? null, company: r.company ?? '',
     pickupLocation: r.pickup_location ?? '', pickupTime: r.pickup_time ?? '', pickedUpDate: r.picked_up_date ?? '',
     eta: r.eta ?? '', ata: r.ata ?? '', deliveryDate: r.delivery_date ?? '', remarks: r.remarks ?? '',
     taskStatus: r.task_status, assignedAt: r.assigned_at ?? '',
@@ -375,7 +376,9 @@ function flatten(d: AdminData): Flat {
       driver_id: driverIds.has(a.driverId) ? a.driverId : null,
       driver_name: a.driverName ?? '',
       truck_id: truckIds.has(a.truckId) ? a.truckId : null,
-      truck_plate: a.truckPlate ?? '', destination: a.destination ?? '', company: a.company ?? '',
+      truck_plate: a.truckPlate ?? '', destination: a.destination ?? '',
+      ...(destinationAreaEnabled ? { destination_area: a.destinationArea ?? null } : {}),
+      company: a.company ?? '',
       pickup_location: a.pickupLocation ?? '', pickup_time: a.pickupTime ?? '', picked_up_date: a.pickedUpDate ?? '',
       eta: a.eta ?? '', ata: a.ata ?? '', delivery_date: a.deliveryDate ?? '', remarks: a.remarks ?? '',
       task_status: a.taskStatus, assigned_at: a.assignedAt ?? '',
@@ -608,11 +611,12 @@ export async function verifyOwnPassword(password: string): Promise<void> {
 
 /* Editable fields, in the stored (display) formats the rest of the app uses */
 export interface AssignmentEdit {
-  driverId?: string; truckId?: string; destination?: string; company?: string; pickupLocation?: string;
+  driverId?: string; truckId?: string; destination?: string; destinationArea?: string; company?: string; pickupLocation?: string;
   pickupTime?: string; pickedUpDate?: string; eta?: string; deliveryDate?: string; remarks?: string;
 }
 const EDIT_COLUMNS: Record<keyof AssignmentEdit, string> = {
-  driverId: 'driver_id', truckId: 'truck_id', destination: 'destination', company: 'company',
+  driverId: 'driver_id', truckId: 'truck_id', destination: 'destination',
+  destinationArea: 'destination_area', company: 'company',
   pickupLocation: 'pickup_location', pickupTime: 'pickup_time', pickedUpDate: 'picked_up_date',
   eta: 'eta', deliveryDate: 'delivery_date', remarks: 'remarks',
 };
@@ -711,7 +715,7 @@ export async function removeTeamMember(id: string): Promise<void> {
 export interface DriverViewData {
   driver: { id: string; name: string; phone: string; status: string; currentLocation: string };
   assignment: Assignment | null;
-  completedHistory: Array<{ id: string; destination: string; company: string; deliveryDate: string; completedAt: string; truckPlate: string; taskStatus: string }>;
+  completedHistory: Array<{ id: string; destination: string; destinationArea?: string | null; company: string; deliveryDate: string; completedAt: string; truckPlate: string; taskStatus: string }>;
 }
 
 /* The driver's active job (or the latest finished one, so documents can still be uploaded)
@@ -747,7 +751,8 @@ export async function loadDriverData(driverId: string): Promise<DriverViewData> 
   const completedHistory = rows.filter((r) => r.state === 'completed')
     .sort((a, b) => (b.completed_at ?? '').localeCompare(a.completed_at ?? ''))
     .map((r) => ({
-      id: r.id, destination: r.destination, company: r.company, deliveryDate: r.delivery_date,
+      id: r.id, destination: r.destination, destinationArea: r.destination_area ?? null,
+      company: r.company, deliveryDate: r.delivery_date,
       completedAt: r.completed_at ?? '', truckPlate: r.truck_plate, taskStatus: r.task_status,
     }));
 

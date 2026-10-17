@@ -64,6 +64,8 @@ export interface Assignment {
   truckPlate: string;
   truckId: string;
   destination: string;
+  /** General destination area; null for assignments created before this field existed. */
+  destinationArea?: string | null;
   company: string;
   pickupLocation: string;
   pickupTime: string;

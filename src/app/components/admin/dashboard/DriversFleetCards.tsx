@@ -10,7 +10,7 @@ interface Props {
   onViewAll: () => void;      // → Accounts (driver and truck management)
 }
 
-const DRIVER_ROWS = 4;
+const DRIVER_ROWS = 8;
 const TRUCK_ROWS  = 6;
 
 const initials = (name: string) =>
@@ -39,25 +39,25 @@ export default function DriversFleetCards({ drivers, trucks, assignments, onView
     <div className="contents">
 
       {/* ── Available Drivers ── */}
-      <div className="bg-white rounded-2xl border border-border shadow-sm p-5 sm:p-6 min-w-0">
-        <div className="flex items-start justify-between gap-4">
+      <div className="@container self-start bg-white rounded-2xl border border-border shadow-sm p-5 sm:p-6 min-w-0">
+        <div className="flex items-center justify-between gap-3">
           <h3 className="text-lg font-semibold text-foreground leading-tight">Available Drivers</h3>
           <ViewAll onClick={onViewAll} />
         </div>
-        <p className="mt-3 text-sm text-muted-foreground">
-          <span className="text-2xl font-semibold text-foreground mr-1.5">{availableDrivers.length}</span>
-          of {drivers.length} driver{drivers.length !== 1 ? 's' : ''} available
-        </p>
+        <div className="mt-3 flex items-baseline gap-2.5">
+          <span className="text-3xl font-semibold leading-none text-foreground tabular-nums">{availableDrivers.length}</span>
+          <span className="text-sm text-muted-foreground">of {drivers.length} driver{drivers.length !== 1 ? 's' : ''} available</span>
+        </div>
 
         {availableDrivers.length === 0 ? (
           <p className="mt-4 text-sm text-muted-foreground">
             {drivers.length === 0 ? 'No drivers registered yet.' : 'All drivers are on a delivery.'}
           </p>
         ) : (
-          <ul className="mt-4 space-y-3">
+          <ul className="mt-4 grid grid-cols-1 @md:grid-cols-2 gap-2.5">
             {availableDrivers.slice(0, DRIVER_ROWS).map((d) => (
-              <li key={d.id} className="flex items-center gap-3 min-w-0">
-                <div className="w-10 h-10 rounded-full bg-[#0d9488] text-white text-xs font-semibold flex items-center justify-center flex-shrink-0">
+              <li key={d.id} className="flex items-center gap-2.5 rounded-xl border border-border/60 bg-gray-50 px-3 py-2 min-w-0">
+                <div className="w-9 h-9 rounded-full bg-[#0d9488] text-white text-xs font-semibold flex items-center justify-center flex-shrink-0">
                   {initials(d.name)}
                 </div>
                 <div className="flex-1 min-w-0">
@@ -65,15 +65,12 @@ export default function DriversFleetCards({ drivers, trucks, assignments, onView
                   <p className="text-xs text-muted-foreground truncate">{d.phone}</p>
                 </div>
                 {d.shift && (
-                  <span className="text-xs font-medium text-[#0d9488] bg-[#0d9488]/10 rounded-md px-2 py-0.5 whitespace-nowrap flex-shrink-0">
+                  <span className="max-w-20 truncate text-xs font-medium text-[#0d9488] bg-[#0d9488]/10 rounded-md px-2 py-0.5 flex-shrink-0">
                     {d.shift}
                   </span>
                 )}
               </li>
             ))}
-            {availableDrivers.length > DRIVER_ROWS && (
-              <li className="text-xs text-muted-foreground">+{availableDrivers.length - DRIVER_ROWS} more</li>
-            )}
           </ul>
         )}
       </div>

@@ -8,6 +8,7 @@ import {
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { Assignment, CompletedTask, TaskStatus } from '../../data/assignmentTypes';
 import { parseStoredTimestamp } from '../../data/assignmentTypes';
+import { getAssignmentRoute } from '../../data/assignmentRoute';
 import { PaginationFooter, usePagination } from './Pagination';
 
 const REPORT_PAGE_SIZE = 8;
@@ -50,7 +51,7 @@ function buildWeeklyRows(assignments: Assignment[], completed: CompletedTask[]):
     rows.push({
       date: c.completedAt ? fmtDate(c.completedAt) : c.deliveryDate,
       driver: c.driverName, truck: c.truckPlate,
-      route: `${c.pickupLocation ?? '—'} → ${c.destination}`,
+      route: getAssignmentRoute(c),
       client: c.company,
       pickupTime: c.pickupTime || '—', eta: c.eta || '—', ata: c.ata || '—',
       status: isDelayed ? 'Delayed' : 'Completed',
@@ -67,7 +68,7 @@ function buildWeeklyRows(assignments: Assignment[], completed: CompletedTask[]):
     rows.push({
       date: a.deliveryDate,
       driver: a.driverName, truck: a.truckPlate,
-      route: `${a.pickupLocation ?? '—'} → ${a.destination}`,
+      route: getAssignmentRoute(a),
       client: a.company,
       pickupTime: a.pickupTime || '—', eta: a.eta || '—', ata: a.ata || '—',
       status: isDelayed ? 'Delayed' : (statusMap[a.taskStatus] ?? 'Assigned'),
@@ -87,7 +88,7 @@ function buildDelayRows(assignments: Assignment[], completed: CompletedTask[]): 
       rows.push({
         date: dr.reportedAt ? fmtDate(dr.reportedAt) : a.deliveryDate,
         driver: a.driverName, truck: a.truckPlate,
-        route: `${(a as Assignment).pickupLocation ?? '—'} → ${a.destination}`,
+        route: getAssignmentRoute(a),
         client: a.company,
         scheduledTime: dr.type === 'pickup' ? (a.pickupTime || '—') : (a.ata || '—'),
         reportedAt: dr.reportedAt ? fmtTime(dr.reportedAt) : '—',

@@ -22,6 +22,7 @@ import { PaginationFooter, usePagination, useStablePageHeight } from './Paginati
 import { sortNewestFirst, markLocalRecordAdded, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
 import { ADMIN_NAVIGATION_EVENT, adminHref, followAdminLink, pushAdminNavigation } from '../../lib/adminNavigation';
 import { TRUCK_CLASSIFICATIONS, truckSideImageFor, capacityKgOnly } from '../../data/truckTypes';
+import { destinationAreaEnabled, getAssignmentRoute, getDeliveryLocation } from '../../data/assignmentRoute';
 import {
   verifyOwnPassword, editAssignment, cancelAssignment, AssignmentActionError,
   type AssignmentActionErrorCode, type AssignmentEdit,
@@ -742,7 +743,7 @@ function DetailRow({ icon, label, value, hero = false }: {
   );
 }
 
-/* Origin → destination, split on the arrow stored in `destination` */
+/* Origin → destination area, with the saved legacy route as fallback. */
 function RouteRow({ route }: { route: string }) {
   const [from, to] = route.split('→').map((s) => s.trim());
   return (
@@ -983,9 +984,11 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
 
           {/* Route & Client */}
           <DetailCard title="Route & Client">
-            <RouteRow route={assignment.destination} />
+            <RouteRow route={getAssignmentRoute(assignment)} />
             <DetailRow icon={<Building2 className="w-4 h-4" />} label="Client" value={assignment.company} />
             <DetailRow icon={<MapPin className="w-4 h-4" />}    label="Pickup Location" value={assignment.pickupLocation} />
+            {destinationAreaEnabled && <DetailRow icon={<Navigation className="w-4 h-4" />} label="Destination" value={assignment.destinationArea || '—'} />}
+            <DetailRow icon={<MapPin className="w-4 h-4" />} label="Delivery Location" value={getDeliveryLocation(assignment)} />
           </DetailCard>
 
           {/* Schedule */}
@@ -1302,7 +1305,7 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose
 
   const [f, setF] = useState({
     driverId: original?.driverId ?? '', truckId: original?.truckId ?? '',
-    from: routeFrom ?? '', to: routeTo ?? '',
+    from: routeFrom ?? '', to: routeTo ?? '', destinationArea: original?.destinationArea ?? '',
     company: original?.company ?? '', pickupLocation: original?.pickupLocation ?? '',
     pickup: displayToIso(original?.pickedUpDate ?? ''), delivery: displayToIso(original?.deliveryDate ?? ''),
     pickupTime: displayToTime24(original?.pickupTime ?? ''), eta: displayToTime24(original?.eta ?? ''),
@@ -1359,7 +1362,8 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose
     if (!f.driverId)              e.driver         = 'Select a driver.';
     if (!f.truckId)               e.truck          = 'Select a truck.';
     if (!f.from.trim())           e.from           = 'Enter an origin.';
-    if (!f.to.trim())             e.to             = 'Enter a destination.';
+    if (!f.to.trim())             e.to             = 'Enter a delivery location.';
+    if (destinationAreaEnabled && original.destinationArea && !f.destinationArea.trim()) e.destinationArea = 'Enter a destination.';
     if (!f.company.trim())        e.company        = 'Enter a client name.';
     if (!f.pickupLocation.trim()) e.pickupLocation = 'Enter a pickup location.';
     Object.assign(e, scheduleErrors({
@@ -1377,6 +1381,7 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose
     const next: Required<AssignmentEdit> = {
       driverId: f.driverId, truckId: f.truckId,
       destination: `${f.from.trim()} → ${f.to.trim()}`,
+      destinationArea: f.destinationArea.trim(),
       company: f.company.trim(), pickupLocation: f.pickupLocation.trim(),
       pickupTime: time24ToDisplay(f.pickupTime), pickedUpDate: isoToDisplay(f.pickup),
       eta: time24ToDisplay(f.eta), deliveryDate: isoToDisplay(f.delivery),
@@ -1384,6 +1389,7 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose
     };
     const before: Required<AssignmentEdit> = {
       driverId: base.driverId, truckId: base.truckId, destination: base.destination,
+      destinationArea: base.destinationArea ?? '',
       company: base.company, pickupLocation: base.pickupLocation,
       pickupTime: base.pickupTime, pickedUpDate: base.pickedUpDate,
       eta: base.eta, deliveryDate: base.deliveryDate, remarks: base.remarks,
@@ -1470,21 +1476,36 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose
             </div>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <FieldLabel required>From</FieldLabel>
-              <LocationInput value={f.from} onChange={(v) => set('from', v)}
-                placeholder="e.g. Origin city or municipality" hasError={!!errors.from}
-                icon={<MapPin className="w-3.5 h-3.5" />} />
-              {errText('from')}
-            </div>
-            <div>
-              <FieldLabel required>To</FieldLabel>
-              <LocationInput value={f.to} onChange={(v) => set('to', v)}
-                placeholder="e.g. Destination city or municipality" hasError={!!errors.to}
-                icon={<Navigation className="w-3.5 h-3.5" />} />
-              {errText('to')}
-            </div>
+          <div>
+            <FieldLabel required>Origin</FieldLabel>
+            <LocationInput value={f.from} onChange={(v) => set('from', v)}
+              placeholder="City or area of origin" hasError={!!errors.from}
+              icon={<MapPin className="w-3.5 h-3.5" />} />
+            {errText('from')}
+          </div>
+
+          <div>
+            <FieldLabel required>Pickup Location</FieldLabel>
+            <LocationInput value={f.pickupLocation} onChange={(v) => set('pickupLocation', v)}
+              placeholder="Warehouse or pickup point"
+              hasError={!!errors.pickupLocation} icon={<Package className="w-3.5 h-3.5" />} />
+            {errText('pickupLocation')}
+          </div>
+
+          {destinationAreaEnabled && <div>
+            <FieldLabel required={!!original.destinationArea}>Destination</FieldLabel>
+            <LocationInput value={f.destinationArea} onChange={(v) => set('destinationArea', v)}
+              placeholder="City or area of destination" hasError={!!errors.destinationArea}
+              icon={<Navigation className="w-3.5 h-3.5" />} />
+            {errText('destinationArea')}
+          </div>}
+
+          <div>
+            <FieldLabel required>Delivery Location</FieldLabel>
+            <LocationInput value={f.to} onChange={(v) => set('to', v)}
+              placeholder="Exact delivery point" hasError={!!errors.to}
+              icon={<MapPin className="w-3.5 h-3.5" />} />
+            {errText('to')}
           </div>
 
           <div>
@@ -1492,19 +1513,12 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose
             <div className="relative">
               <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
               <input type="text" value={f.company} onChange={(e) => set('company', e.target.value)}
-                placeholder="e.g. ABC Retail Corp"
+                placeholder="Client or company name"
                 className={`${fieldBase} ${fieldTone(!!errors.company)} pl-9`} />
             </div>
             {errText('company')}
           </div>
 
-          <div>
-            <FieldLabel required>Pickup Location</FieldLabel>
-            <LocationInput value={f.pickupLocation} onChange={(v) => set('pickupLocation', v)}
-              placeholder="e.g. Warehouse A, Valenzuela City"
-              hasError={!!errors.pickupLocation} icon={<Package className="w-3.5 h-3.5" />} />
-            {errText('pickupLocation')}
-          </div>
         </div>
 
         <div className="mt-7">
@@ -1724,6 +1738,7 @@ export default function DriversManagement({
   const [taskTruckId,     setTaskTruckId]     = useState('');
   const [taskFrom,        setTaskFrom]        = useState('');
   const [taskTo,          setTaskTo]          = useState('');
+  const [taskDestinationArea, setTaskDestinationArea] = useState('');
   const [taskCompany,     setTaskCompany]     = useState('');
   /* Dates as "YYYY-MM-DD" — the value the native date input uses */
   const [taskDate,        setTaskDate]        = useState('');
@@ -1746,7 +1761,7 @@ export default function DriversManagement({
 
   const resetAssignTask = () => {
     setShowAssignTask(false); setTaskStep(1); setTaskDriverId(''); setTaskTruckId('');
-    setTaskFrom(''); setTaskTo('');
+    setTaskFrom(''); setTaskTo(''); setTaskDestinationArea('');
     setTaskCompany(''); setTaskDate(''); setTaskPickedUpDate(''); setTaskRemarks('');
     setTaskPickupLocation(''); setTaskPickupTime(''); setTaskEta('');
     setTaskErrors({}); setTaskBadDates({ pickup: false, delivery: false });
@@ -1768,6 +1783,7 @@ export default function DriversManagement({
     if (!taskDriverId)              e.driver         = 'Select a driver.';
     if (!taskTruckId)               e.truck          = 'Select a truck.';
     if (!taskFrom.trim())           e.from           = 'Enter an origin.';
+    if (destinationAreaEnabled && !taskDestinationArea.trim()) e.destinationArea = 'Enter a destination.';
     if (!taskTo.trim())             e.to             = 'Enter a delivery location.';
     if (!taskCompany.trim())        e.company        = 'Enter a client name.';
     if (!taskPickupLocation.trim()) e.pickupLocation = 'Enter a pickup location.';
@@ -1798,6 +1814,7 @@ export default function DriversManagement({
       driverName: driver.name, driverId: driver.id,
       truckPlate: truck.plateNumber, truckId: truck.id,
       destination:     `${taskFrom.trim()} → ${taskTo.trim()}`,
+      ...(destinationAreaEnabled ? { destinationArea: taskDestinationArea.trim() } : {}),
       company:         taskCompany.trim(),
       pickupLocation:  taskPickupLocation.trim(),
       pickupTime:      time24ToDisplay(taskPickupTime),
@@ -1820,7 +1837,7 @@ export default function DriversManagement({
       driverName: driver.name,
       truckPlate: truck.plateNumber,
       assignmentId: newAssignId,
-      destination: `${taskFrom.trim()} → ${taskTo.trim()}`,
+      destination: `${taskFrom.trim()} → ${destinationAreaEnabled ? taskDestinationArea.trim() : taskTo.trim()}`,
       company: taskCompany.trim(),
     });
     resetAssignTask();
@@ -1939,7 +1956,7 @@ export default function DriversManagement({
     : reviewAssignments;
   const visibleAssignments = sortNewestFirst(sq
     ? matchingClassifications.filter((a) =>
-        [a.truckPlate, a.id, a.driverName, a.destination, a.company, a.taskStatus].some((f) =>
+        [a.truckPlate, a.id, a.driverName, a.destination, a.destinationArea ?? '', a.company, a.taskStatus].some((f) =>
           f.toLowerCase().includes(sq)
         )
       )
@@ -2054,7 +2071,7 @@ export default function DriversManagement({
                               </div>
                             </td>
                             <td className="px-2 py-3 align-top text-foreground [overflow-wrap:anywhere]">{c.driverName}</td>
-                            <td className="px-2 py-3 align-top text-foreground [overflow-wrap:anywhere]">{c.destination}</td>
+                            <td className="px-2 py-3 align-top text-foreground [overflow-wrap:anywhere]">{getAssignmentRoute(c)}</td>
                             <td className="px-2 py-3 align-top text-foreground [overflow-wrap:anywhere]">{c.company}</td>
                             <td className="px-2 py-3 align-top text-foreground [overflow-wrap:anywhere]">{c.deliveryDate}</td>
                             <td className="px-2 py-3 align-top [overflow-wrap:anywhere]">
@@ -2070,7 +2087,7 @@ export default function DriversManagement({
                           <span className="text-xs font-semibold text-muted-foreground">TRUCK #</span>
                           <span className="inline-flex min-w-0 items-start gap-2 text-[#0d9488]"><Truck className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span className="min-w-0"><span className="font-semibold">{c.truckPlate}</span><span className="block text-xs text-muted-foreground"><ASNWithCopy value={c.id} />{trucks.find((t) => t.id === c.truckId)?.classification && ` · ${trucks.find((t) => t.id === c.truckId)?.classification}`}</span></span></span>
                           <span className="text-xs font-semibold text-muted-foreground">DRIVER</span><span className="min-w-0 text-foreground">{c.driverName}</span>
-                          <span className="text-xs font-semibold text-muted-foreground">ROUTE</span><span className="min-w-0 text-foreground">{c.destination}</span>
+                          <span className="text-xs font-semibold text-muted-foreground">ROUTE</span><span className="min-w-0 text-foreground">{getAssignmentRoute(c)}</span>
                           <span className="text-xs font-semibold text-muted-foreground">CUSTOMER</span><span className="min-w-0 text-foreground">{c.company}</span>
                           <span className="text-xs font-semibold text-muted-foreground">DELIVERY DATE</span><span className="min-w-0 text-foreground">{c.deliveryDate}</span>
                           <span className="text-xs font-semibold text-muted-foreground">COMPLETED AT</span>
@@ -2205,7 +2222,7 @@ export default function DriversManagement({
                     <div className="grid grid-cols-1 gap-3 pt-3 sm:grid-cols-2 sm:gap-0">
                       <div className="min-w-0">
                         <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Route</p>
-                        <p className="mt-0.5 text-sm text-foreground [overflow-wrap:anywhere]"><Highlight text={a.destination} query={search} /></p>
+                        <p className="mt-0.5 text-sm text-foreground [overflow-wrap:anywhere]"><Highlight text={getAssignmentRoute(a)} query={search} /></p>
                       </div>
                       <div className="min-w-0 sm:border-l sm:border-border sm:pl-4">
                         <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Delivery date</p>
@@ -2340,18 +2357,40 @@ export default function DriversManagement({
                     <LocationInput
                       value={taskFrom}
                       onChange={(v) => { setTaskFrom(v); setTaskErrors((p) => ({ ...p, from: '' })); }}
-                      placeholder="e.g. Cabuyao Bayan"
+                      placeholder="City or area of origin"
                       hasError={!!taskErrors.from}
                       icon={<MapPin className="w-3.5 h-3.5" />}
                     />
                     {taskErrors.from && <p className="text-xs text-red-500 mt-1">{taskErrors.from}</p>}
                   </div>
                   <div>
+                    <FieldLabel required>Pickup Location</FieldLabel>
+                    <LocationInput
+                      value={taskPickupLocation}
+                      onChange={(v) => { setTaskPickupLocation(v); setTaskErrors((p) => ({ ...p, pickupLocation: '' })); }}
+                      placeholder="Warehouse or pickup point"
+                      hasError={!!taskErrors.pickupLocation}
+                      icon={<Package className="w-3.5 h-3.5" />}
+                    />
+                    {taskErrors.pickupLocation && <p className="text-xs text-red-500 mt-1">{taskErrors.pickupLocation}</p>}
+                  </div>
+                  {destinationAreaEnabled && <div>
+                    <FieldLabel required>Destination</FieldLabel>
+                    <LocationInput
+                      value={taskDestinationArea}
+                      onChange={(v) => { setTaskDestinationArea(v); setTaskErrors((p) => ({ ...p, destinationArea: '' })); }}
+                      placeholder="City or area of destination"
+                      hasError={!!taskErrors.destinationArea}
+                      icon={<Navigation className="w-3.5 h-3.5" />}
+                    />
+                    {taskErrors.destinationArea && <p className="text-xs text-red-500 mt-1">{taskErrors.destinationArea}</p>}
+                  </div>}
+                  <div>
                     <FieldLabel required>Delivery Location</FieldLabel>
                     <LocationInput
                       value={taskTo}
                       onChange={(v) => { setTaskTo(v); setTaskErrors((p) => ({ ...p, to: '' })); }}
-                      placeholder="e.g. Vista Mall Makati, Chino Roces Ave., Makati City"
+                      placeholder="Exact delivery point"
                       hasError={!!taskErrors.to}
                       icon={<Navigation className="w-3.5 h-3.5" />}
                     />
@@ -2366,24 +2405,11 @@ export default function DriversManagement({
                     <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
                     <input type="text" value={taskCompany}
                       onChange={(e) => { setTaskCompany(e.target.value); setTaskErrors((p) => ({ ...p, company: '' })); }}
-                      placeholder="e.g. Vista Mall"
+                      placeholder="Client or company name"
                       className={`${fieldBase} ${fieldTone(!!taskErrors.company)} pl-9`}
                     />
                   </div>
                   {taskErrors.company && <p className="text-xs text-red-500 mt-1">{taskErrors.company}</p>}
-                </div>
-
-                {/* Pickup Location */}
-                <div>
-                  <FieldLabel required>Pickup Location</FieldLabel>
-                  <LocationInput
-                    value={taskPickupLocation}
-                    onChange={(v) => { setTaskPickupLocation(v); setTaskErrors((p) => ({ ...p, pickupLocation: '' })); }}
-                    placeholder="e.g. Cabuyao Bayan Warehouse"
-                    hasError={!!taskErrors.pickupLocation}
-                    icon={<Package className="w-3.5 h-3.5" />}
-                  />
-                  {taskErrors.pickupLocation && <p className="text-xs text-red-500 mt-1">{taskErrors.pickupLocation}</p>}
                 </div>
               </div>
 

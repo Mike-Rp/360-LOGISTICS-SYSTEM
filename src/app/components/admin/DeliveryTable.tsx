@@ -11,6 +11,7 @@ import { getDeliveryTimingStatus } from '../../lib/assignmentTiming';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
 import { sortNewestFirst, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
 import { capacityKgOnly } from '../../data/truckTypes';
+import { getAssignmentRoute } from '../../data/assignmentRoute';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 
 type FilterPeriod = 'all' | 'today' | 'month' | 'year';
@@ -143,12 +144,12 @@ function RecentActivities({ assignments, completed }: { assignments: Assignment[
   const all: Array<{ key: string; truckPlate: string; driverName: string; destination: string; company: string; status: TaskStatus; date: string; isCompleted: boolean }> = [
     ...assignments.map((a) => ({
       key: a.id, truckPlate: a.truckPlate, driverName: a.driverName,
-      destination: a.destination, company: a.company, status: a.taskStatus,
+      destination: getAssignmentRoute(a), company: a.company, status: a.taskStatus,
       date: a.assignedAt, isCompleted: false,
     })),
     ...completed.map((c) => ({
       key: c.id + '-done', truckPlate: c.truckPlate, driverName: c.driverName,
-      destination: c.destination, company: c.company, status: 'Delivered' as TaskStatus,
+      destination: getAssignmentRoute(c), company: c.company, status: 'Delivered' as TaskStatus,
       date: c.completedAt, isCompleted: true,
     })),
   ].slice(0, 6);
@@ -231,16 +232,16 @@ export default function DeliveryTable({
   const filteredActive = sortNewestFirst(allAssignments
     .filter((a) => a.taskStatus !== 'Cancelled' && getAssignmentDisplayStatus(a) !== 'Completed')
     .filter((a) => matchesPeriod(a, period))
-    .filter((a) => matchesSearch([a.truckPlate, a.id, a.driverName, a.destination, a.company, a.taskStatus])), (assignment) => assignment.id);
+    .filter((a) => matchesSearch([a.truckPlate, a.id, a.driverName, a.destination, a.destinationArea ?? '', a.company, a.taskStatus])), (assignment) => assignment.id);
 
   const filteredDone = sortNewestFirst(allAssignments
     .filter((c) => getAssignmentDisplayStatus(c) === 'Completed')
     .filter((c) => matchesPeriod(c, period))
-    .filter((c) => matchesSearch([c.truckPlate, c.id, c.driverName, c.destination, c.company])), (assignment) => assignment.id);
+    .filter((c) => matchesSearch([c.truckPlate, c.id, c.driverName, c.destination, c.destinationArea ?? '', c.company])), (assignment) => assignment.id);
 
   const filteredCancelled = sortNewestFirst(cancelled
     .filter((a) => matchesPeriod(a, period))
-    .filter((a) => matchesSearch([a.truckPlate, a.id, a.driverName, a.destination, a.company, a.taskStatus])), (assignment) => assignment.id);
+    .filter((a) => matchesSearch([a.truckPlate, a.id, a.driverName, a.destination, a.destinationArea ?? '', a.company, a.taskStatus])), (assignment) => assignment.id);
 
   const activePage = usePagination(filteredActive, DELIVERIES_PAGE_SIZE);
   const completedPage = usePagination(filteredDone, DELIVERIES_PAGE_SIZE);
@@ -388,7 +389,7 @@ export default function DeliveryTable({
                         </td>
                         <td className="px-2 py-3 font-semibold text-foreground break-words"><Highlight text={a.driverName} query={search} /></td>
                         <td className="px-2 py-3 min-w-0">
-                          <p className="font-medium break-words text-foreground"><Highlight text={a.destination} query={search} /></p>
+                          <p className="font-medium break-words text-foreground"><Highlight text={getAssignmentRoute(a)} query={search} /></p>
                           {a.pickupLocation && <p className="break-words text-xs text-muted-foreground">Pickup: {a.pickupLocation}</p>}
                           {a.remarks && <RemarksPreview remarks={a.remarks} onOpen={() => setRemarksAssignment(a)} />}
                         </td>
@@ -418,7 +419,7 @@ export default function DeliveryTable({
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-2 min-w-0 text-sm">
                       <p className="min-w-0 font-semibold text-foreground break-all"><Highlight text={a.driverName} query={search} /></p>
                       <div className="min-w-0 text-sm">
-                        <p className="font-medium text-foreground break-all"><Highlight text={a.destination} query={search} /></p>
+                        <p className="font-medium text-foreground break-all"><Highlight text={getAssignmentRoute(a)} query={search} /></p>
                         {a.pickupLocation && <p className="break-words text-xs text-muted-foreground">Pickup: {a.pickupLocation}</p>}
                         {a.remarks && <RemarksPreview remarks={a.remarks} onOpen={() => setRemarksAssignment(a)} />}
                       </div>
@@ -485,7 +486,7 @@ export default function DeliveryTable({
                         </td>
                         <td className="px-2 py-3 font-semibold text-foreground break-all"><Highlight text={c.driverName} query={search} /></td>
                         <td className="px-2 py-3 min-w-0">
-                          <p className="font-medium text-foreground break-all"><Highlight text={c.destination} query={search} /></p>
+                          <p className="font-medium text-foreground break-all"><Highlight text={getAssignmentRoute(c)} query={search} /></p>
                           {c.pickupLocation && <p className="break-words text-xs text-muted-foreground">Pickup: {c.pickupLocation}</p>}
                           {c.remarks && <RemarksPreview remarks={c.remarks} onOpen={() => setRemarksAssignment(c)} />}
                         </td>
@@ -515,7 +516,7 @@ export default function DeliveryTable({
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-2 min-w-0 text-sm">
                       <p className="min-w-0 font-semibold text-foreground break-all"><Highlight text={c.driverName} query={search} /></p>
                       <div className="min-w-0">
-                        <p className="font-medium text-foreground break-all"><Highlight text={c.destination} query={search} /></p>
+                        <p className="font-medium text-foreground break-all"><Highlight text={getAssignmentRoute(c)} query={search} /></p>
                         {c.pickupLocation && <p className="break-words text-xs text-muted-foreground">Pickup: {c.pickupLocation}</p>}
                         {c.remarks && <RemarksPreview remarks={c.remarks} onOpen={() => setRemarksAssignment(c)} />}
                       </div>
@@ -542,7 +543,7 @@ export default function DeliveryTable({
           <DialogHeader className="min-w-0 pr-6 text-left">
             <DialogTitle>Remarks</DialogTitle>
             <DialogDescription className="break-all">
-              {remarksAssignment && <>{remarksAssignment.truckPlate} · {remarksAssignment.destination} · <ASNWithCopy value={remarksAssignment.id} /></>}
+              {remarksAssignment && <>{remarksAssignment.truckPlate} · {getAssignmentRoute(remarksAssignment)} · <ASNWithCopy value={remarksAssignment.id} /></>}
             </DialogDescription>
           </DialogHeader>
           <div className="min-w-0 max-h-[60dvh] overflow-y-auto whitespace-pre-wrap break-all text-sm text-foreground">

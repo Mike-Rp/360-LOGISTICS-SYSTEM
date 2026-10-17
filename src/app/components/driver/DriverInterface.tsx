@@ -11,10 +11,11 @@ import { loadDriverData, loadDriverCompletedDelivery, driverUpdate, uploadImage 
 import { getDeliveryTimingStatus, getPickupTimingStatus, type DeliveryTimingStatus } from '../../lib/assignmentTiming';
 import { assignmentDisplayStatusConfig, getAssignmentDisplayStatus, getAssignmentDocumentProgress, getDocumentAgingState } from '../../lib/assignmentWorkflow';
 import { DriverLanguageProvider, useDriverI18n, type DriverLanguage } from './driverI18n';
+import { destinationAreaEnabled, getAssignmentRoute, getDeliveryLocation } from '../../data/assignmentRoute';
 
 /* ── Types ── */
 interface CompletedHistoryItem {
-  id: string; destination: string; company: string;
+  id: string; destination: string; destinationArea?: string | null; company: string;
   deliveryDate: string; completedAt: string; truckPlate: string; taskStatus: string;
 }
 interface DriverData {
@@ -64,14 +65,6 @@ const REQUIRED_DOCS = [
   'Bill of Lading',
   'Waybill / Delivery Receipt',
 ];
-
-/* `destination` is stored as "From → To" (see DriversManagement.tsx's Assign
-   Task form) — this pulls just the To side for the "Deliver to" summary, so
-   it shows an actual place instead of the client/company name. */
-const deliveryToLocation = (destination: string) => {
-  const parts = destination?.split(' → ');
-  return parts?.length === 2 ? parts[1] : destination;
-};
 
 const PICKUP_DELAY_REASONS   = ['Heavy traffic','Vehicle breakdown','Waiting for cargo','Weather conditions','Driver health issue','Other...'];
 const DELIVERY_DELAY_REASONS = ['Heavy traffic','Wrong address / rerouting','Customer unavailable','Vehicle breakdown','Weather conditions','Other...'];
@@ -777,7 +770,7 @@ function PastDeliveryRow({ item, onOpen }: { item: CompletedHistoryItem; onOpen:
       className="w-full min-w-0 min-h-20 rounded-2xl border border-gray-200 bg-white px-4 py-3 text-left flex items-center justify-between gap-3 active:bg-green-50 focus-visible:outline-2 focus-visible:outline-green-600">
       <span className="min-w-0 flex-1">
         <span className="block font-bold text-foreground break-all">{item.id}</span>
-        <span className="block text-sm text-gray-700 break-words">{item.destination}</span>
+        <span className="block text-sm text-gray-700 break-words">{getAssignmentRoute(item)}</span>
         <span className="block text-sm text-gray-600 break-words">{item.company} · {item.truckPlate}</span>
         <span className="block text-xs text-gray-500 mt-1">{t('history.completedAtShort', { date: manilaStamp(item.completedAt, t('common.notAvailable')) })}</span>
         <span className="inline-block mt-2 text-xs font-bold text-green-700 bg-green-50 border border-green-200 px-2.5 py-1 rounded-full">{t('history.completedCheck')}</span>
@@ -935,7 +928,7 @@ function HistoryDetailsSheet({ driverId, assignmentId, onClose }: { driverId: st
             <p className="text-gray-500 py-8 text-center">{t('history.unavailable')}</p>
           ) : <>
             <div className="text-sm space-y-2 break-words">
-              <p><span className="font-semibold text-gray-500">{t('history.route')} </span>{detail.destination}</p>
+              <p><span className="font-semibold text-gray-500">{t('history.route')} </span>{getAssignmentRoute(detail)}</p>
               <p><span className="font-semibold text-gray-500">{t('history.customer')} </span>{detail.company}</p>
               <p><span className="font-semibold text-gray-500">{t('history.deliveryDate')} </span>{manilaDate(detail.deliveryDate, t('common.notAvailable'))}</p>
               <p><span className="font-semibold text-gray-500">{t('history.completedAt')} </span>{manilaStamp(detail.completedAt, t('common.notAvailable'))}</p>
@@ -1554,7 +1547,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
                   </>}
                   <div>
                     <p className="text-sm font-bold text-gray-400 uppercase tracking-wide">{t(postDelivery ? 'home.deliveredTo' : 'home.deliverTo')}</p>
-                    <p className="text-lg font-bold text-green-700 mt-1 leading-snug break-words [overflow-wrap:anywhere]">{deliveryToLocation(a.destination)}</p>
+                    <p className="text-lg font-bold text-green-700 mt-1 leading-snug break-words [overflow-wrap:anywhere]">{getDeliveryLocation(a)}</p>
                   </div>
                 </div>
                 {/* View task button */}
@@ -1703,7 +1696,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
               </div>
               <div>
                 <p className="text-sm font-bold text-gray-400 uppercase tracking-wide">{t('home.deliverTo')}</p>
-                <p className="text-xl font-bold text-green-700 mt-1 leading-snug">{deliveryToLocation(a.destination)}</p>
+                <p className="text-xl font-bold text-green-700 mt-1 leading-snug">{getDeliveryLocation(a)}</p>
               </div>
             </div>
 
@@ -1773,7 +1766,9 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
               <DetailRow label={t('task.id')} value={a.id} />
               <DetailRow label={t('task.truck')} value={a.truckPlate} />
               <DetailRow label={t('task.pickupLocation')} value={a.pickupLocation} />
-              <DetailRow label={t('task.cargo')} value={a.destination} />
+              <DetailRow label={t('task.route')} value={getAssignmentRoute(a)} />
+              {destinationAreaEnabled && <DetailRow label={t('task.destination')} value={a.destinationArea || '—'} />}
+              <DetailRow label={t('task.deliveryLocation')} value={getDeliveryLocation(a)} />
               <DetailRow label={t('task.client')} value={a.company} />
               <DetailRow label={t('task.pickupDate')} value={a.pickedUpDate} />
               <DetailRow label={t('task.pickupTime')} value={a.pickupTime} />
