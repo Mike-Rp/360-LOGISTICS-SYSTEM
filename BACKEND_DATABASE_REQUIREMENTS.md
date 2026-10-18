@@ -466,6 +466,20 @@ actions without a dedicated backend function). Fixed by widening
 access only, no change to OPM's operational scope anywhere else. Written,
 not yet applied.
 
+**Second follow-up fix (2026-10-19) —
+`20261019000000_opm_fix_dispatch_status.sql`:** locking `drivers_update`/
+`trucks_update` to `is_opm()`-only in the original migration broke ordinary
+dispatching for CSR/admin — assigning, completing, and cancelling a
+delivery only ever change `drivers.status`/`trucks.status`
+(`DriversManagement.tsx` confirmed to touch no other column for these
+flows), but to the database that UPDATE looked identical to "edit a
+driver/truck's details." Fixed with the same column-guard pattern
+`guard_assignment_update()` already uses elsewhere in this schema: RLS
+restored to `can_write() OR is_opm()` at the row level, and a new trigger
+(`guard_driver_update`/`guard_truck_update`) restricts a non-OPM caller to
+changing only the `status` column — OPM remains unrestricted. Written, not
+yet applied.
+
 **Frontend impact (not started — assigned to the frontend developer):**
 Verified 2026-10-18 that the backend correctly enforces both directions —
 confirmed by reproducing each failure live, not just inferred:
