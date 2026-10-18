@@ -132,3 +132,110 @@ value on new assignment inserts, and extends the existing protected
 `src/app/components/driver/driverI18n.tsx`, and `.env.example`.
 
 ---
+
+## [REQ-002] Persisted Driver Pickup, Loading, Arrival, and Unloading Workflow
+
+**Status:** Pending
+
+**Area:** Driver App / Dispatch / Deliveries / Dashboard / Photos / Reports
+
+**Requested change:**
+Extend the physical-delivery flow from Assigned → Picked Up → In Transit →
+Delivered to include arrival at pickup, four pickup truck-condition photos,
+loading start and finish, four pre-trip truck-condition photos, arrival at the
+delivery location, unloading start and finish, and the required/optional photo
+rules. Keep the existing six-document review flow after physical delivery.
+
+**Why backend/database support is required:**
+`public.assignments.task_status` and `guard_assignment_update()` currently allow
+only the existing physical statuses. The assignment has no trusted timestamps
+for pickup arrival, loading, destination arrival, or unloading. React-only
+steps would disappear after refresh and could disagree with Admin. A sequence
+of separate photo, status, and notification writes cannot enforce the new
+required photos and transitions atomically.
+
+**Current system:**
+- `src/app/components/driver/DriverInterface.tsx` slides through Assigned →
+  Picked Up → In Transit → Delivered. Each of the latter three transitions
+  uses one status photo.
+- `public.status_photos` stores one row per `(assignment_id, status)` with a
+  free-text `status` key, URL, display timestamp, and optional GPS. This can
+  represent distinct photo slots, but no database rule currently ties a
+  category or count to a workflow transition.
+- `public.assignments` has `assigned_at`, `created_at`, and a physical status,
+  but no server-stamped timestamps for the requested new events. The existing
+  `taken_at` photo value comes from the device and is not a trusted event time.
+- Driver updates call Supabase directly through `src/app/lib/db.ts`; the admin
+  reads assignments and notifications from the same project. The six formal
+  documents live in `assignment_documents` and must remain separate.
+
+**Required backend/database change:**
+- Define one canonical, persisted operational stage model for pickup arrival,
+  loading (before/in progress/complete), departure, destination arrival,
+  unloading (before/in progress/complete), and delivery. Decide whether to
+  extend `task_status` or add a separate stage field while preserving existing
+  statuses and historical assignments.
+- Save server-generated event times for pickup arrival, loading start/end,
+  departure/In Transit, destination arrival, unloading start/end, and physical
+  delivery. Reuse an existing equivalent timestamp if one is verified.
+- Add an authorized transition function/API that checks current stage,
+  ownership, required persisted photo slots, and transition order; stamps the
+  event on the server; and updates status/activity together. Make retries safe
+  and reject duplicate or out-of-order slides.
+- Define stable photo category keys for pickup front/left/right/rear, optional
+  before loading, required after loading, pre-trip front/left/right/rear,
+  optional before unloading, and optional/recommended after unloading. Reuse
+  `status_photos` and the private Storage bucket if their permissions and
+  replacement behavior suffice; add storage/schema support only if inspection
+  during implementation proves necessary. A photo counts only after its row
+  and file persist successfully.
+- Expose the same canonical stage and event times to Admin Dispatch,
+  Deliveries, Dashboard/Recent Activity, Driver, and Delay Reports.
+
+**Suggested data model:**
+- A persisted stage field or expanded `task_status` constraint, with a safe
+  legacy mapping for existing Assigned/Picked Up/In Transit/Delivered records.
+- Server-stamped `timestamptz` events or an append-only workflow-event table
+  keyed by assignment and transition. Durations are derived from start/end;
+  elapsed seconds need no repeated writes.
+- Distinct photo category values on `status_photos.status`, subject to
+  server-side validation and a clear retake/replace rule. Keep these rows out
+  of `assignment_documents` and its six-document count.
+
+**API impact:**
+Replace the multi-request client-side status progression with a protected,
+idempotent transition operation and read support for the current stage, event
+times, and photo-slot completion. Preserve existing auth and driver ownership
+checks. Do not treat a notification write as proof of a completed transition.
+
+**Frontend impact:**
+- Driver task stages, slide controls, photo grids, required/optional labels,
+  progress indicator, loading/unloading elapsed displays, and Delivered CTA.
+- Shared workflow/status helpers, Admin Dispatch/View Shipment, Deliveries,
+  Dashboard Overview/Recent Activity, and Delay Reports.
+- English/Filipino driver strings and legacy-assignment fallback screens.
+
+**Migration required:** Yes
+
+**Risk / considerations:**
+Existing active assignments must resume at a valid stage without fabricated
+event times or photos. The current one-photo status keys must remain readable.
+Storage uploads and database changes need a retry/cleanup strategy; a failed
+transition must leave the previous stage visible. The driver's offline demo
+mode must never appear to persist a real transition. Do not introduce the new
+stages in React before server persistence and validation exist.
+
+**Approval:** Not approved
+
+**Implementation status:** New stages not started. Current-schema driver UI
+improvements in `DriverInterface.tsx` clarify the dashboard back action and
+next step, provide a direct document action after delivery, and wait for real
+status-photo writes before showing a successful transition. These do not
+activate pickup arrival, loading, destination arrival, or unloading stages.
+
+**Blocked:** New persistent stages, trusted event times, transition validation,
+and required photo gates need explicit development-backend/schema approval and
+an authorized Supabase migration. The separate REQ-001 Destination migration
+also remains unapplied, so its local feature flag stays off.
+
+---

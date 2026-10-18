@@ -162,17 +162,6 @@ function isBlurryImage(dataUrl: string, threshold = 45): Promise<boolean> {
   });
 }
 
-async function uploadToStorage(dataUrl: string, path: string): Promise<string> {
-  try {
-    /* Straight to Supabase Storage as the signed-in driver — the storage policy only lets a driver
-       write under photos/<their assignment id>/ and docs/<their assignment id>/. */
-    return await uploadImage(dataUrl, path);
-  } catch (err) {
-    console.warn('[uploadToStorage] failed, falling back to data-URL:', err);
-    return dataUrl;
-  }
-}
-
 function DriverHomeClock() {
   const { language } = useDriverI18n();
   const [now, setNow] = useState(() => new Date());
@@ -223,27 +212,50 @@ function DriverOverdueNotice({ timing, deliveryDate, compact = false }: {
    SLIDE-TO-CONFIRM CONTROL
    ════════════════════════════════════════════════════════════ */
 function SlideToConfirm({ label, onConfirm, disabled = false }: {
-  label: string; onConfirm: () => void; disabled?: boolean;
+  label: string; onConfirm: () => boolean | Promise<boolean>; disabled?: boolean;
 }) {
   const { t } = useDriverI18n();
   const [dragX,      setDragX]      = useState(0);
   const [isDragging, setIsDragging] = useState(false);
-  const [triggered,  setTriggered]  = useState(false);
+  const [phase,      setPhase]      = useState<'ready' | 'saving' | 'completed'>('ready');
   const trackRef = useRef<HTMLDivElement>(null);
   const startRef = useRef(0);
+  const busyRef = useRef(false);
+  const completionTimer = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (completionTimer.current !== null) window.clearTimeout(completionTimer.current);
+  }, []);
 
   const THUMB_W = 64;
   const PAD     = 4;
 
   const getMax = useCallback(() => (trackRef.current?.offsetWidth ?? 300) - THUMB_W - PAD * 2, []);
+  const reset = useCallback(() => {
+    setDragX(0);
+    setPhase('ready');
+    busyRef.current = false;
+  }, []);
 
-  const fire = useCallback(() => {
-    setTriggered(true);
-    setTimeout(() => { onConfirm(); setDragX(0); setTriggered(false); }, 380);
-  }, [onConfirm]);
+  const fire = useCallback(async () => {
+    if (disabled || busyRef.current) return;
+    busyRef.current = true;
+    setPhase('saving');
+    try {
+      const saved = await onConfirm();
+      if (saved) {
+        setPhase('completed');
+        completionTimer.current = window.setTimeout(reset, 650);
+      } else {
+        reset();
+      }
+    } catch {
+      reset();
+    }
+  }, [disabled, onConfirm, reset]);
 
   const onPointerDown = (e: React.PointerEvent) => {
-    if (disabled || triggered) return;
+    if (disabled || busyRef.current) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     startRef.current = e.clientX - dragX;
     setIsDragging(true);
@@ -258,16 +270,17 @@ function SlideToConfirm({ label, onConfirm, disabled = false }: {
     if (dragX >= getMax() * 0.82) fire();
     else setDragX(0);
   };
+  const onPointerCancel = () => { setIsDragging(false); setDragX(0); };
 
   return (
     <div
       ref={trackRef}
       className={`relative h-[68px] rounded-2xl overflow-hidden select-none ${
-        disabled ? 'bg-gray-100' : triggered ? 'bg-green-200' : 'bg-green-100'
+        disabled ? 'bg-gray-100' : phase === 'completed' ? 'bg-green-200' : 'bg-green-100'
       }`}
     >
       {/* Fill */}
-      {!disabled && !triggered && (
+      {!disabled && phase === 'ready' && (
         <div
           className="absolute inset-y-0 left-0 bg-green-200 pointer-events-none"
           style={{ width: `${dragX + THUMB_W + PAD}px` }}
@@ -276,7 +289,7 @@ function SlideToConfirm({ label, onConfirm, disabled = false }: {
       {/* Label */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
         <span className={`text-base font-bold ${disabled ? 'text-gray-400' : 'text-green-900'}`}>
-          {triggered ? t('slide.confirmed') : label}
+          {phase === 'completed' ? t('slide.confirmed') : phase === 'saving' ? t('slide.updating') : label}
         </span>
       </div>
       {/* Thumb */}
@@ -292,9 +305,9 @@ function SlideToConfirm({ label, onConfirm, disabled = false }: {
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
-          onPointerCancel={onPointerUp}
+          onPointerCancel={onPointerCancel}
         >
-          {triggered
+          {phase === 'completed'
             ? <CheckCircle2 className="w-7 h-7 text-white" />
             : <ChevronRight className="w-7 h-7 text-white" />
           }
@@ -1023,6 +1036,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
   const [notificationPage, setNotificationPage] = useState(1);
   const [activeDrawer, setActiveDrawer] = useState<'notifications' | 'menu' | 'language' | null>(null);
   const [languageNotice, setLanguageNotice] = useState<DriverLanguage | null>(null);
+  const [statusNotice, setStatusNotice] = useState<TaskStatus | null>(null);
   const [focusedDocType, setFocusedDocType] = useState<string | null>(null);
   const closeHistoryDetail = useCallback(() => setSelectedHistoryId(null), []);
   const closeDrawer = useCallback(() => setActiveDrawer(null), []);
@@ -1032,6 +1046,12 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
     const timer = window.setTimeout(() => setLanguageNotice(null), 1800);
     return () => window.clearTimeout(timer);
   }, [languageNotice]);
+
+  useEffect(() => {
+    if (!statusNotice) return;
+    const timer = window.setTimeout(() => setStatusNotice(null), 1800);
+    return () => window.clearTimeout(timer);
+  }, [statusNotice]);
 
   const selectLanguage = (next: DriverLanguage) => {
     if (next !== language) {
@@ -1082,25 +1102,29 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
   }, [fetchData]);
 
   /* ── Push update ── */
-  const pushUpdate = async (updates: Partial<Assignment>, notif?: Record<string, unknown>) => {
+  const pushUpdate = async (updates: Partial<Assignment>, notif?: Record<string, unknown>): Promise<boolean> => {
     const a = data?.assignment;
-    if (!a) return;
+    if (!a) return false;
+    if (!online) { setActionError(t('home.saveError')); return false; }
     setUpdating(true);
-    setData((prev) => prev ? { ...prev, assignment: { ...prev.assignment!, ...updates } } : prev);
-    if (!online) { await new Promise((r) => setTimeout(r, 400)); setUpdating(false); return; }
     try {
       /* The database triggers only let a driver change status / photos / delay reports / new document
          files (an approved document can't be re-approved or flipped by the driver). */
-      await driverUpdate(driverName, a.id, updates, notif);
+      await driverUpdate(driverName, a.id, updates);
+      // Show the new state only after the primary write has succeeded.
+      setData((prev) => prev?.assignment?.id === a.id
+        ? { ...prev, assignment: { ...prev.assignment, ...updates } } : prev);
+      if (notif) {
+        try { await driverUpdate(driverName, a.id, {}, notif); }
+        catch (err) { console.warn('[driverUpdate] notification failed after save:', err); }
+      }
       await fetchData(true);
       setActionError('');
+      return true;
     } catch (err) {
       console.error('[driverUpdate] error:', err);
-      setOnline(false);
-      /* Note: the optimistic update above is deliberately NOT rolled back here —
-         changing that mid-delivery is a behaviour decision, not error handling.
-         So the driver must be told the change did not reach the server. */
       setActionError(t('home.saveError'));
+      return false;
     }
     finally { setUpdating(false); }
   };
@@ -1120,8 +1144,10 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
     const status = photoTarget;
     const assignment = data.assignment;
     const path      = `photos/${assignment.id}/${status.replace(/[\s/]+/g, '_')}_${Date.now()}.jpg`;
-    if (status === 'Delivered') {
-      // Keep the previous status visible until both the photo and status write succeed.
+    if (!online) throw new Error('Cannot save a status photo while offline.');
+    setUpdating(true);
+    try {
+      // Every operational status requires a real Storage upload before its status changes.
       const storedUrl = await uploadImage(photo.url, path);
       const updates = { taskStatus: status, statusPhotos: { ...(assignment.statusPhotos ?? {}), [status]: { ...photo, url: storedUrl } } };
       await driverUpdate(driverName, assignment.id, updates);
@@ -1129,24 +1155,23 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
         ? { ...prev, assignment: { ...prev.assignment, ...updates } } : prev);
       setActionError('');
       setPhotoTarget(null);
+      setStatusNotice(status);
       try {
         await driverUpdate(driverName, assignment.id, {}, {
-          type: 'status_update', message: `[${assignment.truckPlate}] Marked as Delivered`,
+          type: 'status_update', message: `[${assignment.truckPlate}] Marked as ${taskStatusConfig[status].label}`,
           assignmentId: assignment.id, truckPlate: assignment.truckPlate,
           statusUpdate: status, photoUrl: storedUrl, navigateTo: 'Monitor',
         });
       } catch (err) {
-        console.warn('[Delivered] status saved, but notification failed:', err);
+        console.warn('[driverUpdate] status saved, but notification failed:', err);
       }
       await fetchData(true);
-      return;
+    } catch (err) {
+      setActionError(t('home.saveError'));
+      throw err;
+    } finally {
+      setUpdating(false);
     }
-    setPhotoTarget(null);
-    const storedUrl = await uploadToStorage(photo.url, path);
-    await pushUpdate(
-      { taskStatus: status, statusPhotos: { ...(assignment.statusPhotos ?? {}), [status]: { ...photo, url: storedUrl } } },
-      { type: 'status_update', message: `[${assignment.truckPlate}] Marked as ${taskStatusConfig[status].label}`, assignmentId: assignment.id, truckPlate: assignment.truckPlate, statusUpdate: status, photoUrl: storedUrl, navigateTo: 'Monitor' }
-    );
   };
 
   const openDeliveredPhoto = () => {
@@ -1158,11 +1183,13 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
     if (!data?.assignment) return;
     setDelaySheet(null);
     const reportedAt = new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-    await pushUpdate(
+    const saved = await pushUpdate(
       { delayReports: [...(data.assignment.delayReports ?? []), { type, reason, reportedAt }] },
       { type: 'delay_report', message: `[${data.assignment.truckPlate}] ${type === 'pickup' ? 'Pickup' : 'Delivery'} delay: ${reason}`, assignmentId: data.assignment.id, truckPlate: data.assignment.truckPlate, reason, navigateTo: 'Monitor' }
     );
-    if (type === 'pickup') setPickupDelayDone(true); else setDeliveryDelayDone(true);
+    if (saved) {
+      if (type === 'pickup') setPickupDelayDone(true); else setDeliveryDelayDone(true);
+    }
   };
 
   const handleIssueSubmit = async (reason: string) => {
@@ -1178,27 +1205,31 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
     if (!data?.assignment) return;
     const reader = new FileReader();
     reader.onload = async () => {
-      const raw = reader.result as string;
+      try {
+        if (!online) throw new Error('Cannot upload a document while offline.');
+        const raw = reader.result as string;
 
-      /* Only photos can be blurry — PDFs (documents also accept those) skip
-         the check entirely. */
-      if (file.type.startsWith('image/') && await isBlurryImage(raw)) {
-        setDocBlurErrors((p) => ({ ...p, [docType]: true }));
-        return;
-      }
-      setDocBlurErrors((p) => { const { [docType]: _drop, ...rest } = p; return rest; });
+        /* Only photos can be blurry — PDFs (documents also accept those) skip
+           the check entirely. */
+        if (file.type.startsWith('image/') && await isBlurryImage(raw)) {
+          setDocBlurErrors((p) => ({ ...p, [docType]: true }));
+          return;
+        }
+        setDocBlurErrors((p) => { const { [docType]: _drop, ...rest } = p; return rest; });
 
-      const compressed = await compressImage(raw);
-      let fileUrl = compressed;
-      if (online) {
+        const compressed = await compressImage(raw);
         const path = `docs/${data.assignment!.id}/${encodeURIComponent(docType.replace(/\s+/g, '_'))}_${Date.now()}.jpg`;
-        fileUrl = await uploadToStorage(compressed, path);
+        const fileUrl = await uploadImage(compressed, path);
+        await pushUpdate(
+          { documents: data.assignment!.documents.map((d) => d.type === docType ? { ...d, uploaded: true, docStatus: 'pending' as DocStatus, fileUrl } : d) },
+          { type: 'doc_upload', message: `[${data.assignment!.truckPlate}] "${docType}" uploaded`, assignmentId: data.assignment!.id, truckPlate: data.assignment!.truckPlate, docType, navigateTo: 'Documents' }
+        );
+      } catch (err) {
+        console.error('[document upload] save failed:', err);
+        setActionError(t('home.saveError'));
       }
-      await pushUpdate(
-        { documents: data.assignment!.documents.map((d) => d.type === docType ? { ...d, uploaded: true, docStatus: 'pending' as DocStatus, fileUrl } : d) },
-        { type: 'doc_upload', message: `[${data.assignment!.truckPlate}] "${docType}" uploaded`, assignmentId: data.assignment!.id, truckPlate: data.assignment!.truckPlate, docType, navigateTo: 'Documents' }
-      );
     };
+    reader.onerror = () => setActionError(t('home.saveError'));
     reader.readAsDataURL(file);
   };
 
@@ -1432,6 +1463,13 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
     </div>
   );
 
+  const StatusNotice = statusNotice && (
+    <div role="status" aria-live="polite" className="fixed bottom-5 left-1/2 -translate-x-1/2 z-[70] w-[min(92vw,420px)] rounded-2xl bg-green-800 px-4 py-3 text-white shadow-xl flex items-center gap-2 text-sm font-semibold">
+      <CheckCircle2 className="h-5 w-5 shrink-0" aria-hidden="true" />
+      {t('slide.statusSaved', { status: statusText(statusNotice) })}
+    </div>
+  );
+
   /* ════════════════════════════════════════════════════════════
      DASHBOARD SCREEN
   ════════════════════════════════════════════════════════════ */
@@ -1598,6 +1636,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
         {DriverDrawers}
         {LogoutDialog}
         {LanguageNotice}
+        {StatusNotice}
       </div>
     );
   }
@@ -1624,6 +1663,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
       </main>
       {selectedHistoryId && <HistoryDetailsSheet key={selectedHistoryId} driverId={driverId} assignmentId={selectedHistoryId} onClose={closeHistoryDetail} />}
       {LanguageNotice}
+      {StatusNotice}
     </div>;
   }
 
@@ -1644,9 +1684,9 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
           {/* Back */}
           <button
             onClick={() => setScreen('dashboard')}
-            className="flex items-center gap-1.5 text-gray-600 font-bold text-sm flex-shrink-0 py-1 pr-2"
+            className="flex min-h-11 items-center gap-1.5 text-gray-600 font-bold text-sm flex-shrink-0 py-1 pr-2"
           >
-            <ChevronLeft className="w-5 h-5" /> {t('common.back')}
+            <ChevronLeft className="w-5 h-5" /> {t('task.backDashboard')}
           </button>
 
           {/* Driver name + plate */}
@@ -1700,6 +1740,33 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
               </div>
             </div>
 
+            {a.taskStatus === 'Assigned' && (
+              <p className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800">
+                {t('task.proceedPickup')}
+              </p>
+            )}
+
+            {isDelivered && (
+              <div className="rounded-2xl border border-green-200 bg-green-50 px-4 py-4 space-y-3">
+                {displayStatus === 'Awaiting Documents' && (
+                  <p className="text-sm font-semibold leading-snug text-green-900">{t('task.deliveryCompletedUploadPrompt')}</p>
+                )}
+                <button type="button" onClick={() => {
+                  const target = displayStatus === 'Needs Correction'
+                    ? normalizedDocs.find((doc) => doc.uploaded && doc.docStatus === 'rejected')
+                    : normalizedDocs.find((doc) => !doc.uploaded) ?? normalizedDocs[0];
+                  setFocusedDocType(target?.type ?? null);
+                  document.getElementById('driver-required-documents')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }} className="w-full min-h-14 rounded-xl bg-green-700 px-4 py-3 text-base font-bold text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-green-700">
+                  {t(displayStatus === 'Awaiting Documents'
+                    ? documentProgress?.uploaded ? 'home.continueUploading' : 'home.uploadDocuments'
+                    : displayStatus === 'Needs Correction'
+                      ? documentProgress?.rejected === 1 ? 'home.fixDocument' : 'home.fixDocuments'
+                      : 'home.viewDocuments')}
+                </button>
+              </div>
+            )}
+
             {/* The same schedule condition shown on Home and in Dispatch. */}
             <DriverOverdueNotice timing={deliveryTiming} deliveryDate={a.deliveryDate} />
 
@@ -1746,7 +1813,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
               </div>
             )}
 
-            {/* ── Progress tracker (6 stages, vertical) ── */}
+            {/* ── Current persisted progress (six stages, including documents) ── */}
             {!isFailed && !isCancelled && (
               <div className="bg-white rounded-2xl border border-gray-200 shadow-sm px-5 py-5">
                 <h3 className="text-base font-bold text-foreground mb-5">{t('task.progress')}</h3>
@@ -1796,7 +1863,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
             )}
 
             {/* ── Documents (always visible; locked until delivered) ── */}
-            <div className="space-y-3">
+            <div id="driver-required-documents" className="space-y-3 scroll-mt-24">
               <div className="flex items-center justify-between px-1">
                 <h3 className="text-xl font-bold text-foreground">{t('task.documents')}</h3>
                 <span className="text-base text-gray-500 font-semibold">{t('doc.approvedCount', { count: approvedCt, total: REQUIRED_DOCS.length })}</span>
@@ -1833,17 +1900,19 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
       {a && !isTerminal && (
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-4 pt-4 pb-6 shadow-[0_-4px_20px_rgba(0,0,0,0.10)] z-20">
           {blockSlider ? (
-            <SlideToConfirm label={t('slide.reportDelay')} onConfirm={() => {}} disabled />
+            <SlideToConfirm label={t('slide.reportDelay')} onConfirm={() => false} disabled />
           ) : (
             <SlideToConfirm
               label={updating ? t('slide.updating') : sliderLabel}
               disabled={updating}
-              onConfirm={() => {
-                if (!nextStatus) return;
+              onConfirm={async () => {
+                if (!nextStatus) return false;
                 if (NEEDS_PHOTO.includes(nextStatus)) {
                   if (nextStatus === 'Delivered') setDeliveredDlg(true);
                   else setPhotoTarget(nextStatus);
-                } else pushUpdate({ taskStatus: nextStatus });
+                  return false; // The slide opens the required-photo step; status has not changed yet.
+                }
+                return pushUpdate({ taskStatus: nextStatus });
               }}
             />
           )}
@@ -1877,6 +1946,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
       {DriverDrawers}
       {LogoutDialog}
       {LanguageNotice}
+      {StatusNotice}
     </div>
   );
 }
