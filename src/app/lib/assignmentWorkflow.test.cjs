@@ -100,9 +100,12 @@ test('rejection wins over missing uploads, and re-upload resets review state', (
   assert.equal(workflow.getAssignmentDocumentSummary(record).label, '1 pending review');
 });
 
-test('only all required types approved shows All approved and Completed', () => {
+test('approval makes a delivery eligible, but only the archived record is Completed', () => {
   const record = assignment(uploads(workflow.documentTypes));
-  assert.equal(workflow.getAssignmentDisplayStatus(record), 'Completed');
+  assert.equal(workflow.getAssignmentDisplayStatus(record), 'Delivered');
+  assert.equal(workflow.canCompleteAssignment(record), true);
+  assert.equal(workflow.getAssignmentDisplayStatus({ ...record, completedAt: 'Oct 19, 2026' }), 'Completed');
+  assert.equal(workflow.canCompleteAssignment({ ...record, completedAt: 'Oct 19, 2026' }), false);
   assert.equal(workflow.getAssignmentDocumentSummary(record).label, 'All approved');
   assert.equal(workflow.getAssignmentDocumentSummary(record).tone, 'approved');
   assert.equal(workflow.getAssignmentDocumentSummary(record).breakdown,
@@ -138,7 +141,8 @@ test('the same helpers use the configured required types and count', () => {
     assert.equal(configured.getAssignmentDisplayStatus(record), 'Awaiting Documents');
     record.documents.push(...uploads(configured.documentTypes.slice(-1)));
     assert.equal(configured.getAssignmentDocumentSummary(record).label, 'All approved');
-    assert.equal(configured.getAssignmentDisplayStatus(record), 'Completed');
+    assert.equal(configured.getAssignmentDisplayStatus(record), 'Delivered');
+    assert.equal(configured.canCompleteAssignment(record), true);
   }
 });
 

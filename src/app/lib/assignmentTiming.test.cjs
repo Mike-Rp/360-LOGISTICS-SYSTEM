@@ -43,6 +43,19 @@ test('delivered evidence determines historical lateness, not document completion
   assert.equal(getDeliveryTimingStatus(assignment('Delivered', 'Oct 15, 2026', '', 'Oct 16, 2026, 12:01 AM'))?.label, 'Delivered late · 1 day');
 });
 
+test('REQ-002 server timestamps take precedence over older status-photo clocks', () => {
+  const delivered = {
+    ...assignment('Delivered', 'Oct 15, 2026', '2:00 PM', 'Oct 15, 2026, 01:00 PM'),
+    unloadingCompletedAt: '2026-10-15T08:35:00Z',
+  };
+  assert.equal(getDeliveryTimingStatus(delivered)?.label, 'Delivered late · 2 hours');
+  const pickedUp = {
+    ...pickupAssignment('Picked Up', 'Oct 16, 2026, 12:30 AM'),
+    departedAt: '2026-10-16T01:21:00Z',
+  };
+  assert.equal(getPickupTimingStatus(pickedUp)?.label, 'Picked up late · 8 hours 21 minutes');
+});
+
 test('cancelled, failed, future and invalid records do not warn', () => {
   const after = at('2026-10-20T00:00:00Z');
   assert.equal(getDeliveryTimingStatus(assignment('Cancelled'), after), null);

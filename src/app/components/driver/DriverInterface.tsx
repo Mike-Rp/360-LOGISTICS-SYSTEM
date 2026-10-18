@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import type { Assignment, CompletedTask, TaskStatus, StatusPhoto, DocStatus } from '../../data/assignmentTypes';
 import { taskStatusConfig } from '../../data/assignmentTypes';
-import { loadDriverData, loadDriverCompletedDelivery, driverUpdate, uploadImage } from '../../lib/db';
+import { loadDriverData, loadDriverCompletedDelivery, driverUpdate, advanceDriverStage, uploadImage } from '../../lib/db';
 import { getDeliveryTimingStatus, getPickupTimingStatus, type DeliveryTimingStatus } from '../../lib/assignmentTiming';
 import { assignmentDisplayStatusConfig, getAssignmentDisplayStatus, getAssignmentDocumentProgress, getDocumentAgingState } from '../../lib/assignmentWorkflow';
 import { DriverLanguageProvider, useDriverI18n, type DriverLanguage } from './driverI18n';
@@ -54,8 +54,37 @@ const manilaStamp = (value?: string, unavailable = 'Not available') => {
 };
 
 /* ── Constants ── */
-const LINEAR_FLOW: TaskStatus[] = ['Assigned', 'Picked Up', 'In Transit', 'Delivered'];
-const NEEDS_PHOTO: TaskStatus[] = ['Picked Up', 'In Transit', 'Delivered'];
+const OPERATIONAL_PHOTOS = {
+  pickup: ['pickup_front', 'pickup_left', 'pickup_right', 'pickup_rear'],
+  pretrip: ['pretrip_front', 'pretrip_left', 'pretrip_right', 'pretrip_rear'],
+} as const;
+type OperationalPhotoKey = typeof OPERATIONAL_PHOTOS.pickup[number] | typeof OPERATIONAL_PHOTOS.pretrip[number]
+  | 'loading_before' | 'loading_after' | 'unloading_before' | 'unloading_after';
+type DriverPhase = 'assigned' | 'pickup' | 'loading' | 'pretrip' | 'trip_pending'
+  | 'in_transit' | 'arrived' | 'unloading' | 'delivery_pending' | 'delivered' | 'legacy_picked_up';
+
+/* Derived only from server-owned columns. Local UI state never advances a stage. */
+function getDriverPhase(a: Assignment): DriverPhase {
+  if (a.taskStatus === 'Delivered') return 'delivered';
+  if (a.operationalStage === 'unloaded') return 'delivery_pending';
+  if (a.operationalStage === 'unloading') return 'unloading';
+  if (a.operationalStage === 'destination_arrived') return 'arrived';
+  if (a.taskStatus === 'In Transit') return 'in_transit';
+  if (a.departedAt && a.taskStatus === 'Picked Up') return 'trip_pending';
+  if (a.operationalStage === 'loaded') return 'pretrip';
+  if (a.operationalStage === 'loading') return 'loading';
+  if (a.operationalStage === 'pickup_arrived') return 'pickup';
+  if (a.taskStatus === 'Picked Up') return 'legacy_picked_up';
+  return 'assigned';
+}
+
+function elapsedClock(start?: string | null, end = new Date()): string | null {
+  if (!start) return null;
+  const seconds = Math.max(0, Math.floor((end.getTime() - new Date(start).getTime()) / 1000));
+  if (!Number.isFinite(seconds)) return null;
+  return [Math.floor(seconds / 3600), Math.floor(seconds / 60) % 60, seconds % 60]
+    .map((part) => String(part).padStart(2, '0')).join(':');
+}
 
 const REQUIRED_DOCS = [
   'Proof of Delivery',
@@ -275,6 +304,19 @@ function SlideToConfirm({ label, onConfirm, disabled = false }: {
   return (
     <div
       ref={trackRef}
+      role="slider"
+      tabIndex={disabled ? -1 : 0}
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round((dragX / Math.max(1, getMax())) * 100)}
+      aria-disabled={disabled}
+      onKeyDown={(event) => {
+        if (disabled || busyRef.current) return;
+        if (event.key === 'ArrowRight') { event.preventDefault(); setDragX((x) => Math.min(getMax(), x + getMax() / 4)); }
+        if (event.key === 'ArrowLeft') { event.preventDefault(); setDragX((x) => Math.max(0, x - getMax() / 4)); }
+        if ((event.key === 'Enter' || event.key === ' ') && dragX >= getMax() * 0.82) { event.preventDefault(); fire(); }
+      }}
       className={`relative h-[68px] rounded-2xl overflow-hidden select-none ${
         disabled ? 'bg-gray-100' : phase === 'completed' ? 'bg-green-200' : 'bg-green-100'
       }`}
@@ -288,7 +330,7 @@ function SlideToConfirm({ label, onConfirm, disabled = false }: {
       )}
       {/* Label */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        <span className={`text-base font-bold ${disabled ? 'text-gray-400' : 'text-green-900'}`}>
+        <span className={`max-w-full pl-16 pr-3 text-center text-sm sm:text-base font-bold leading-tight ${disabled ? 'text-gray-400' : 'text-green-900'}`}>
           {phase === 'completed' ? t('slide.confirmed') : phase === 'saving' ? t('slide.updating') : label}
         </span>
       </div>
@@ -317,86 +359,86 @@ function SlideToConfirm({ label, onConfirm, disabled = false }: {
   );
 }
 
-/* ════════════════════════════════════════════════════════════
-   VERTICAL 6-STAGE TRACKER
-   ════════════════════════════════════════════════════════════ */
-function VerticalTracker({ stepIdx, isDelivered, uploadedCt, approvedCt, totalDocs }: {
-  stepIdx: number; isDelivered: boolean;
-  uploadedCt: number; approvedCt: number; totalDocs: number;
-}) {
+function OperationalProgress({ phase }: { phase: DriverPhase }) {
   const { t } = useDriverI18n();
-  type S = 'done' | 'current' | 'upcoming' | 'locked';
-  const allApproved = totalDocs > 0 && approvedCt >= totalDocs;
-
-  const stages: Array<{ label: string; status: S; sub?: string }> = [
-    { label: t('status.Assigned'),          status: 'done' },
-    { label: t('status.Picked Up'),         status: stepIdx >= 1 ? 'done' : 'current' },
-    { label: t('status.In Transit'),        status: stepIdx >= 2 ? 'done' : stepIdx === 1 ? 'current' : 'upcoming' },
-    { label: t('status.Delivered'),         status: stepIdx >= 3 ? 'done' : stepIdx === 2 ? 'current' : 'upcoming' },
-    {
-      label: t('progress.uploadDocuments'),
-      status: !isDelivered ? 'locked' : allApproved ? 'done' : 'current',
-      sub:   isDelivered && !allApproved ? t('progress.submitted', { count: uploadedCt, total: totalDocs }) : undefined,
-    },
-    {
-      label: t('progress.complete'),
-      status: allApproved ? 'done' : 'upcoming',
-      sub:   isDelivered && !allApproved ? t('progress.waitingApproval') : undefined,
-    },
-  ];
-
-  return (
-    <div>
-      {stages.map((stage, i) => {
-        const isLast   = i === stages.length - 1;
-        const isDone   = stage.status === 'done';
-        const isCurr   = stage.status === 'current';
-        const isLocked = stage.status === 'locked';
-
-        return (
-          <div key={stage.label} className="flex gap-5">
-            {/* Circle + connector */}
-            <div className="flex flex-col items-center" style={{ width: 36, flexShrink: 0 }}>
-              <div className={`w-9 h-9 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
-                isDone   ? 'bg-green-500 border-green-500' :
-                isCurr   ? 'bg-white border-green-500 ring-4 ring-green-100' :
-                isLocked ? 'bg-gray-50 border-gray-200' :
-                           'bg-white border-gray-200'
-              }`}>
-                {isDone   ? <CheckCircle2 className="w-5 h-5 text-white" /> :
-                 isCurr   ? <span className="w-3 h-3 bg-green-500 rounded-full animate-pulse" /> :
-                 isLocked ? <Lock className="w-4 h-4 text-gray-300" /> :
-                            <span className="text-sm font-bold text-gray-300">{i + 1}</span>}
-              </div>
-              {!isLast && (
-                <div className={`w-0.5 flex-1 min-h-[32px] my-1.5 rounded-full ${isDone ? 'bg-green-400' : 'bg-gray-200'}`} />
-              )}
-            </div>
-
-            {/* Text */}
-            <div className={`flex-1 min-w-0 ${isLast ? 'pb-1' : 'pb-6'} mt-1`}>
-              <p className={`text-base font-bold leading-tight ${
-                isDone   ? 'text-green-700' :
-                isCurr   ? 'text-gray-900' :
-                isLocked ? 'text-gray-300' :
-                           'text-gray-400'
-              }`}>{stage.label}</p>
-              {stage.sub && (
-                <p className={`text-sm mt-1 leading-snug ${isCurr ? 'text-gray-500' : 'text-gray-400'}`}>{stage.sub}</p>
-              )}
-            </div>
-          </div>
-        );
+  const labels = [t('status.Assigned'), t('workflow.atPickup'), t('workflow.loading'),
+    t('status.In Transit'), t('workflow.arrived'), t('workflow.unloading'), t('status.Delivered')];
+  const step = phase === 'assigned' ? 0 : phase === 'pickup' || phase === 'legacy_picked_up' ? 1
+    : phase === 'loading' || phase === 'pretrip' ? 2
+    : phase === 'trip_pending' || phase === 'in_transit' ? 3
+    : phase === 'arrived' ? 4 : phase === 'unloading' || phase === 'delivery_pending' ? 5 : 6;
+  return <div className="rounded-2xl border border-gray-200 bg-white px-5 py-4 shadow-sm">
+    <p className="text-base font-bold text-gray-900">{t('workflow.step', { step: step + 1, stage: labels[step] })}</p>
+    <div className="mt-4 flex items-center gap-1.5" aria-label={t('workflow.step', { step: step + 1, stage: labels[step] })}>
+      {labels.map((label, index) => {
+        const done = phase === 'delivered' || index < step;
+        return <span key={label} title={label} aria-hidden="true"
+          className={`flex h-8 min-w-0 flex-1 items-center justify-center rounded-full border ${done
+            ? 'border-green-600 bg-green-600 text-white' : index === step
+              ? 'border-green-600 bg-green-50 text-green-700' : 'border-gray-200 bg-gray-100 text-gray-400'}`}>
+          {done ? <CheckCircle2 className="h-5 w-5" /> : index === step ? <span className="h-3 w-3 rounded-full bg-green-600" /> : null}
+        </span>;
       })}
     </div>
-  );
+  </div>;
+}
+
+function ElapsedTime({ start }: { start?: string | null }) {
+  const { t } = useDriverI18n();
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return <p className="mt-1">{t('workflow.elapsed')}: {elapsedClock(start, now) ?? '—'}</p>;
+}
+
+function OperationalPhotos({ assignment, keys, title, help, required, onSelect }: {
+  assignment: Assignment; keys: readonly OperationalPhotoKey[]; title: string; help?: string;
+  required: boolean; onSelect: (key: OperationalPhotoKey) => void;
+}) {
+  const { t } = useDriverI18n();
+  const count = keys.filter((key) => !!assignment.statusPhotos?.[key]?.url).length;
+  const angle = (key: OperationalPhotoKey) => {
+    const suffix = key.split('_').slice(-1)[0];
+    return suffix === 'front' ? t('workflow.front') : suffix === 'left' ? t('workflow.left')
+      : suffix === 'right' ? t('workflow.right') : suffix === 'rear' ? t('workflow.rear') : title;
+  };
+  return <section className="min-w-0 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+    <div className="flex flex-wrap items-start justify-between gap-2">
+      <div className="min-w-0">
+        <h3 className="text-base font-bold text-gray-900">{title} <span className="text-sm font-semibold text-gray-500">— {t(required ? 'workflow.required' : 'workflow.optional')}</span></h3>
+        {help && <p className="mt-1 text-sm text-gray-600">{help}</p>}
+      </div>
+      {keys.length > 1 && <span className="text-sm font-semibold text-green-800">{t('workflow.captured', { count, total: keys.length })}</span>}
+    </div>
+    <div className={`mt-4 grid gap-3 ${keys.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+      {keys.map((key) => {
+        const saved = assignment.statusPhotos?.[key];
+        const label = angle(key);
+        return <button key={key} type="button" onClick={() => onSelect(key)}
+          aria-label={saved ? t('workflow.replacePhoto', { angle: label }) : t('workflow.photoSlot', { angle: label, requirement: t(required ? 'workflow.required' : 'workflow.optional') })}
+          className="min-w-0 overflow-hidden rounded-xl border-2 border-dashed border-gray-200 bg-gray-50 text-left focus-visible:outline-2 focus-visible:outline-green-700">
+          {saved ? <img src={saved.url} alt={label} className="h-28 w-full object-cover" />
+            : <div className="flex h-28 items-center justify-center"><Camera className="h-9 w-9 text-gray-400" aria-hidden="true" /></div>}
+          <div className="flex items-center justify-between gap-1 px-3 py-2">
+            <span className="min-w-0 break-words text-sm font-bold text-gray-800">{label}</span>
+            <span className={`shrink-0 text-sm font-semibold ${saved ? 'text-green-700' : 'text-gray-500'}`}>
+              {saved ? '✓' : t(required ? 'workflow.required' : 'workflow.optional')}
+            </span>
+          </div>
+        </button>;
+      })}
+    </div>
+  </section>;
 }
 
 /* ════════════════════════════════════════════════════════════
    PHOTO CAPTURE SHEET (redesigned — receipt-style meta)
    ════════════════════════════════════════════════════════════ */
-function PhotoSheet({ status, onConfirm, onCancel }: {
-  status: TaskStatus; onConfirm: (photo: StatusPhoto) => Promise<void>; onCancel: () => void;
+function PhotoSheet({ status, title, instruction, onConfirm, onCancel }: {
+  status: TaskStatus | null; title?: string; instruction?: string;
+  onConfirm: (photo: StatusPhoto) => Promise<void>; onCancel: () => void;
 }) {
   const { t, status: statusText } = useDriverI18n();
   const [photo,      setPhoto]      = useState<string | null>(null);
@@ -410,7 +452,9 @@ function PhotoSheet({ status, onConfirm, onCancel }: {
     setSaveError('');
     const reader = new FileReader();
     reader.onload = async () => {
-      const compressed = await compressImage(reader.result as string);
+      let compressed: string;
+      try { compressed = await compressImage(reader.result as string); }
+      catch { setSaveError(t('photo.saveError')); return; }
       setPhoto(compressed);
       const ts = new Date().toLocaleString('en-US', {
         month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit',
@@ -451,6 +495,7 @@ function PhotoSheet({ status, onConfirm, onCancel }: {
         setLocLoading(false);
       }
     };
+    reader.onerror = () => setSaveError(t('photo.saveError'));
     reader.readAsDataURL(file);
   };
 
@@ -476,8 +521,8 @@ function PhotoSheet({ status, onConfirm, onCancel }: {
         {/* Header */}
         <div className="px-5 py-4 flex items-center justify-between border-b border-gray-100 flex-shrink-0">
           <div>
-            <h3 className="text-xl font-bold text-foreground">{status === 'Delivered' ? t('photo.deliveryRequired') : t('photo.take')}</h3>
-            <p className="text-sm text-gray-500 mt-0.5">{status === 'Delivered' ? t('photo.deliveryInstruction') : t('photo.requiredToConfirm', { status: statusText(status) })}</p>
+            <h3 className="text-xl font-bold text-foreground">{title ?? (status === 'Delivered' ? t('photo.deliveryRequired') : t('photo.take'))}</h3>
+            <p className="text-sm text-gray-500 mt-0.5">{instruction ?? (status === 'Delivered' ? t('photo.deliveryInstruction') : status ? t('photo.requiredToConfirm', { status: statusText(status) }) : '')}</p>
           </div>
           <button onClick={cancelPhoto} disabled={saving} className="w-11 h-11 bg-gray-100 rounded-full flex items-center justify-center disabled:opacity-50" aria-label={t('photo.close')}>
             <X className="w-5 h-5 text-gray-500" />
@@ -609,33 +654,6 @@ function ReasonSheet({ title, subtitle, reasons, variant, onSubmit, onCancel }: 
             className={`flex-1 py-4 text-white rounded-2xl text-base font-bold transition-colors ${canSend ? btn : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>
             {t('common.submit')}
           </button>
-        </div>
-        <div className="h-4" />
-      </div>
-    </div>
-  );
-}
-
-/* ════════════════════════════════════════════════════════════
-   DELIVERED CONFIRMATION SHEET
-   ════════════════════════════════════════════════════════════ */
-function DeliveredSheet({ onConfirm, onCancel }: { onConfirm: () => void; onCancel: () => void }) {
-  const { t } = useDriverI18n();
-  return (
-    <div className="fixed inset-0 z-50 flex items-end">
-      <div className="absolute inset-0 bg-black/60" onClick={onCancel} />
-      <div className="relative bg-white w-full rounded-t-3xl shadow-2xl animate-in slide-in-from-bottom duration-300 px-5 py-7 space-y-5">
-        <div className="w-10 h-1 bg-gray-300 rounded-full mx-auto -mt-3 mb-2" />
-        <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto">
-          <CheckCircle2 className="w-11 h-11 text-green-600" />
-        </div>
-        <div className="text-center space-y-2">
-          <h3 className="text-2xl font-bold text-foreground">{t('delivery.confirm')}</h3>
-          <p className="text-base text-gray-500">{t('delivery.markDelivered')}<br />{t('delivery.photoBeforeSave')}</p>
-        </div>
-        <div className="flex gap-3 pt-1">
-          <button onClick={onCancel} className="flex-1 py-5 border border-gray-200 rounded-2xl text-base font-semibold text-gray-600">{t('delivery.notYet')}</button>
-          <button onClick={onConfirm} className="flex-1 py-5 bg-green-700 text-white rounded-2xl text-base font-bold">{t('delivery.continuePhoto')}</button>
         </div>
         <div className="h-4" />
       </div>
@@ -1078,7 +1096,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
 
   /* ── Overlay sheet state ── */
   const [photoTarget,  setPhotoTarget]  = useState<TaskStatus | null>(null);
-  const [deliveredDlg, setDeliveredDlg] = useState(false);
+  const [operationalPhotoTarget, setOperationalPhotoTarget] = useState<OperationalPhotoKey | null>(null);
   const [delaySheet,   setDelaySheet]   = useState<'pickup' | 'delivery' | null>(null);
   const [issueSheet,   setIssueSheet]   = useState(false);
   const [logoutDlg,    setLogoutDlg]    = useState(false);
@@ -1226,9 +1244,82 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
     }
   };
 
-  const openDeliveredPhoto = () => {
-    setDeliveredDlg(false);
-    setPhotoTarget('Delivered');
+  const handleOperationalPhotoConfirmed = async (photo: StatusPhoto) => {
+    const assignment = data?.assignment;
+    const category = operationalPhotoTarget;
+    if (!assignment || !category) return;
+    if (!online) throw new Error(t('workflow.noConnection'));
+    setUpdating(true);
+    try {
+      const url = await uploadImage(photo.url, `photos/${assignment.id}/${category}_${Date.now()}.jpg`);
+      const stored = { ...photo, url };
+      await driverUpdate(driverName, assignment.id, { statusPhotos: { [category]: stored } });
+      // The slot counts only after Storage and its status_photos row both saved.
+      setData((previous) => previous?.assignment?.id === assignment.id
+        ? { ...previous, assignment: { ...previous.assignment,
+            statusPhotos: { ...previous.assignment.statusPhotos, [category]: stored } } }
+        : previous);
+      setOperationalPhotoTarget(null);
+      setActionError('');
+      await fetchData(true);
+    } catch (error) {
+      console.error('[operational photo] save failed:', error);
+      setActionError(t('workflow.photoFailed'));
+      throw error;
+    } finally { setUpdating(false); }
+  };
+
+  const handleOperationalSlide = async (): Promise<boolean> => {
+    const assignment = data?.assignment;
+    if (!assignment) return false;
+    if (!online) { setActionError(t('workflow.noConnection')); return false; }
+    const phase = getDriverPhase(assignment);
+    const transitions: Partial<Record<DriverPhase, string>> = {
+      assigned: 'arrive_pickup', pickup: 'start_loading', loading: 'finish_loading',
+      pretrip: 'depart', in_transit: 'arrive_destination',
+      arrived: 'start_unloading', unloading: 'finish_unloading',
+    };
+    const transition = transitions[phase];
+    const actions: Partial<Record<DriverPhase, Parameters<typeof t>[0]>> = {
+      assigned: 'workflow.arrivePickup', pickup: 'workflow.startLoading',
+      loading: 'workflow.finishLoading', pretrip: 'workflow.startTrip',
+      trip_pending: 'workflow.finishTripSync', in_transit: 'workflow.arriveDestination',
+      arrived: 'workflow.startUnloading', unloading: 'workflow.finishUnloading',
+      delivery_pending: 'workflow.finishDeliverySync',
+    };
+    const actionKey = actions[phase];
+    if (!actionKey) return false;
+    setUpdating(true);
+    try {
+      if (transition) await advanceDriverStage(assignment.id, transition);
+      // REQ-002 deliberately leaves these two physical task_status changes on
+      // the existing driver update path. A failed second write is recoverable
+      // from the persisted departed/unloaded stage after a refresh.
+      const status = phase === 'pretrip' || phase === 'trip_pending' ? 'In Transit'
+        : phase === 'unloading' || phase === 'delivery_pending' ? 'Delivered' : null;
+      if (status) {
+        await driverUpdate(driverName, assignment.id, { taskStatus: status });
+        try {
+          await driverUpdate(driverName, assignment.id, {}, {
+            type: 'status_update', message: `[${assignment.truckPlate}] Marked as ${status}`,
+            assignmentId: assignment.id, truckPlate: assignment.truckPlate,
+            statusUpdate: status, navigateTo: 'Monitor',
+          });
+        } catch (error) { console.warn('[driver workflow] status saved, notification failed:', error); }
+      }
+      const fresh = await loadDriverData(driverId);
+      setData(fresh);
+      setActionError('');
+      return true;
+    } catch (error) {
+      console.error('[driver workflow] transition failed:', error);
+      try { setData(await loadDriverData(driverId)); } catch { /* Keep last confirmed view. */ }
+      const message = error instanceof Error ? error.message : '';
+      setActionError(message.includes('missing_required_photo') ? t('workflow.completeFour')
+        : message.includes('wrong_stage') ? t('workflow.changedElsewhere')
+          : t('workflow.transitionFailed', { action: t(actionKey) }));
+      return false;
+    } finally { setUpdating(false); }
   };
 
   const handleDelaySubmit = async (type: 'pickup' | 'delivery', reason: string) => {
@@ -1295,8 +1386,8 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
 
   /* ── Derived values ── */
   const a           = data?.assignment ?? null;
-  const stepIdx     = a ? LINEAR_FLOW.indexOf(a.taskStatus as TaskStatus) : -1;
-  const nextStatus  = stepIdx >= 0 && stepIdx < LINEAR_FLOW.length - 1 ? LINEAR_FLOW[stepIdx + 1] : null;
+  const phase       = a && a.taskStatus !== 'Failed / Issue' && a.taskStatus !== 'Cancelled'
+    ? getDriverPhase(a) : null;
   const isDelivered = a?.taskStatus === 'Delivered';
   const isFailed    = a?.taskStatus === 'Failed / Issue';
   const isCancelled = a?.taskStatus === 'Cancelled';
@@ -1304,10 +1395,11 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
   const deliveryTiming = a ? getDeliveryTimingStatus(a, timingNow) : null;
   const displayStatus = a ? getAssignmentDisplayStatus(a) : null;
   const documentProgress = a ? getAssignmentDocumentProgress(a) : null;
+  const allDocsApproved = documentProgress?.allApproved ?? false;
   const documentAge = a ? getDocumentAgingState(a, timingNow) : null;
   const documentAgeText = documentAge?.days == null ? null : documentAge.days === 0
     ? t('home.deliveredToday') : t(documentAge.days === 1 ? 'home.oneDaySinceDelivery' : 'home.daysSinceDelivery', { count: documentAge.days });
-  const postDelivery = displayStatus === 'Awaiting Documents' || displayStatus === 'Under Review'
+  const postDelivery = isDelivered || displayStatus === 'Awaiting Documents' || displayStatus === 'Under Review'
     || displayStatus === 'Needs Correction' || displayStatus === 'Completed';
 
   /* Normalized docs (all 6 required, merged with actual data) */
@@ -1395,8 +1487,8 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
 
   const hasPickupReport   = (a?.delayReports ?? []).some((r) => r.type === 'pickup');
   const hasDeliveryReport = (a?.delayReports ?? []).some((r) => r.type === 'delivery');
-  const showPickupDelay   = isPickupLate   && !hasPickupReport   && !pickupDelayDone   && a?.taskStatus === 'Assigned';
-  const showDeliveryDelay = isDeliveryLate && !hasDeliveryReport && !deliveryDelayDone && a?.taskStatus === 'In Transit';
+  const showPickupDelay   = isPickupLate   && !hasPickupReport   && !pickupDelayDone   && phase === 'assigned';
+  const showDeliveryDelay = isDeliveryLate && !hasDeliveryReport && !deliveryDelayDone && phase === 'in_transit';
   const blockSlider       = showPickupDelay || showDeliveryDelay;
 
   /* ────────────────────────────────────────────────────────
@@ -1611,10 +1703,10 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
                         </div>
                       </div>
                     )}
-                    {(displayStatus === 'Under Review' || displayStatus === 'Completed') && (
-                      <div className={`flex min-w-0 items-start gap-2 rounded-xl border px-3 py-2.5 ${displayStatus === 'Completed' ? 'border-green-200 bg-green-50 text-green-800' : 'border-blue-200 bg-blue-50 text-blue-800'}`}>
-                        {displayStatus === 'Completed' ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" /> : <Clock className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}
-                        <p className="min-w-0 text-sm font-bold leading-snug">{t(displayStatus === 'Completed' ? 'home.allApproved' : 'home.allSubmitted')}</p>
+                    {(displayStatus === 'Under Review' || allDocsApproved) && (
+                      <div className={`flex min-w-0 items-start gap-2 rounded-xl border px-3 py-2.5 ${allDocsApproved ? 'border-green-200 bg-green-50 text-green-800' : 'border-blue-200 bg-blue-50 text-blue-800'}`}>
+                        {allDocsApproved ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" /> : <Clock className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}
+                        <p className="min-w-0 text-sm font-bold leading-snug">{t(allDocsApproved ? 'home.allApproved' : 'home.allSubmitted')}</p>
                       </div>
                     )}
                     <div className="flex flex-wrap items-center justify-between gap-1 text-sm">
@@ -1622,7 +1714,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
                       <span className="font-bold text-gray-800">{documentProgress.uploaded} {t('home.of')} {documentProgress.required}</span>
                     </div>
                     {displayStatus !== 'Needs Correction' && <p className="text-xs text-gray-600">
-                      {displayStatus === 'Completed'
+                      {allDocsApproved
                         ? t('home.approvedCount', { count: documentProgress.approved })
                         : displayStatus === 'Awaiting Documents'
                           ? t('home.uploadCount', { uploaded: documentProgress.uploaded, remaining: documentProgress.missing })
@@ -1656,7 +1748,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
                         setFocusedDocType(normalizedDocs.find((doc) => doc.uploaded && doc.docStatus === 'rejected')?.type ?? null);
                       } else if (displayStatus === 'Awaiting Documents') {
                         setFocusedDocType(normalizedDocs.find((doc) => !doc.uploaded)?.type ?? null);
-                      } else if (displayStatus === 'Under Review' || displayStatus === 'Completed') {
+                      } else if (displayStatus === 'Under Review' || allDocsApproved) {
                         setFocusedDocType(normalizedDocs[0]?.type ?? null);
                       }
                       setScreen('task');
@@ -1667,7 +1759,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
                       ? documentProgress?.uploaded ? 'home.continueUploading' : 'home.uploadDocuments'
                       : displayStatus === 'Needs Correction'
                         ? documentProgress?.rejected === 1 ? 'home.fixDocument' : 'home.fixDocuments'
-                        : displayStatus === 'Under Review' || displayStatus === 'Completed' ? 'home.viewDocuments' : 'home.viewTask')}
+                        : displayStatus === 'Under Review' || allDocsApproved ? 'home.viewDocuments' : 'home.viewTask')}
                     <ChevronRight className="w-6 h-6 shrink-0" />
                   </button>
                 </div>
@@ -1730,10 +1822,29 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
   /* ════════════════════════════════════════════════════════════
      TASK SCREEN
   ════════════════════════════════════════════════════════════ */
-  const showSlider = a && !isTerminal && nextStatus && !updating;
-  const sliderLabel = nextStatus
-    ? t('slide.confirm', { status: statusText(nextStatus) })
-    : '';
+  const workflowAction = phase === 'assigned' ? 'workflow.arrivePickup'
+    : phase === 'pickup' ? 'workflow.startLoading'
+    : phase === 'loading' ? 'workflow.finishLoading'
+    : phase === 'pretrip' || phase === 'legacy_picked_up' ? 'workflow.startTrip'
+    : phase === 'trip_pending' ? 'workflow.finishTripSync'
+    : phase === 'in_transit' ? 'workflow.arriveDestination'
+    : phase === 'arrived' ? 'workflow.startUnloading'
+    : phase === 'unloading' ? 'workflow.finishUnloading'
+    : phase === 'delivery_pending' ? 'workflow.finishDeliverySync' : null;
+  const requiredPhotoKeys: readonly OperationalPhotoKey[] = phase === 'pickup' ? [...OPERATIONAL_PHOTOS.pickup, 'loading_before']
+    : phase === 'loading' ? ['loading_after']
+      : phase === 'pretrip' ? OPERATIONAL_PHOTOS.pretrip : [];
+  const photosIncomplete = !!a && requiredPhotoKeys.some((key) => !a.statusPhotos?.[key]?.url);
+  const pickupTruckPhotosIncomplete = phase === 'pickup' && !!a && OPERATIONAL_PHOTOS.pickup
+    .some((key) => !a.statusPhotos?.[key]?.url);
+  const operationalPhotoName = operationalPhotoTarget?.endsWith('_front') ? t('workflow.front')
+    : operationalPhotoTarget?.endsWith('_left') ? t('workflow.left')
+    : operationalPhotoTarget?.endsWith('_right') ? t('workflow.right')
+    : operationalPhotoTarget?.endsWith('_rear') ? t('workflow.rear')
+    : operationalPhotoTarget === 'loading_before' ? t('workflow.beforeLoading')
+    : operationalPhotoTarget === 'loading_after' ? t('workflow.afterLoading')
+    : operationalPhotoTarget === 'unloading_before' ? t('workflow.beforeUnloading')
+    : t('workflow.afterUnloading');
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -1783,6 +1894,8 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
 
         {a && (
           <>
+            {!isFailed && !isCancelled && phase &&
+              (phase !== 'delivered' || !!a.unloadingCompletedAt) && <OperationalProgress phase={phase} />}
             {/* ── Route Summary ── */}
             <div className="bg-white rounded-2xl border border-gray-200 shadow-sm px-5 py-5 space-y-4">
               <div>
@@ -1800,7 +1913,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
               </div>
             </div>
 
-            {a.taskStatus === 'Assigned' && (
+            {phase === 'assigned' && (
               <p className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800">
                 {t('task.proceedPickup')}
               </p>
@@ -1808,6 +1921,10 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
 
             {isDelivered && (
               <div className="rounded-2xl border border-green-200 bg-green-50 px-4 py-4 space-y-3">
+                {(a.unloadingCompletedAt || a.statusPhotos?.Delivered?.timestamp) &&
+                  <p className="text-sm font-semibold text-green-900">{t('workflow.deliveryDone', {
+                    time: a.unloadingCompletedAt ? manilaStamp(a.unloadingCompletedAt) : a.statusPhotos?.Delivered?.timestamp ?? '',
+                  })}</p>}
                 {displayStatus === 'Awaiting Documents' && (
                   <p className="text-sm font-semibold leading-snug text-green-900">{t('task.deliveryCompletedUploadPrompt')}</p>
                 )}
@@ -1873,19 +1990,59 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
               </div>
             )}
 
-            {/* ── Current persisted progress (six stages, including documents) ── */}
-            {!isFailed && !isCancelled && (
-              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm px-5 py-5">
-                <h3 className="text-base font-bold text-foreground mb-5">{t('task.progress')}</h3>
-                <VerticalTracker
-                  stepIdx={stepIdx}
-                  isDelivered={isDelivered}
-                  uploadedCt={uploadedCt}
-                  approvedCt={approvedCt}
-                  totalDocs={REQUIRED_DOCS.length}
-                />
+            {/* Operational photos are stored in status_photos, apart from the six documents. */}
+            {phase === 'pickup' && <>
+              <OperationalPhotos assignment={a} keys={OPERATIONAL_PHOTOS.pickup}
+                title={t('workflow.truckPhotos')} help={t('workflow.pickupPhotosHelp')}
+                required onSelect={setOperationalPhotoTarget} />
+              <OperationalPhotos assignment={a} keys={['loading_before']}
+                title={t('workflow.beforeLoading')} help={t('workflow.beforeLoadingHelp')}
+                required onSelect={setOperationalPhotoTarget} />
+            </>}
+            {phase === 'loading' && <>
+              <div className="rounded-2xl border border-gray-200 bg-white p-4 text-sm text-gray-700">
+                <p className="font-bold text-base">{t('workflow.loadingProgress')}</p>
+                <p className="mt-1">{t('workflow.startedAt', { time: manilaStamp(a.loadingStartedAt ?? undefined) })}</p>
+                <ElapsedTime start={a.loadingStartedAt} />
               </div>
-            )}
+              <OperationalPhotos assignment={a} keys={['loading_after']}
+                title={t('workflow.afterLoading')} help={t('workflow.afterLoadingHelp')}
+                required onSelect={setOperationalPhotoTarget} />
+            </>}
+            {phase === 'pretrip' && <>
+              {a.loadingCompletedAt && <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-900">
+                <p className="font-semibold">{t('workflow.finishedAt', { time: manilaStamp(a.loadingCompletedAt) })}</p>
+                {a.loadingStartedAt && <p>{t('workflow.duration', { time: elapsedClock(a.loadingStartedAt, new Date(a.loadingCompletedAt)) ?? '—' })}</p>}
+              </div>}
+              <p className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800">{t('workflow.parked')}</p>
+              <OperationalPhotos assignment={a} keys={OPERATIONAL_PHOTOS.pretrip}
+                title={t('workflow.truckPhotos')} help={t('workflow.pretripPhotosHelp')}
+                required onSelect={setOperationalPhotoTarget} />
+            </>}
+            {phase === 'trip_pending' && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">{t('workflow.departurePending')}</p>}
+            {phase === 'legacy_picked_up' && <p className="rounded-xl border border-gray-200 bg-white p-4 text-sm text-gray-700">{t('workflow.legacyPickup')}</p>}
+            {phase === 'in_transit' && a.departedAt && <div className="rounded-2xl border border-gray-200 bg-white p-4 text-sm font-semibold text-gray-700">
+              {t('workflow.tripStartedAt', { time: manilaStamp(a.departedAt ?? undefined) })}
+            </div>}
+            {phase === 'arrived' && <>
+              <div className="rounded-2xl border border-green-200 bg-green-50 p-4 text-sm text-green-900">
+                <p className="font-bold text-base">{t('workflow.arrivedMessage')}</p>
+                <p className="mt-1 break-words">{getDeliveryLocation(a)}</p>
+                <p className="mt-1">{t('workflow.arrivedAt', { time: manilaStamp(a.destinationArrivedAt ?? undefined) })}</p>
+              </div>
+              <OperationalPhotos assignment={a} keys={['unloading_before']}
+                title={t('workflow.beforeUnloading')} required={false} onSelect={setOperationalPhotoTarget} />
+            </>}
+            {phase === 'unloading' && <>
+              <div className="rounded-2xl border border-gray-200 bg-white p-4 text-sm text-gray-700">
+                <p className="font-bold text-base">{t('workflow.unloadingProgress')}</p>
+                <p className="mt-1">{t('workflow.startedAt', { time: manilaStamp(a.unloadingStartedAt ?? undefined) })}</p>
+                <ElapsedTime start={a.unloadingStartedAt} />
+              </div>
+              <OperationalPhotos assignment={a} keys={['unloading_after']}
+                title={t('workflow.afterUnloading')} required={false} onSelect={setOperationalPhotoTarget} />
+            </>}
+            {phase === 'delivery_pending' && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">{t('workflow.deliveryPending')}</p>}
 
             {/* ── Task Details (flat, always visible) ── */}
             <div className="bg-white rounded-2xl border border-gray-200 shadow-sm px-5 py-3">
@@ -1957,31 +2114,36 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
       </div>
 
       {/* ── Sticky bottom action ── */}
-      {a && !isTerminal && (
+      {a && !isTerminal && workflowAction && (
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-4 pt-4 pb-6 shadow-[0_-4px_20px_rgba(0,0,0,0.10)] z-20">
-          {blockSlider ? (
-            <SlideToConfirm label={t('slide.reportDelay')} onConfirm={() => false} disabled />
-          ) : (
-            <SlideToConfirm
-              label={updating ? t('slide.updating') : sliderLabel}
-              disabled={updating}
-              onConfirm={async () => {
-                if (!nextStatus) return false;
-                if (NEEDS_PHOTO.includes(nextStatus)) {
-                  if (nextStatus === 'Delivered') setDeliveredDlg(true);
-                  else setPhotoTarget(nextStatus);
-                  return false; // The slide opens the required-photo step; status has not changed yet.
-                }
-                return pushUpdate({ taskStatus: nextStatus });
-              }}
-            />
-          )}
+          {(photosIncomplete || blockSlider) && <p className="mb-3 text-sm font-semibold text-amber-800">
+            {blockSlider ? t('slide.reportDelay') : t(phase === 'loading' ? 'workflow.completeLoadingPhoto'
+              : phase === 'pickup' && !pickupTruckPhotosIncomplete ? 'workflow.completeBeforeLoadingPhoto' : 'workflow.completeFour')}
+          </p>}
+          <SlideToConfirm
+            label={t(workflowAction)}
+            disabled={updating || photosIncomplete || blockSlider || !online}
+            onConfirm={async () => {
+              if (phase === 'legacy_picked_up') {
+                setPhotoTarget('In Transit');
+                return false;
+              }
+              return handleOperationalSlide();
+            }}
+          />
         </div>
       )}
 
       {/* ── Sheets / Modals ── */}
       {photoTarget  && <PhotoSheet    status={photoTarget}  onConfirm={handlePhotoConfirmed} onCancel={() => setPhotoTarget(null)} />}
-      {deliveredDlg && <DeliveredSheet onConfirm={openDeliveredPhoto} onCancel={() => setDeliveredDlg(false)} />}
+      {operationalPhotoTarget && <PhotoSheet status={null}
+        title={operationalPhotoName}
+        instruction={t('workflow.photoSlot', {
+          angle: operationalPhotoName,
+          requirement: t(['unloading_before', 'unloading_after'].includes(operationalPhotoTarget)
+            ? 'workflow.optional' : 'workflow.required'),
+        })}
+        onConfirm={handleOperationalPhotoConfirmed} onCancel={() => setOperationalPhotoTarget(null)} />}
       {delaySheet   && (
         <ReasonSheet
           title={delaySheet === 'pickup' ? t('task.pickupDelay') : t('task.deliveryDelay')}

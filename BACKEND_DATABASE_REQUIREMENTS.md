@@ -144,6 +144,13 @@ Delivered to include arrival at pickup, four pickup truck-condition photos,
 loading start and finish, four pre-trip truck-condition photos, arrival at the
 delivery location, unloading start and finish, and the required/optional photo
 rules. Keep the existing six-document review flow after physical delivery.
+Updated client requirement (2026-10-19): both `unloading_before` and
+`unloading_after` photos are required before finishing unloading. Loading and
+Unloading do not need separate location fields; the assignment's pickup and
+delivery locations provide that context.
+Updated Loading requirement (2026-10-19): `loading_before` is now required
+before starting Loading, alongside the already-required `loading_after` photo
+before finishing Loading. Existing photo categories and storage remain usable.
 
 **Why backend/database support is required:**
 `public.assignments.task_status` and `guard_assignment_update()` currently allow
@@ -181,15 +188,30 @@ required photos and transitions atomically.
   ownership, required persisted photo slots, and transition order; stamps the
   event on the server; and updates status/activity together. Make retries safe
   and reject duplicate or out-of-order slides.
-- Define stable photo category keys for pickup front/left/right/rear, optional
-  before loading, required after loading, pre-trip front/left/right/rear,
-  optional before unloading, and optional/recommended after unloading. Reuse
+- Define stable photo category keys for pickup front/left/right/rear, required
+  before loading and after loading, pre-trip front/left/right/rear,
+  and required before and after unloading. Reuse
   `status_photos` and the private Storage bucket if their permissions and
   replacement behavior suffice; add storage/schema support only if inspection
   during implementation proves necessary. A photo counts only after its row
   and file persist successfully.
 - Expose the same canonical stage and event times to Admin Dispatch,
   Deliveries, Dashboard/Recent Activity, Driver, and Delay Reports.
+- Update `advance_driver_stage('finish_unloading')` to reject the transition
+  unless both persisted `unloading_before` and `unloading_after` photo rows
+  exist. The current function only checks the stage, so the new rule is **not
+  enforced yet**. This RPC change requires separate backend approval and
+  application to the development project; no new photo columns are needed.
+- Update `advance_driver_stage('start_loading')` to require a persisted
+  `loading_before` photo in addition to the four pickup truck photos. The
+  applied function currently checks only the four pickup photos. The local
+  Driver UI blocks its Start Loading slider until `loading_before` is saved,
+  but that client-side gate is not server enforcement. This RPC change needs
+  separate backend approval and application to development; no new photo
+  columns are needed.
+- Add durable, stage-specific Loading and Unloading driver remarks only after
+  a storage model and authorized read/write path are approved. The existing
+  assignment `remarks` field is admin-created and must stay separate.
 
 **Suggested data model:**
 - A persisted stage field or expanded `task_status` constraint, with a safe
@@ -224,10 +246,12 @@ transition must leave the previous stage visible. The driver's offline demo
 mode must never appear to persist a real transition. Do not introduce the new
 stages in React before server persistence and validation exist.
 
-**Approval:** Approved — schema and transition function, local development
-(2026-10-18). The driver/admin UI is not approved yet, and per this
-requirement's own risk notes must not be built before the server side is
-verified.
+**Approval:** Approved — schema and transition function for local development
+(2026-10-18); Driver UI integration approved for local development
+(2026-10-19); Admin Dispatch/View Shipment UI integration approved for local
+development (2026-10-19). The revised before-loading and unloading photo
+enforcement and stage-specific remarks persistence are **not approved for
+backend changes**.
 
 **Design decisions made (2026-10-18):**
 - Stages are tracked in a new, separate `operational_stage` column rather than
@@ -288,25 +312,83 @@ signed in as admin, against a real test assignment (`ASN66661`):
 `missing_required_photo: pickup_front`; inserting the 4 required
 `status_photos` rows and retrying `start_loading` then succeeded. Order
 validation, the photo gate (both block and unblock), and server-side
-timestamp stamping are all confirmed working end to end. The remaining 5
-transitions (`finish_loading`, `depart`, `arrive_destination`,
-`start_unloading`, `finish_unloading`) were not individually exercised, since
-they follow the identical pattern already proven.
+timestamp stamping were confirmed for those initial transitions. The other
+five transitions were exercised later through the Driver UI as recorded below.
 
-**Blocked:**
-- The transitions migration needs to be applied and exercised (call each
-  transition via the Supabase SQL editor or a temporary script, confirm
-  correct stamps, confirm a wrong-order or missing-photo call is rejected)
-  before it can be marked Implemented.
+**Local Driver UI verification (2026-10-19):**
+- On 2026-10-19, a signed-in development driver advanced test assignment
+  `ASN65961` from In Transit through `arrive_destination`, `start_unloading`,
+  and `finish_unloading`. The Arrived stage survived refresh, optional
+  unloading photos were skipped, and Delivered persisted after refresh.
+- A second development assignment, `ASN95221`, passed the complete flow from
+  Assigned through Delivered in the Driver UI. Four pickup and four pre-trip
+  image slots, plus the required after-loading slot, were uploaded through
+  the existing photo flow using clearly synthetic project truck artwork.
+  The photo gates unlocked only after the corresponding files and rows saved.
+  Loading and unloading timestamps/durations and In Transit survived refresh.
+  Before-loading and unloading photos were skipped under the rules in effect
+  during that earlier test; before-loading is now required for new UI flows.
+  Driver Home then showed Awaiting Documents with 0 of 6 formal documents.
+
+**Admin Dispatch integration prepared (2026-10-19):**
+- `src/app/lib/assignmentOperational.ts` derives the admin physical-stage
+  progress, compact card badge, Manila timestamps, durations, photo groups,
+  and a visible warning for the two non-atomic status handoffs from the
+  persisted assignment fields. It creates no new workflow state.
+- `src/app/components/admin/DriversManagement.tsx` now shows seven-stage
+  progress, a Delivery Activity timeline, and categorized operational photo
+  evidence in View Shipment. Dispatch cards display the active physical stage
+  where applicable. Formal documents remain in their separate six-item section.
+  Older records do not receive fabricated event timestamps or completed dots.
+- `src/app/lib/assignmentOperational.test.cjs` covers stage derivation,
+  unsynchronized status handoffs, timestamp/duration formatting, and photo keys.
+  Admin Dispatch was visually checked against `ASN95221` after refresh: all
+  seven real event times, pickup/loading/pre-trip photos, Delivered milestone,
+  and independent 0/6 documents remained visible. No database write or
+  migration was made in this UI phase.
+- View Shipment was later reorganized into Overview, Activity, Photos,
+  and Documents tabs in a centered desktop panel and full-screen mobile sheet.
+  The Photos tab shows both unloading slots as required and marks missing
+  evidence. It does **not** claim that the current backend enforces this new
+  rule. No stage-specific driver remark text is displayed because none is
+  persisted. The assignment's own Remarks remain in Overview.
+
+**Remaining backend and test gaps:**
 - The Delivered gate (require `operational_stage = 'unloaded'` before
   `task_status` can become `Delivered`) is intentionally not included — adding
   it now would break Delivered for every assignment immediately, since
   nothing writes `operational_stage` until the driver UI ships. It is a
   deliberate follow-up migration once that UI is live for everyone.
-- The driver UI (stage screens, photo capture per category, progress
-  indicator) and any admin-facing display of the new stage/timestamps are not
-  started and not approved. REQ-001 is Implemented, so it no longer blocks
-  this one.
+- The Driver UI integration was tested in development. Failure/retry paths for
+  a rejected photo upload or the second status write after `depart` or
+  `finish_unloading` were not force-tested. Deliveries, Dashboard/Recent
+  Activity, and Delay Reports still need separate admin UI integration.
+
+**Frontend integration gaps identified (2026-10-19):**
+- `depart` persists `operational_stage = NULL`, `departed_at`, and
+  `task_status = 'Picked Up'`; `finish_unloading` persists
+  `operational_stage = 'unloaded'` and `unloading_completed_at` but does not
+  set `task_status = 'Delivered'`. The Driver UI must make a separate existing
+  status update after each RPC. If that second request fails, the saved
+  intermediate stage is recoverable after refresh, but the two writes are not
+  atomic. A later approved backend follow-up should make these status changes
+  part of the validated transition if one-step atomicity is required.
+- REQ-002 does not provide a persistent field/table/API for driver-entered
+  remarks at Loading or Unloading. No remarks input is being added as
+  temporary React state. Add optional, stage-scoped remarks persistence only
+  after its data model and authorization are approved.
+- The applied `20261018000001_driver_workflow_transitions.sql` checks only
+  `operational_stage = 'unloading'` for `finish_unloading`. It does not require
+  `unloading_before` or `unloading_after`; the current Driver UI still treats
+  them as optional. The updated client rule needs a reviewed RPC change plus
+  matching Driver photo labels/gate. Existing delivered assignments that lack
+  these photos must remain readable and must not be retroactively invalidated.
+- The same applied transition function allows `start_loading` without
+  `loading_before`. The local Driver UI now labels it Required and checks its
+  persisted photo row before enabling the slider; Admin Photos and Activity
+  show Loading as complete only with both `loading_before` and `loading_after`.
+  A direct RPC call can still bypass that UI gate. Add the server check only
+  after backend approval, without retroactively invalidating older assignments.
 
 ---
 
@@ -503,8 +585,59 @@ confirmed by reproducing each failure live, not just inferred:
   cleanup (whatever currently renders there should show nothing or a
   placeholder for non-OPM) rather than a security gap.
 
-**Migration required:** Yes — written, not yet applied to the development
-project.
+**CSR Dispatch synchronization discovered (2026-10-19; further backend work not approved):**
+- `DriversManagement.handleAssignTask()` appends the assignment locally and
+  also sets `drivers.status` and `trucks.status` to `Assigned`. The debounced
+  `App.saveToServer()` calls `syncAdminData()`, which writes `trucks` and
+  `drivers` before `assignments`. Under the OPM-only policies, CSR's truck
+  update fails with the reported RLS error before this save reaches the
+  assignment insert. Deliveries can still show the unsaved local assignment
+  because it reads the same React array; that alone does not prove persistence.
+- The new status-only migration above is intended to permit the resource
+  status writes again, but it has not been applied or verified. It does not
+  make the multi-table dispatch save atomic or prevent duplicate active
+  assignments by itself.
+- Availability is not purely derived today: `trucks.status` and
+  `drivers.status` are stored, the fleet screens and truck picker read them,
+  and `edit_assignment()` checks the stored truck status. The assignments
+  table has no unique active-driver or active-truck constraint. Merely
+  removing the frontend status writes would leave the database saying the
+  resources are Available and could permit duplicate dispatches.
+- A separate, approved development migration should add a narrowly granted,
+  transactional `create_dispatch_assignment` operation. It must authorize
+  CSR/admin, lock and validate the selected active driver/truck, reject any
+  existing active assignment for either resource, insert the assignment and
+  its required document rows, set resource statuses using definer privileges,
+  and return the persisted assignment/ASN. Make retries or duplicate submits
+  safe.
+- Once that operation is available, the frontend should call it directly,
+  avoid the local truck/driver master-record writes, refresh from
+  `loadAdminData()` after success, and show an assignment-specific error only
+  when creation fails. The generic auto-save must not be used as proof that
+  a dispatch was created. Review completion/release paths before claiming
+  end-to-end CSR availability works.
+- The local Dispatch display was adjusted to keep active assignments visible
+  even when a linked master record is absent; it does not solve the CSR
+  creation transaction.
+- Completing a delivery still uses the multi-table `syncAdminData()` path.
+  The View Shipment UI can wait for that save before closing, but the server
+  does not yet atomically verify `Delivered` plus all six approved documents
+  and update assignment state, resource availability, and activity together.
+  The local frontend now keeps a six-approved assignment in the active
+  Delivered state until the explicit completion save moves it to the persisted
+  completed archive; approval alone no longer displays it as Completed.
+  A future approved completion operation must enforce those checks server-side
+  and make the related writes transactional. Until then, a save error can leave
+  partial resource updates, and the UI must not claim completion on failure.
+
+**CSR Dispatch transaction approval:** Not approved. Do not prepare or apply
+it until explicitly authorized. The status-only migration above is present
+in Git but remains unapplied to development.
+
+**Migration required:** The OPM role migration was applied. The activity-log
+follow-up and the status-only Dispatch follow-up are written but not yet
+applied to development. The separate CSR Dispatch transaction described
+above has no SQL yet.
 
 **Approval:** Approved — local development (2026-10-18).
 

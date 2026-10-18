@@ -1,7 +1,7 @@
 import type { Assignment } from '../data/assignmentTypes';
 
-type TimingAssignment = Pick<Assignment, 'taskStatus' | 'deliveryDate' | 'eta' | 'statusPhotos'>;
-type PickupTimingAssignment = Pick<Assignment, 'taskStatus' | 'pickedUpDate' | 'pickupTime' | 'statusPhotos'>;
+type TimingAssignment = Pick<Assignment, 'taskStatus' | 'deliveryDate' | 'eta' | 'statusPhotos' | 'unloadingCompletedAt'>;
+type PickupTimingAssignment = Pick<Assignment, 'taskStatus' | 'pickedUpDate' | 'pickupTime' | 'statusPhotos' | 'departedAt'>;
 
 export type DeliveryTimingStatus = {
   kind: 'overdue' | 'delivered_late';
@@ -70,10 +70,11 @@ export function statusPhotoTimestamp(value?: string): number | null {
 }
 
 /** Physical delivery evidence time, shared by schedule and document-age displays. */
-export function getPhysicalDeliveryTimestamp(assignment: Pick<Assignment, 'taskStatus' | 'statusPhotos'>): number | null {
-  return assignment.taskStatus === 'Delivered'
-    ? statusPhotoTimestamp(assignment.statusPhotos?.Delivered?.timestamp)
-    : null;
+export function getPhysicalDeliveryTimestamp(assignment: Pick<Assignment, 'taskStatus' | 'statusPhotos' | 'unloadingCompletedAt'>): number | null {
+  if (assignment.taskStatus !== 'Delivered') return null;
+  const serverTime = assignment.unloadingCompletedAt ? Date.parse(assignment.unloadingCompletedAt) : NaN;
+  return Number.isFinite(serverTime) ? serverTime
+    : statusPhotoTimestamp(assignment.statusPhotos?.Delivered?.timestamp);
 }
 
 const unitText = (value: number, unit: 'minute' | 'hour' | 'day') =>
@@ -113,7 +114,9 @@ export function getPickupTimingStatus(assignment: PickupTimingAssignment, now = 
     };
   }
 
-  const pickedUpAt = statusPhotoTimestamp(assignment.statusPhotos?.['Picked Up']?.timestamp);
+  const departure = assignment.departedAt ? Date.parse(assignment.departedAt) : NaN;
+  const pickedUpAt = Number.isFinite(departure) ? departure
+    : statusPhotoTimestamp(assignment.statusPhotos?.['Picked Up']?.timestamp);
   if (pickedUpAt === null || pickedUpAt <= scheduledAt) return null;
   const text = historicalPickupDuration(pickedUpAt - scheduledAt);
   return {

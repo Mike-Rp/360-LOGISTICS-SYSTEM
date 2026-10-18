@@ -57,7 +57,8 @@ export function getOverviewItems(
     const times = [creationTime(record.createdAt, record.id), ...evidenceTimes].filter((time): time is number => time !== null);
     byId.set(record.id, { id: record.id, activityAt: times.length ? Math.max(...times) : null, status });
   };
-  for (const record of [...completed, ...assignments]) {
+  // An archived completion wins if a save/poll briefly exposes both copies.
+  for (const record of [...assignments, ...completed]) {
     add(record, getAssignmentDisplayStatus(record));
   }
   for (const record of cancelled) {

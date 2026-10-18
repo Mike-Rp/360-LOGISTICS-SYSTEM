@@ -35,6 +35,7 @@ export function parseStoredTimestamp(ts: string): Date | null {
 
 export type TaskStatus = 'Assigned' | 'Picked Up' | 'In Transit' | 'Delivered' | 'Failed / Issue' | 'Cancelled';
 export type DocStatus  = 'pending' | 'approved' | 'rejected';
+export type OperationalStage = 'pickup_arrived' | 'loading' | 'loaded' | 'destination_arrived' | 'unloading' | 'unloaded';
 
 export interface AssignmentDoc {
   type: string;
@@ -77,6 +78,15 @@ export interface Assignment {
   taskStatus: TaskStatus;
   documents: AssignmentDoc[];
   assignedAt: string;
+  /* REQ-002 server-owned progress. These values are read-only in the client. */
+  operationalStage?: OperationalStage | null;
+  pickupArrivedAt?: string | null;
+  loadingStartedAt?: string | null;
+  loadingCompletedAt?: string | null;
+  departedAt?: string | null;
+  destinationArrivedAt?: string | null;
+  unloadingStartedAt?: string | null;
+  unloadingCompletedAt?: string | null;
   /* Driver-submitted data */
   statusPhotos?: Record<string, StatusPhoto>;
   issueReason?: string;

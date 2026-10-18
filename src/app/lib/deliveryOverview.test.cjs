@@ -57,17 +57,17 @@ test('current status mix covers the full workflow, real issue status, and cancel
     record('correction', 'Delivered', '2026-10-16T01:00:00Z', [
       { ...docs('pending', 1)[0], docStatus: 'rejected' },
     ]),
+    record('ready', 'Delivered', '2026-10-16T01:00:00Z', docs('approved')),
     record('issue', 'Failed / Issue', '2026-10-16T01:00:00Z'),
   ];
   const completed = [{ ...record('complete', 'Delivered', '2026-10-16T01:00:00Z', docs('approved')), completedAt: 'Oct 16, 2026' }];
   const cancelled = [record('cancelled', 'Cancelled', '2026-10-16T01:00:00Z')];
   const counts = totals(overview.buildOverviewBars(active, completed, cancelled, 'today', now));
-  // Physical Delivered immediately enters the document workflow when six docs
-  // are required, so the standalone Delivered display status can legitimately be 0.
+  // Approved active work remains Delivered until the explicit archive action.
   for (const status of workflow.ASSIGNMENT_DISPLAY_STATUSES) {
-    assert.equal(counts[status], status === 'Delivered' ? 0 : status === 'Awaiting Documents' ? 2 : 1, status);
+    assert.equal(counts[status], status === 'Awaiting Documents' ? 2 : 1, status);
   }
-  assert.equal(Object.values(counts).reduce((sum, count) => sum + count, 0), 10);
+  assert.equal(Object.values(counts).reduce((sum, count) => sum + count, 0), 11);
 });
 
 test('an older assignment updated today appears under its current status', () => {

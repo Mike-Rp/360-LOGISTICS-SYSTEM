@@ -2,10 +2,10 @@ import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import {
   User, Truck, MapPin, Building2, Calendar, MessageSquare,
-  Activity, X, ClipboardList, CheckCircle2,
+  X, ClipboardList, CheckCircle2,
   FileText, Check, XCircle, AlertTriangle, Clock,
   Package, Trash2, ChevronDown, ChevronUp, ZoomIn,
-  Navigation, Timer, AlarmClock, Camera, Search,
+  Navigation, Timer, Camera, Search,
   Plus, ArrowLeft, ArrowRight, ChevronLeft, ChevronRight,
   Receipt, ClipboardCheck, ScrollText, FileCheck, PackageCheck,
   Pencil, KeyRound,
@@ -14,17 +14,20 @@ import { RegisterDriverModal, RegisterTruckModal } from './RegisterModals';
 import { Popover, PopoverAnchor, PopoverContent } from '../ui/popover';
 import TruckImage from '../TruckImage';
 import ASNWithCopy from './ASNWithCopy';
+import DocumentsSummaryCard from './DocumentsSummaryCard';
+import { ImagePreviewModal, OperationalEvidence } from './ShipmentPhotoEvidence';
 import DeliveryTimingBadge from './DeliveryTimingBadge';
 import PickupTimingNotice from './PickupTimingNotice';
 import { getDispatchTimingNotices } from '../../lib/assignmentTiming';
-import { assignmentDisplayStatusConfig, getAssignmentDisplayStatus, getAssignmentDocumentProgress, getDocumentAgingState, type AssignmentDisplayStatus } from '../../lib/assignmentWorkflow';
+import { OPERATIONAL_STEPS, OPERATIONAL_PHOTO_GROUPS, getAdminOperationalProgress, formatOperationalStamp, formatOperationalDuration } from '../../lib/assignmentOperational';
+import { assignmentDisplayStatusConfig, canCompleteAssignment, getAssignmentDisplayStatus, getAssignmentDocumentProgress, getDocumentAgingState, type AssignmentDisplayStatus } from '../../lib/assignmentWorkflow';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
 import { sortNewestFirst, markLocalRecordAdded, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
 import { ADMIN_NAVIGATION_EVENT, adminHref, followAdminLink, pushAdminNavigation } from '../../lib/adminNavigation';
 import { TRUCK_CLASSIFICATIONS, truckSideImageFor, capacityKgOnly } from '../../data/truckTypes';
 import { destinationAreaEnabled, getAssignmentRoute, getDeliveryLocation } from '../../data/assignmentRoute';
 import {
-  verifyOwnPassword, editAssignment, cancelAssignment, AssignmentActionError,
+  verifyOwnPassword, editAssignment, cancelAssignment, syncAdminData, AssignmentActionError,
   type AssignmentActionErrorCode, type AssignmentEdit,
 } from '../../lib/db';
 
@@ -44,9 +47,9 @@ function Highlight({ text, query }: { text: string; query: string }) {
   );
 }
 import {
-  DOCUMENT_TYPES, taskStatusConfig, DEMO_ADMIN_EMAIL, parseStoredTimestamp,
+  DOCUMENT_TYPES, DEMO_ADMIN_EMAIL, parseStoredTimestamp,
   type Assignment, type CompletedTask, type LocalDriver, type LocalTruck,
-  type TaskStatus, type DocStatus, type AdminActivityInput, type AssignmentDoc, type AppNotification,
+  type DocStatus, type AdminActivityEntry, type AdminActivityInput, type AssignmentDoc, type AppNotification,
 } from '../../data/assignmentTypes';
 
 /* ─── Date & time values ───────────────────────────── */
@@ -578,8 +581,8 @@ function TruckPreviewCard({ truck }: { truck: LocalTruck }) {
 
 /* Side-view picture + plate, highlighted type and capacity badge.
    Used by View Details (plate first) and the Edit preview (type first — it's what you're choosing). */
-function TruckSummary({ truck, fallbackPlate, typeFirst = false }: {
-  truck: LocalTruck | null; fallbackPlate?: string; typeFirst?: boolean;
+function TruckSummary({ truck, fallbackPlate, typeFirst = false, compact = false }: {
+  truck: LocalTruck | null; fallbackPlate?: string; typeFirst?: boolean; compact?: boolean;
 }) {
   const plate = (
     <p className="text-2xl sm:text-[28px] font-bold text-foreground leading-tight break-words">
@@ -587,7 +590,7 @@ function TruckSummary({ truck, fallbackPlate, typeFirst = false }: {
     </p>
   );
   const type = (
-    <p className={`text-lg sm:text-xl font-bold uppercase leading-tight break-words mt-0.5 ${
+    <p className={`${compact ? 'text-sm sm:text-base' : 'text-lg sm:text-xl'} font-bold uppercase leading-tight break-words mt-0.5 ${
       truck?.classification ? 'text-blue-600' : 'text-muted-foreground'}`}>
       {truck?.classification || 'Type not set'}
     </p>
@@ -595,7 +598,7 @@ function TruckSummary({ truck, fallbackPlate, typeFirst = false }: {
   return (
     <div className="flex items-center gap-3 sm:gap-4">
       {/* Side view: shows the left part of the 1200×400 canvas, where the truck is */}
-      <div className="w-[40%] max-w-[11rem] aspect-[7/5] flex items-center justify-center flex-shrink-0 overflow-hidden">
+      <div className={`${compact ? 'w-24 lg:w-32' : 'w-[40%] max-w-[11rem]'} aspect-[7/5] flex items-center justify-center flex-shrink-0 overflow-hidden`}>
         <TruckImage anchorLeft src={truckSideImageFor(truck?.classification)} alt={truck?.classification}
           className="w-full h-full" iconClassName="w-10 h-10 text-muted-foreground" />
       </div>
@@ -654,6 +657,18 @@ function StatusBadge({ status, size = 'sm', acknowledged = true }: { status: Ass
   );
 }
 
+function DispatchStatusBadge({ assignment }: { assignment: Assignment }) {
+  const stage = getAdminOperationalProgress(assignment).badge;
+  if (!stage) return <StatusBadge status={getAssignmentDisplayStatus(assignment)} acknowledged={!!assignment.driverAcknowledgedAt} />;
+  const tone = stage === 'At Pickup' ? 'border-sky-200 bg-sky-50 text-sky-700'
+    : stage === 'Loading' ? 'border-amber-200 bg-amber-50 text-amber-800'
+      : stage === 'Arrived' ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+        : 'border-orange-200 bg-orange-50 text-orange-800';
+  return <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${tone}`}>
+    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />{stage}
+  </span>;
+}
+
 /* ─── Modal Shell ──────────────────────────────────── */
 function ModalShell({ title, onClose, wide = false, children }: {
   title: React.ReactNode; onClose: () => void; wide?: boolean; children: React.ReactNode;
@@ -674,62 +689,25 @@ function ModalShell({ title, onClose, wide = false, children }: {
   );
 }
 
-/* ─── Image Preview Modal ──────────────────────────── */
-function ImagePreviewModal({ url, docType, onClose }: { url: string; docType: string; onClose: () => void }) {
-  /* Real uploads are signed Storage URLs, not data: URIs, so there's no reliable
-     way to tell a PDF from an image just by looking at the URL string. Try it as
-     an image first; if the browser can't decode it (because it's actually a PDF),
-     fall back to an iframe, which both PDFs and images render fine in. */
-  const [imgFailed, setImgFailed] = useState(false);
-  const isPdf = url.startsWith('data:application/pdf') || imgFailed;
-  return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-xl flex flex-col max-h-[85vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-        <div className="flex items-center justify-between px-5 py-3 border-b border-border flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <FileText className="w-4 h-4 text-muted-foreground" />
-            <span className="text-sm font-semibold text-foreground">{docType}</span>
-          </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-accent transition-colors text-muted-foreground">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-        <div className="flex-1 overflow-auto p-4 flex items-center justify-center bg-muted/10">
-          {isPdf ? (
-            <iframe src={url} className="w-full h-[500px] rounded-lg border border-border" title={docType} />
-          ) : (
-            <img src={url} alt={docType} onError={() => setImgFailed(true)} className="max-w-full max-h-[500px] object-contain rounded-xl shadow-md" />
-          )}
-        </div>
-        <div className="px-5 py-3 border-t border-border flex-shrink-0">
-          <a href={url} download={`${docType}.${isPdf ? 'pdf' : 'jpg'}`}
-            className="text-xs text-primary underline hover:text-primary/80">Download file</a>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 /* ─── View Details building blocks ─────────────────── */
 
 /* Card wrapper — soft rounded group with a shared background */
 function DetailCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="rounded-xl border border-border/70 bg-muted/25 p-4">
-      <p className="text-[12px] font-semibold text-muted-foreground uppercase tracking-wider mb-3">{title}</p>
+      <p className="text-[13px] font-semibold text-muted-foreground uppercase tracking-wider mb-3">{title}</p>
       <div className="space-y-3">{children}</div>
     </section>
   );
 }
 
 /* One label/value pair. `hero` is for the single most time-critical field (ETA). */
-function DetailRow({ icon, label, value, hero = false }: {
-  icon: React.ReactNode; label: string; value?: string; hero?: boolean;
+function DetailRow({ icon, label, value, hero = false, compact = false }: {
+  icon: React.ReactNode; label: string; value?: string; hero?: boolean; compact?: boolean;
 }) {
   const filled = !!value && value !== '—';
   return (
-    <div className="flex items-start gap-2.5">
+    <div className={`flex items-start ${compact ? 'gap-1.5' : 'gap-2.5'}`}>
       <span className="text-muted-foreground mt-0.5 flex-shrink-0">{icon}</span>
       <div className="min-w-0 flex-1">
         <p className="text-[12px] font-medium text-muted-foreground uppercase tracking-wide">{label}</p>
@@ -766,44 +744,135 @@ function RouteRow({ route }: { route: string }) {
   );
 }
 
-const DELIVERY_STEPS: TaskStatus[] = ['Assigned', 'Picked Up', 'In Transit', 'Delivered'];
-
-function DeliveryStepper({ status }: { status: TaskStatus }) {
-  const idx      = DELIVERY_STEPS.indexOf(status);
-  const abnormal = idx === -1;                 /* Failed / Cancelled sit outside the flow */
-  const current  = abnormal ? -1 : idx;
+function DeliveryStepper({ assignment }: { assignment: Assignment }) {
+  const progress = getAdminOperationalProgress(assignment);
+  const complete = [
+    !!assignment.createdAt || !!assignment.assignedAt,
+    !!assignment.pickupArrivedAt,
+    !!assignment.loadingCompletedAt,
+    !!assignment.departedAt && !!assignment.destinationArrivedAt,
+    !!assignment.destinationArrivedAt && !!assignment.unloadingStartedAt,
+    !!assignment.unloadingCompletedAt && assignment.taskStatus === 'Delivered',
+    assignment.taskStatus === 'Delivered',
+  ];
+  const hasOperationalHistory = !!(assignment.pickupArrivedAt || assignment.loadingStartedAt ||
+    assignment.departedAt || assignment.destinationArrivedAt || assignment.unloadingStartedAt);
   return (
-    <div>
-      <div className="flex items-start">
-        {DELIVERY_STEPS.map((step, i) => {
-          const done   = i < current;
-          const active = i === current;
+    <div aria-label={progress.terminal ? `Delivery progress ended: ${assignment.taskStatus}` : `Step ${progress.index + 1} of 7, ${progress.label}`}>
+      <p className="mb-3 text-sm font-semibold text-foreground">{progress.terminal
+        ? `Progress ended · ${assignment.taskStatus}` : `Step ${progress.index + 1} of 7 · ${progress.label}`}</p>
+      <div className="grid grid-cols-4 gap-y-3 sm:grid-cols-7" aria-label="Physical delivery stages">
+        {OPERATIONAL_STEPS.map((step, i) => {
+          const done = complete[i] && (i < progress.index || i === 6);
+          const active = !progress.terminal && i === progress.index && !done;
           return (
-            <div key={step} className="flex-1 flex flex-col items-center relative">
-              {i > 0 && (
-                <span className={`absolute top-[11px] right-1/2 left-[-50%] h-0.5 ${
-                  i <= current ? 'bg-blue-500' : 'bg-border'}`} />
-              )}
-              <span className={`relative z-10 w-6 h-6 rounded-full flex items-center justify-center border-2 ${
-                done   ? 'bg-blue-500 border-blue-500 text-white'
-                : active ? 'bg-white border-blue-500 text-blue-600 ring-4 ring-blue-100'
-                : 'bg-white border-border text-muted-foreground'}`}>
-                {done ? <Check className="w-3.5 h-3.5" /> : <span className="text-[12px] font-bold">{i + 1}</span>}
+            <div key={step} className="relative flex min-w-0 flex-col items-center text-center">
+              {i < OPERATIONAL_STEPS.length - 1 && <span aria-hidden="true"
+                className={`absolute top-[11px] left-1/2 right-[-50%] h-0.5 ${i === 3 ? 'hidden sm:block' : ''} ${done ? 'bg-green-500' : 'bg-border'}`} />}
+              <span aria-hidden="true" className={`relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 ${
+                done ? 'border-green-600 bg-green-600 text-white'
+                  : active ? 'border-blue-600 bg-blue-50 text-blue-700'
+                    : 'border-border bg-white text-muted-foreground'}`}>
+                {done ? <Check className="h-4 w-4" /> : <span className="text-xs font-semibold">{i + 1}</span>}
               </span>
-              <span className={`mt-1.5 text-[12px] text-center leading-tight ${
-                active ? 'font-semibold text-blue-600' : done ? 'font-medium text-foreground' : 'text-muted-foreground'}`}>
+              <span className={`mt-1.5 px-0.5 text-[13px] leading-tight ${active ? 'font-semibold text-blue-700' : done ? 'font-medium text-foreground' : 'text-muted-foreground'}`}>
                 {step}
               </span>
             </div>
           );
         })}
       </div>
-      {abnormal && (
-        <p className="mt-3 text-center text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg py-1.5">
-          {status}
-        </p>
+      {progress.syncWarning && (
+        <p className="mt-3 text-sm text-amber-800">{progress.syncWarning}</p>
+      )}
+      {assignment.taskStatus === 'Delivered' && !hasOperationalHistory && (
+        <p className="mt-3 text-[13px] text-muted-foreground">Earlier delivery · intermediate stage times were not recorded.</p>
       )}
     </div>
+  );
+}
+
+function DeliveryActivity({ assignment, now, onViewPhotos }: {
+  assignment: Assignment; now: Date; onViewPhotos: (group: string) => void;
+}) {
+  const photos = assignment.statusPhotos ?? {};
+  const photoStage = (index: number, name: string) => {
+    const group = OPERATIONAL_PHOTO_GROUPS[index];
+    const count = group.slots.filter(([key]) => !!photos[key]?.url).length;
+    const complete = group.slots.every(([key]) => !!photos[key]?.url);
+    return { group: group.title, name, count, total: group.slots.length, complete };
+  };
+  const loadingDuration = formatOperationalDuration(assignment.loadingStartedAt, assignment.loadingCompletedAt ?? now);
+  const unloadingDuration = formatOperationalDuration(assignment.unloadingStartedAt, assignment.unloadingCompletedAt ?? now);
+  const rows: Array<{
+    label: string; done: boolean; main: string | null; prefix?: string;
+    details?: Array<string | null>; photoStage?: ReturnType<typeof photoStage>;
+  }> = [
+    { label: 'Assigned', done: true, main: formatOperationalStamp(assignment.createdAt || assignment.assignedAt) },
+    { label: 'At Pickup', done: !!assignment.pickupArrivedAt,
+      main: formatOperationalStamp(assignment.pickupArrivedAt),
+      photoStage: photoStage(0, 'pickup') },
+    { label: 'Loading', done: !!assignment.loadingStartedAt,
+      main: formatOperationalStamp(assignment.loadingStartedAt), prefix: 'Started',
+      details: [assignment.loadingCompletedAt ? `Finished · ${formatOperationalStamp(assignment.loadingCompletedAt)}` : null,
+        loadingDuration ? `${assignment.loadingCompletedAt ? 'Duration' : 'Elapsed'} · ${loadingDuration}` : null],
+      photoStage: photoStage(1, 'loading') },
+    { label: 'In Transit', done: !!assignment.departedAt || assignment.taskStatus === 'In Transit',
+      main: formatOperationalStamp(assignment.departedAt), prefix: 'Departed',
+      photoStage: photoStage(2, 'pre-trip') },
+    { label: 'Arrived', done: !!assignment.destinationArrivedAt,
+      main: formatOperationalStamp(assignment.destinationArrivedAt) },
+    { label: 'Unloading', done: !!assignment.unloadingStartedAt,
+      main: formatOperationalStamp(assignment.unloadingStartedAt), prefix: 'Started',
+      details: [assignment.unloadingCompletedAt ? `Finished · ${formatOperationalStamp(assignment.unloadingCompletedAt)}` : null,
+        unloadingDuration ? `${assignment.unloadingCompletedAt ? 'Duration' : 'Elapsed'} · ${unloadingDuration}` : null],
+      photoStage: photoStage(3, 'unloading') },
+    { label: 'Delivered', done: assignment.taskStatus === 'Delivered',
+      main: assignment.taskStatus === 'Delivered'
+        ? formatOperationalStamp(assignment.unloadingCompletedAt) ?? assignment.statusPhotos?.Delivered?.timestamp ?? null : null },
+  ];
+  return (
+    <section aria-label="Delivery Activity" className="rounded-xl border border-border/70 bg-white p-3 sm:p-4">
+      <p className="mb-2 text-[13px] font-semibold uppercase tracking-wider text-muted-foreground">Delivery Activity</p>
+      <ol>
+        {rows.map((row, index) => <li key={row.label} className="relative grid grid-cols-[1.5rem_minmax(0,1fr)] gap-2 pb-1 last:pb-0">
+          {index < rows.length - 1 && <span aria-hidden="true"
+            className={`absolute bottom-0 left-[11px] top-6 w-px ${row.done ? 'bg-green-300' : 'bg-border'}`} />}
+          <span aria-hidden="true" className={`relative z-10 flex h-6 w-6 items-center justify-center rounded-full border ${row.done
+            ? 'border-green-200 bg-green-50 text-green-700' : 'border-border bg-white text-muted-foreground'}`}>
+            {row.done ? <Check className="h-4 w-4" /> : <span className="h-1.5 w-1.5 rounded-full bg-current" />}
+          </span>
+          <div className={`grid min-w-0 grid-cols-1 gap-y-1 pb-1.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-x-4 ${index < rows.length - 1 ? 'border-b border-border/50' : ''}`}>
+            <div className="min-w-0">
+              <p className={`text-sm font-semibold leading-5 ${row.done ? 'text-foreground' : 'text-muted-foreground'}`}>{row.label}</p>
+              <p className="mt-0.5 break-words text-[13px] leading-snug text-muted-foreground">
+                {row.main ? `${row.prefix ? `${row.prefix} · ` : ''}${row.main}` : row.done ? 'Time not recorded' : 'Not yet reached'}
+              </p>
+              {row.details?.some(Boolean) && <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[13px] leading-snug text-muted-foreground">
+                {row.details.filter(Boolean).map((detail, detailIndex) => <span key={detailIndex} className="break-words">
+                  {detailIndex > 0 && <span aria-hidden="true" className="mr-2 text-muted-foreground/60">·</span>}{detail}
+                </span>)}
+              </div>}
+            </div>
+            {row.photoStage && <button type="button" onClick={() => onViewPhotos(row.photoStage!.group)}
+                aria-label={`View ${row.photoStage.count} of ${row.photoStage.total} ${row.photoStage.name} photos`}
+                className={`inline-flex min-h-8 shrink-0 items-center justify-self-start gap-1.5 rounded-lg border px-2 py-1 text-[13px] font-medium text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:justify-self-end ${row.photoStage.complete
+                  ? 'border-green-200 bg-green-50/40 hover:bg-green-50' : 'border-amber-200 bg-amber-50/40 hover:bg-amber-50'}`}>
+                <Camera aria-hidden="true" className="h-3.5 w-3.5 text-muted-foreground" />
+                <span>Photos</span>
+                <span className={`rounded-full px-1.5 py-0.5 tabular-nums ${row.photoStage.complete
+                  ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
+                  {row.photoStage.count}/{row.photoStage.total}
+                </span>
+                <ChevronRight aria-hidden="true" className="h-3.5 w-3.5" />
+            </button>}
+          </div>
+        </li>)}
+      </ol>
+      <p className="mt-1 border-t border-border/50 pt-2 text-[13px] leading-snug text-muted-foreground">
+        ⓘ Physical delivery progress is updated by the driver.
+      </p>
+    </section>
   );
 }
 
@@ -874,6 +943,8 @@ function DocChip({ doc }: { doc: AssignmentDoc }) {
 }
 
 /* ─── View Details Modal ───────────────────────────── */
+type ShipmentTab = 'overview' | 'activity' | 'photos' | 'documents';
+
 function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApproveDoc, onRejectDoc, onComplete, onCancel, onSimulateLate, isViewOnly = false, adminEmail, reviewTarget, timingNow }: {
   assignment: Assignment | null; driver: LocalDriver | null;
   /* null when the truck record was deleted — the plate saved on the assignment is still shown */
@@ -882,7 +953,7 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
   onEdit:         () => void;
   onApproveDoc:   (id: string, docType: string) => void;
   onRejectDoc:    (id: string, docType: string, reason: string) => void;
-  onComplete:     (id: string) => void;
+  onComplete:     (id: string) => Promise<void>;
   onCancel:       (id: string) => Promise<void>;
   onSimulateLate: (id: string) => void;
   isViewOnly?:    boolean;
@@ -900,12 +971,36 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
   const reviewSectionRef = useRef<HTMLDivElement>(null);
   const reviewDocumentRef = useRef<HTMLDivElement>(null);
   const [highlightReview, setHighlightReview] = useState(false);
+  const [activeTab, setActiveTab] = useState<ShipmentTab>(reviewTarget ? 'documents' : 'overview');
+  const [expandedPhotoGroup, setExpandedPhotoGroup] = useState<string | null>(null);
+  const [photosViewed, setPhotosViewed] = useState(false);
+  const [completeBusy, setCompleteBusy] = useState(false);
+  const [completeError, setCompleteError] = useState('');
+  const contentRef = useRef<HTMLDivElement>(null);
   const reviewDocument = reviewTarget ? assignment?.documents.find(doc => reviewTarget.docType
     ? doc.type === reviewTarget.docType : doc.uploaded && doc.docStatus === 'pending') : undefined;
 
+  const selectTab = (tab: ShipmentTab) => {
+    setActiveTab(tab);
+    if (tab === 'photos') setPhotosViewed(true);
+    contentRef.current?.scrollTo({ top: 0 });
+  };
+  const viewPhotoGroup = (group: string) => {
+    setExpandedPhotoGroup(group);
+    selectTab('photos');
+  };
+
+  useEffect(() => {
+    if (reviewTarget) setActiveTab('documents');
+  }, [reviewTarget]);
+  useEffect(() => {
+    setPhotosViewed(false);
+    setCompleteError('');
+  }, [assignment?.id]);
+
   useLayoutEffect(() => {
     setHighlightReview(false);
-    if (!reviewTarget) return;
+    if (!reviewTarget || activeTab !== 'documents') return;
     const element = reviewDocumentRef.current ?? reviewSectionRef.current;
     if (!element) return;
     element.scrollIntoView({ block: reviewDocumentRef.current ? 'center' : 'start' });
@@ -913,29 +1008,44 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
     setHighlightReview(true);
     const timer = window.setTimeout(() => setHighlightReview(false), 3000);
     return () => window.clearTimeout(timer);
-  }, [reviewTarget, assignment?.id]);
+  }, [reviewTarget, assignment?.id, activeTab]);
   if (!driver) return null;
 
-  const allApproved = assignment
-    ? assignment.documents.every((d) => d.uploaded && d.docStatus === 'approved') : false;
-
-  const approvedCount = assignment?.documents.filter((d) => d.docStatus === 'approved').length ?? 0;
+  const documentProgress = assignment ? getAssignmentDocumentProgress(assignment) : null;
+  const allApproved = documentProgress?.allApproved ?? false;
+  const approvedCount = documentProgress?.approved ?? 0;
+  const completionEligible = !!assignment && canCompleteAssignment(assignment);
+  const photosNeedAttention = !photosViewed && Object.values(assignment?.statusPhotos ?? {}).some((photo) => !!photo?.url);
+  const documentsNeedAttention = assignment?.documents.some((doc) => doc.uploaded && doc.docStatus === 'pending') ?? false;
+  const completeShipment = async () => {
+    if (!assignment || !completionEligible || completeBusy) return;
+    setCompleteBusy(true);
+    setCompleteError('');
+    try {
+      await onComplete(assignment.id);
+      onClose();
+    } catch (error) {
+      setCompleteError(error instanceof Error ? error.message : 'Unable to mark this assignment complete. Please try again.');
+    } finally {
+      setCompleteBusy(false);
+    }
+  };
   const { delivery: deliveryTiming, pickup: pickupTiming } = assignment
     ? getDispatchTimingNotices(assignment, timingNow) : { delivery: null, pickup: null };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center sm:p-4 lg:p-6">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-[480px] flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-200">
+      <div className="relative flex h-[100dvh] w-full min-w-0 flex-col overflow-hidden bg-white shadow-xl sm:h-[min(90dvh,820px)] sm:w-[94vw] sm:max-w-[960px] sm:rounded-2xl lg:h-[min(86dvh,820px)]">
 
         {/* ── Sticky header: driver identity ── */}
-        <header className="flex items-center gap-3 px-5 py-4 border-b border-border flex-shrink-0">
+        <header className="flex flex-shrink-0 items-center gap-3 border-b border-border px-4 py-3 sm:px-6">
           <div className="w-12 h-12 rounded-full bg-blue-50 border border-blue-100 flex items-center justify-center flex-shrink-0">
             <User className="w-6 h-6 text-blue-600" />
           </div>
           <div className="flex-1 min-w-0">
             <h3 className="text-xl sm:text-2xl font-bold text-foreground leading-tight break-words">{driver.name}</h3>
-            <p className="text-xs text-muted-foreground break-words">{driver.id} · {driver.phone}</p>
+            <p className="text-[13px] text-muted-foreground break-words">{driver.id} · {driver.phone}</p>
             {driver.currentLocation?.trim() && driver.currentLocation.trim() !== '—' && (
               <p className="text-xs text-muted-foreground break-words">Current location: {driver.currentLocation}</p>
             )}
@@ -946,22 +1056,41 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
           </button>
         </header>
 
+        <div role="tablist" aria-label="Shipment details" className="grid flex-shrink-0 grid-cols-4 border-b border-border bg-white px-2 sm:px-6">
+          {(['overview', 'activity', 'photos', 'documents'] as const).map((tab) => {
+            const needsAttention = tab === 'photos' ? photosNeedAttention : tab === 'documents' && documentsNeedAttention;
+            return <button key={tab} type="button"
+            role="tab" id={`shipment-tab-${tab}`} aria-controls={`shipment-panel-${tab}`}
+            aria-selected={activeTab === tab} onClick={() => selectTab(tab)}
+            className={`flex min-w-0 items-center justify-center gap-1 border-b-2 px-1 py-3 text-[13px] font-medium capitalize transition-colors sm:text-sm ${activeTab === tab
+              ? 'border-blue-600 text-blue-700' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
+            {tab}
+            <span className="flex h-2 w-2 shrink-0 items-center justify-center" aria-hidden="true">
+              {needsAttention && <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />}
+            </span>
+            {needsAttention && <span className="sr-only">needs attention</span>}
+          </button>})}
+        </div>
+
         {/* ── Scrollable content ── */}
-        <div className="flex-1 overflow-y-auto px-5 py-5">
+        <div ref={contentRef} role="tabpanel" id={`shipment-panel-${activeTab}`}
+          aria-labelledby={`shipment-tab-${activeTab}`}
+          className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
       {!assignment ? (
         <div className="py-10 text-center text-muted-foreground">
           <Package className="w-12 h-12 mx-auto mb-3 opacity-30" />
           <p>No active assignment for this driver.</p>
         </div>
       ) : (
-        <div className="space-y-5">
+        <>
+        {activeTab === 'overview' && <div className="space-y-4">
           {/* Delivery progress */}
           <div className="rounded-xl border border-border/70 p-4">
-            <div className="flex items-center justify-between mb-4">
-              <p className="text-[12px] font-semibold text-muted-foreground uppercase tracking-wider">Delivery Progress</p>
-              <StatusBadge status={assignment.taskStatus} size="xs" />
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-[13px] font-semibold text-muted-foreground uppercase tracking-wider">Delivery Progress</p>
+              <DispatchStatusBadge assignment={assignment} />
             </div>
-            <DeliveryStepper status={assignment.taskStatus} />
+            <DeliveryStepper assignment={assignment} />
           </div>
 
           {/* Demo-only: simulate a late driver — "adminabuse" account only */}
@@ -982,92 +1111,54 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
             </div>
           )}
 
-          {/* Truck */}
-          <DetailCard title="Truck">
-            <TruckSummary truck={truck} fallbackPlate={assignment.truckPlate} />
-          </DetailCard>
-
-          {/* Route & Client */}
-          <DetailCard title="Route & Client">
-            <RouteRow route={getAssignmentRoute(assignment)} />
-            <DetailRow icon={<Building2 className="w-4 h-4" />} label="Client" value={assignment.company} />
-            <DetailRow icon={<MapPin className="w-4 h-4" />}    label="Pickup Location" value={assignment.pickupLocation} />
-            {destinationAreaEnabled && <DetailRow icon={<Navigation className="w-4 h-4" />} label="Destination" value={assignment.destinationArea || '—'} />}
-            <DetailRow icon={<MapPin className="w-4 h-4" />} label="Delivery Location" value={getDeliveryLocation(assignment)} />
-          </DetailCard>
-
-          {/* Schedule */}
-          <DetailCard title="Schedule">
-            <DetailRow icon={<Timer className="w-4 h-4" />}     label="ETA — Estimated Arrival" value={assignment.eta} hero />
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <DetailRow icon={<Clock className="w-4 h-4" />}    label="Pick Up Time"   value={assignment.pickupTime} />
-              <DetailRow icon={<Calendar className="w-4 h-4" />} label="Picked Up Date" value={assignment.pickedUpDate} />
-              <DetailRow icon={<Calendar className="w-4 h-4" />} label="Delivery Date"  value={assignment.deliveryDate} />
-              <DetailRow icon={<AlarmClock className="w-4 h-4" />} label="ATA"          value={assignment.ata} />
-            </div>
-            <DeliveryTimingBadge timing={deliveryTiming} />
-            <PickupTimingNotice timing={pickupTiming} />
-            <DetailRow icon={<Clock className="w-4 h-4" />} label="Assigned At" value={assignment.assignedAt} />
-          </DetailCard>
-
-          {/* Remarks */}
-          <RemarksBlock remarks={assignment.remarks} />
-
-          {/* Status note */}
-          <div className="flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-xl">
-            <Activity className="w-4 h-4 text-blue-500 flex-shrink-0" />
-            <p className="text-xs text-blue-700">Delivery status is updated by the driver from their mobile view.</p>
+          <div className="grid grid-cols-1 items-start gap-4 lg:items-stretch lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+            <section className="rounded-xl border border-border/70 bg-muted/25 p-4 lg:flex lg:h-full lg:flex-col">
+              <p className="mb-2 text-[13px] font-semibold uppercase tracking-wider text-muted-foreground">Truck</p>
+              <div className="lg:flex lg:flex-1 lg:items-center">
+                <TruckSummary truck={truck} fallbackPlate={assignment.truckPlate} compact />
+              </div>
+            </section>
+            <section className="rounded-xl border border-border/70 bg-muted/25 p-4 lg:h-full">
+              <p className="mb-1.5 text-[13px] font-semibold uppercase tracking-wider text-muted-foreground">Schedule</p>
+              <div className="grid grid-cols-1 gap-x-3 gap-y-1.5 min-[430px]:grid-cols-2">
+                <DetailRow compact icon={<Calendar className="h-4 w-4" />} label="Pickup Date" value={assignment.pickedUpDate} />
+                <DetailRow compact icon={<Clock className="h-4 w-4" />} label="Pickup Time" value={assignment.pickupTime} />
+                <DetailRow compact icon={<Calendar className="h-4 w-4" />} label="Delivery Date" value={assignment.deliveryDate} />
+                <DetailRow compact icon={<Timer className="h-4 w-4" />} label="ETA" value={assignment.eta} />
+                <DetailRow compact icon={<Clock className="h-4 w-4" />} label="Assigned At" value={assignment.assignedAt} />
+                {assignment.taskStatus === 'Delivered' && <DetailRow compact icon={<CheckCircle2 className="h-4 w-4" />}
+                  label="Delivered At" value={formatOperationalStamp(assignment.unloadingCompletedAt) ?? assignment.statusPhotos?.Delivered?.timestamp ?? '—'} />}
+              </div>
+              {(deliveryTiming || pickupTiming) && <div className="mt-2 space-y-2">
+                <DeliveryTimingBadge timing={deliveryTiming} />
+                <PickupTimingNotice timing={pickupTiming} />
+              </div>}
+            </section>
           </div>
 
-          {/* ── Status Photos ── */}
-          {assignment.statusPhotos && Object.keys(assignment.statusPhotos).length > 0 && (
-            <div>
-              <div className="flex items-center gap-2 mb-3">
-                <Camera className="w-4 h-4 text-primary" />
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Driver Status Photos</p>
+          <DetailCard title="Route & Client">
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 lg:gap-6">
+              <div className="space-y-3">
+                <RouteRow route={getAssignmentRoute(assignment)} />
+                <DetailRow icon={<Building2 className="h-4 w-4" />} label="Client" value={assignment.company} />
+                {destinationAreaEnabled && <DetailRow icon={<Navigation className="h-4 w-4" />} label="Destination" value={assignment.destinationArea || '—'} />}
               </div>
-              {/* Stacked cards rather than a table — the modal is only ~480px wide */}
-              <div className="space-y-2">
-                {(['Picked Up', 'In Transit', 'Delivered'] as const).map((status) => {
-                  const photo = assignment.statusPhotos?.[status];
-                  if (!photo) return null;
-                  const cfg = taskStatusConfig[status];
-                  return (
-                    <div key={status} className="border border-border rounded-xl p-3">
-                      <div className="flex items-center justify-between gap-2 mb-2">
-                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-medium whitespace-nowrap ${cfg.badge}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
-                          {status}
-                        </span>
-                        <button
-                          onClick={() => setPreviewDoc({ url: photo.url, type: `${status} Photo` })}
-                          className="flex items-center gap-1 px-3 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg text-xs font-medium hover:bg-blue-100 transition-colors whitespace-nowrap"
-                        >
-                          <ZoomIn className="w-3 h-3" /> View
-                        </button>
-                      </div>
-                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <Clock className="w-3 h-3 flex-shrink-0" />
-                        <span className="text-foreground font-medium">{photo.timestamp}</span>
-                      </div>
-                      <div className="flex items-start gap-1.5 text-xs text-muted-foreground mt-1">
-                        <MapPin className="w-3 h-3 flex-shrink-0 mt-0.5" />
-                        <div className="min-w-0">
-                          <p className="text-foreground font-medium leading-snug break-words">{photo.location}</p>
-                          {photo.coords && (
-                            <p className="text-[12px] text-muted-foreground mt-0.5">
-                              {photo.coords.lat.toFixed(5)}° N, {photo.coords.lng.toFixed(5)}° E
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+              <div className="space-y-3">
+                <DetailRow icon={<MapPin className="h-4 w-4" />} label="Pickup Location" value={assignment.pickupLocation} />
+                <DetailRow icon={<MapPin className="h-4 w-4" />} label="Delivery Location" value={getDeliveryLocation(assignment)} />
               </div>
             </div>
-          )}
+          </DetailCard>
 
+          <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
+            <RemarksBlock remarks={assignment.remarks} />
+            <DocumentsSummaryCard count={`${approvedCount}/${assignment.documents.length} approved`}
+              onActivate={() => selectTab('documents')} />
+          </div>
+        </div>}
+
+        {activeTab === 'activity' && <div className="space-y-4">
+          <DeliveryActivity assignment={assignment} now={timingNow} onViewPhotos={viewPhotoGroup} />
           {/* ── Delay Reports ── */}
           {assignment.delayReports && assignment.delayReports.length > 0 && (
             <div>
@@ -1099,7 +1190,13 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
               </div>
             </div>
           )}
+        </div>}
 
+        {activeTab === 'photos' && <OperationalEvidence assignment={assignment}
+          expandedGroup={expandedPhotoGroup} onExpand={setExpandedPhotoGroup}
+          onPreview={(url, type) => setPreviewDoc({ url, type })} />}
+
+        {activeTab === 'documents' && <div className="space-y-4">
           {/* Documents */}
           <div ref={reviewSectionRef} tabIndex={reviewTarget ? -1 : undefined}
             role={reviewTarget ? 'region' : undefined} aria-label={reviewTarget ? `Document review for ${assignment.id}` : undefined}
@@ -1207,44 +1304,46 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
             </div>
           </div>
 
-          {/* Complete */}
-          {!isViewOnly && (allApproved ? (
-            <button onClick={() => { onComplete(assignment.id); onClose(); }}
-              className="w-full py-3 bg-green-500 text-white rounded-xl font-semibold hover:bg-green-600 transition-colors flex items-center justify-center gap-2">
-              <CheckCircle2 className="w-5 h-5" /> Mark as Complete
-            </button>
-          ) : (
+          {!isViewOnly && assignment.taskStatus === 'Delivered' && !allApproved && (
             <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl">
               <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0" />
               <p className="text-xs text-amber-700">All documents must be approved before marking as complete.</p>
             </div>
-          ))}
-        </div>
+          )}
+        </div>}
+        </>
       )}
         </div>
 
         {/* ── Sticky action bar ── */}
-        <footer className="flex items-center gap-2 px-5 py-4 border-t border-border flex-shrink-0 bg-white rounded-b-xl">
-          {/* Editable only while Assigned (the database re-checks this on save).
-              Read-only viewers always get Close. */}
-          {assignment?.taskStatus === 'Assigned' && !isViewOnly ? (
-            <button onClick={onEdit}
-              className="flex-1 py-2.5 bg-[#1DBF73] text-white rounded-xl text-sm font-semibold hover:bg-[#19a865] transition-colors flex items-center justify-center gap-2">
-              <Pencil className="w-4 h-4" /> Edit
+        <footer className="flex flex-shrink-0 flex-col gap-2 border-t border-border bg-white px-4 py-3 sm:px-6">
+          {completeError && <p role="alert" className="break-words text-sm text-red-700">{completeError}</p>}
+          <div className="grid grid-cols-1 gap-2 sm:flex sm:items-center">
+          <button onClick={onClose}
+            className="min-h-10 rounded-xl border border-border px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-accent sm:min-w-32">
+            Close
+          </button>
+          {assignment && !isViewOnly && completionEligible && (
+            <button type="button" onClick={completeShipment} disabled={completeBusy}
+              className="order-first flex min-h-10 items-center justify-center gap-2 rounded-xl bg-green-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-green-600 disabled:cursor-wait disabled:opacity-60 sm:order-none sm:ml-auto">
+              <CheckCircle2 className="h-4 w-4" /> {completeBusy ? 'Completing…' : 'Mark as Complete'}
             </button>
-          ) : (
-            <button onClick={onClose}
-              className="flex-1 py-2.5 border border-border rounded-xl text-sm font-medium text-foreground hover:bg-accent transition-colors">
-              Close
+          )}
+          {/* Editable only while Assigned (the database re-checks this on save). */}
+          {assignment?.taskStatus === 'Assigned' && !isViewOnly && (
+            <button onClick={onEdit}
+              className="min-h-10 flex-1 rounded-xl bg-[#1DBF73] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#19a865] flex items-center justify-center gap-2">
+              <Pencil className="w-4 h-4" /> Edit
             </button>
           )}
           {/* Hidden once the driver has picked it up; cancel_assignment() refuses it too */}
           {assignment && !isViewOnly && assignment.taskStatus === 'Assigned' && (
             <button onClick={() => setConfirmCancel(true)}
-              className="flex-1 py-2.5 border border-red-200 text-red-600 rounded-xl text-sm font-medium hover:bg-red-50 transition-colors flex items-center justify-center gap-2">
+              className="min-h-10 flex-1 rounded-xl border border-red-200 px-4 py-2.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 flex items-center justify-center gap-2">
               <Trash2 className="w-4 h-4" /> Cancel Assignment
             </button>
           )}
+          </div>
         </footer>
 
         {/* ── Cancel confirmation ── */}
@@ -1650,6 +1749,7 @@ interface Props {
   trucks: LocalTruck[];       setTrucks:  React.Dispatch<React.SetStateAction<LocalTruck[]>>;
   assignments: Assignment[];  setAssignments: React.Dispatch<React.SetStateAction<Assignment[]>>;
   notifications: AppNotification[];
+  activityLog: AdminActivityEntry[];
   completed: CompletedTask[]; setCompleted:   React.Dispatch<React.SetStateAction<CompletedTask[]>>;
   cancelled: Assignment[];    setCancelled: React.Dispatch<React.SetStateAction<Assignment[]>>;
   isViewOnly?: boolean;
@@ -1682,7 +1782,7 @@ function reviewQueueRequested() {
 /* ─── Main Component ───────────────────────────────── */
 export default function DriversManagement({
   drivers, setDrivers, trucks, setTrucks,
-  assignments, setAssignments, notifications, completed, setCompleted, cancelled, setCancelled,
+  assignments, setAssignments, notifications, activityLog, completed, setCompleted, cancelled, setCancelled,
   isViewOnly = false, onLogActivity, onServerChange, adminEmail,
   openDispatchOnMount = false, onDispatchOpened, search, onSearchChange, notificationTarget, onNotificationTargetHandled,
 }: Props) {
@@ -1907,20 +2007,38 @@ export default function DriversManagement({
     }));
   };
 
-  const handleComplete = (id: string) => {
-    const a = assignments.find((x) => x.id === id)!;
-    setCompleted((p) => [...p, { ...a, completedAt: new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }]);
-    setAssignments((p) => p.filter((x) => x.id !== id));
-    setDrivers((p) => p.map((d) => d.id === a.driverId ? { ...d, status: 'Complete' as const } : d));
-    setTrucks((p)  => p.map((t) => t.plateNumber === a.truckPlate ? { ...t, status: 'Available' } : t));
-    onLogActivity?.({
+  const handleComplete = async (id: string) => {
+    const a = assignments.find((x) => x.id === id);
+    if (completed.some((item) => item.id === id)) throw new Error('This assignment is already completed.');
+    if (!a || !canCompleteAssignment(a)) {
+      throw new Error('All required documents must be approved before marking this delivery complete.');
+    }
+    const nextCompleted = [...completed, { ...a, completedAt: new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }];
+    const nextAssignments = assignments.filter((x) => x.id !== id);
+    const nextDrivers = drivers.map((d) => d.id === a.driverId ? { ...d, status: 'Complete' as const } : d);
+    const nextTrucks = trucks.map((t) => t.plateNumber === a.truckPlate ? { ...t, status: 'Available' as const } : t);
+    const completionActivity: AdminActivityEntry = {
+      id: `act-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: new Date().toISOString(),
       type: 'task_completed',
       driverName: a.driverName,
       truckPlate: a.truckPlate,
       assignmentId: id,
       destination: a.destination,
       company: a.company,
-    });
+      adminEmail: adminEmail ?? undefined,
+    };
+    // Use the existing save path, but show success only after it has persisted.
+    await onServerChange(
+      () => syncAdminData({ drivers: nextDrivers, trucks: nextTrucks, assignments: nextAssignments,
+        completed: nextCompleted, cancelled, notifications, activityLog: [completionActivity, ...activityLog] }),
+      () => {
+        setAssignments(nextAssignments);
+        setCompleted(nextCompleted);
+        setDrivers(nextDrivers);
+        setTrucks(nextTrucks);
+      },
+    );
   };
 
   /* Goes through the cancel_assignment() database function, not the auto-save: it refuses
@@ -1951,10 +2069,10 @@ export default function DriversManagement({
   };
 
   const sq = search.trim().toLowerCase();
-  /* Only show assignments with an active driver and truck. */
-  const activeDriverIds = new Set(drivers.map((d) => d.id));
-  const activeTruckIds = new Set(trucks.map((t) => t.id));
-  const validAssignments = assignments.filter((a) => activeDriverIds.has(a.driverId) && activeTruckIds.has(a.truckId));
+  /* The assignment is the source of truth for Dispatch. A missing or archived
+     master record must not hide an otherwise active shipment that Deliveries
+     still shows; the card can render its saved driver name and truck plate. */
+  const validAssignments = assignments;
   const reviewAssignments = reviewQueueOpen
     ? assignments.filter((assignment) => assignment.documents.some((doc) => doc.uploaded && doc.docStatus === 'pending'))
     : validAssignments;
@@ -2190,9 +2308,13 @@ export default function DriversManagement({
           {activePage.pageItems.map((a) => {
             const truck    = trucks.find((t) => t.id === a.truckId);
             const { delivery: timing, pickup: pickupTiming } = getDispatchTimingNotices(a, timingNow);
-            const displayStatus = getAssignmentDisplayStatus(a);
             const docs = getAssignmentDocumentProgress(a);
             const documentAge = getDocumentAgingState(a, timingNow, notifications);
+            const operational = getAdminOperationalProgress(a);
+            const activeDuration = a.operationalStage === 'loading' && a.loadingStartedAt
+              ? formatOperationalDuration(a.loadingStartedAt, timingNow)
+              : a.operationalStage === 'unloading' && a.unloadingStartedAt
+                ? formatOperationalDuration(a.unloadingStartedAt, timingNow) : null;
             const ageText = documentAge?.days == null ? null : documentAge.days === 0
               ? 'Delivered today' : `${documentAge.days} day${documentAge.days === 1 ? '' : 's'} since delivery`;
 
@@ -2212,7 +2334,7 @@ export default function DriversManagement({
                       </p>
                       <p className="mt-1 text-xs text-muted-foreground break-words"><ASNWithCopy value={a.id}><Highlight text={a.id} query={search} /></ASNWithCopy></p>
                     </div>
-                    <div className="ml-auto shrink-0"><StatusBadge status={displayStatus} acknowledged={!!a.driverAcknowledgedAt} /></div>
+                    <div className="ml-auto shrink-0"><DispatchStatusBadge assignment={a} /></div>
                   </div>
 
                   <div className="mt-4 border-t border-border pt-4">
@@ -2242,6 +2364,13 @@ export default function DriversManagement({
                   {pickupTiming?.kind === 'pickup_overdue' && (
                     <div className="mt-3"><PickupTimingNotice timing={pickupTiming} /></div>
                   )}
+
+                  {activeDuration && <p className="mt-3 text-sm text-muted-foreground">
+                    {a.operationalStage === 'loading' ? 'Loading' : 'Unloading'} in progress · {activeDuration}
+                  </p>}
+                  {operational.syncWarning && <p className="mt-3 text-sm text-amber-800" role="status">
+                    {operational.syncWarning}
+                  </p>}
 
                   {documentAge && (
                     <div className="mt-3 flex min-w-0 items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-800">
@@ -2557,7 +2686,7 @@ export default function DriversManagement({
           onComplete={handleComplete}
           onCancel={handleCancel}
           onSimulateLate={handleSimulateLate}
-          isViewOnly={isViewOnly || !assignments.some(a => a.id === viewDetailsId)}
+          isViewOnly={isViewOnly || !assignments.some(a => a.id === viewDetailsId) || completed.some(a => a.id === viewDetailsId)}
           adminEmail={adminEmail}
           reviewTarget={reviewTarget?.assignmentId === viewDetailsId ? reviewTarget : null}
           timingNow={timingNow}

@@ -215,6 +215,14 @@ function assignmentFromRow(r: Row, docs: Row[], photos: Row[], delays: Row[]): A
     pickupLocation: r.pickup_location ?? '', pickupTime: r.pickup_time ?? '', pickedUpDate: r.picked_up_date ?? '',
     eta: r.eta ?? '', ata: r.ata ?? '', deliveryDate: r.delivery_date ?? '', remarks: r.remarks ?? '',
     taskStatus: r.task_status, assignedAt: r.assigned_at ?? '',
+    operationalStage: r.operational_stage ?? null,
+    pickupArrivedAt: r.pickup_arrived_at ?? null,
+    loadingStartedAt: r.loading_started_at ?? null,
+    loadingCompletedAt: r.loading_completed_at ?? null,
+    departedAt: r.departed_at ?? null,
+    destinationArrivedAt: r.destination_arrived_at ?? null,
+    unloadingStartedAt: r.unloading_started_at ?? null,
+    unloadingCompletedAt: r.unloading_completed_at ?? null,
     documents: [...docs].sort((a, b) => a.position - b.position).map(docFromRow),
     ...(photos.length ? { statusPhotos: Object.fromEntries(photos.map((p) => [p.status, photoFromRow(p)])) } : {}),
     ...(r.issue_reason ? { issueReason: r.issue_reason } : {}),
@@ -787,6 +795,14 @@ export async function loadDriverCompletedDelivery(driverId: string, assignmentId
       ...(doc.uploaded_at ? { uploadedAt: doc.uploaded_at as string } : {}),
     })),
   };
+}
+
+/** REQ-002 validates ownership, order, required photos, and timestamps on the server. */
+export async function advanceDriverStage(assignmentId: string, transition: string): Promise<void> {
+  const { error } = await supabase.rpc('advance_driver_stage', {
+    p_assignment_id: assignmentId, p_transition: transition,
+  });
+  if (error) throw error;
 }
 
 /* Everything a driver may change (the database triggers enforce it — see guard_* in the migration):

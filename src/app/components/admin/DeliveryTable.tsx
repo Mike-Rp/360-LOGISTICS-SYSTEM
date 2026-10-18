@@ -6,6 +6,7 @@ import { assignmentDisplayStatusConfig, getAssignmentDisplayStatus, getAssignmen
 import { ADMIN_NAVIGATION_EVENT, adminHref, followAdminLink, pushAdminNavigation } from '../../lib/adminNavigation';
 import { matchesAssignmentDate } from '../../lib/assignmentDateFilter';
 import ASNWithCopy from './ASNWithCopy';
+import CompletedDeliverySummary from './CompletedDeliverySummary';
 import DeliveryTimingBadge from './DeliveryTimingBadge';
 import { getDeliveryTimingStatus } from '../../lib/assignmentTiming';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
@@ -68,6 +69,13 @@ function DocumentsAction({ assignment }: { assignment: Assignment }) {
       <ChevronRight aria-hidden="true" className="ml-auto h-3.5 w-3.5 shrink-0" />
     </a>
   );
+}
+
+function SummaryAction({ onClick }: { onClick: () => void }) {
+  return <button type="button" onClick={onClick}
+    className="inline-flex min-h-9 items-center gap-1 rounded-lg border border-border bg-white px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+    View Summary <ChevronRight aria-hidden="true" className="h-3.5 w-3.5" />
+  </button>;
 }
 
 function secondaryTimestamp(assignment: Assignment) {
@@ -217,6 +225,7 @@ export default function DeliveryTable({
   const [tab, setTab]       = useState<'active' | 'completed' | 'cancelled'>(() => new URLSearchParams(window.location.search).get('tab') === 'completed' ? 'completed' : 'active');
   const [period, setPeriod] = useState<FilterPeriod>('all');
   const [remarksAssignment, setRemarksAssignment] = useState<Assignment | null>(null);
+  const [summaryId, setSummaryId] = useState<string | null>(null);
 
   const truckFor = (assignment: Assignment) =>
     trucks.find((truck) => truck.id === assignment.truckId) ??
@@ -228,14 +237,13 @@ export default function DeliveryTable({
     !q || fields.some((f) => f.toLowerCase().includes(q));
 
   /* Time filter (created time) + search, then newest first — the same for all three tabs */
-  const allAssignments = [...new Map([...completed, ...assignments].map(assignment => [assignment.id, assignment])).values()];
-  const filteredActive = sortNewestFirst(allAssignments
-    .filter((a) => a.taskStatus !== 'Cancelled' && getAssignmentDisplayStatus(a) !== 'Completed')
+  const summaryAssignment = completed.find((assignment) => assignment.id === summaryId) ?? null;
+  const filteredActive = sortNewestFirst(assignments
+    .filter((a) => a.taskStatus !== 'Cancelled')
     .filter((a) => matchesPeriod(a, period))
     .filter((a) => matchesSearch([a.truckPlate, a.id, a.driverName, a.destination, a.destinationArea ?? '', a.company, a.taskStatus])), (assignment) => assignment.id);
 
-  const filteredDone = sortNewestFirst(allAssignments
-    .filter((c) => getAssignmentDisplayStatus(c) === 'Completed')
+  const filteredDone = sortNewestFirst(completed
     .filter((c) => matchesPeriod(c, period))
     .filter((c) => matchesSearch([c.truckPlate, c.id, c.driverName, c.destination, c.destinationArea ?? '', c.company])), (assignment) => assignment.id);
 
@@ -472,7 +480,7 @@ export default function DeliveryTable({
                   </colgroup>
                   <thead className="bg-muted/30">
                     <tr>
-                      {['TRUCK', 'DRIVER', 'ROUTE', 'CUSTOMER', 'STATUS', 'DATE', 'DOCUMENTS'].map((col) => (
+                      {['TRUCK', 'DRIVER', 'ROUTE', 'CUSTOMER', 'STATUS', 'DATE', 'ACTIONS'].map((col) => (
                         <th key={col} className="px-2 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider break-words">{col}</th>
                       ))}
                     </tr>
@@ -497,7 +505,9 @@ export default function DeliveryTable({
                           <DeliveryTimingBadge timing={getDeliveryTimingStatus(c, timingNow)} />
                           <p className="text-xs text-muted-foreground break-words">{secondaryTimestamp(c)}</p>
                         </td>
-                        <td className="px-2 py-3"><DocumentsAction assignment={c} /></td>
+                        <td className="px-2 py-3">
+                          <SummaryAction onClick={() => setSummaryId(c.id)} />
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -527,7 +537,7 @@ export default function DeliveryTable({
                         <p className="text-xs text-muted-foreground break-words">{secondaryTimestamp(c)}</p>
                       </div>
                     </div>
-                    <DocumentsAction assignment={c} />
+                    <SummaryAction onClick={() => setSummaryId(c.id)} />
                   </div>
                 ))}
               </div>
@@ -554,6 +564,8 @@ export default function DeliveryTable({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <CompletedDeliverySummary assignment={summaryAssignment} truck={summaryAssignment ? truckFor(summaryAssignment) : undefined}
+        onClose={() => setSummaryId(null)} />
     </div>
   );
 }

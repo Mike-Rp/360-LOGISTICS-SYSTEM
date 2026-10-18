@@ -56,6 +56,12 @@ export function getAssignmentDocumentProgress(assignment: Assignment) {
   };
 }
 
+/** Formal documents are approved and the physical delivery has finished. */
+export function canCompleteAssignment(assignment: Assignment): boolean {
+  const docs = getAssignmentDocumentProgress(assignment);
+  return docs.applicable && docs.allApproved && !('completedAt' in assignment);
+}
+
 export function getAssignmentDocumentSummary(assignment: Assignment) {
   const docs = getAssignmentDocumentProgress(assignment);
   const tone = docs.rejected ? 'rejected' : docs.allApproved ? 'approved'
@@ -78,10 +84,13 @@ export function getAssignmentDocumentSummary(assignment: Assignment) {
 }
 
 export function getAssignmentDisplayStatus(assignment: Assignment): AssignmentDisplayStatus {
+  // completedAt is present only on the persisted completed archive record.
+  if ('completedAt' in assignment) return 'Completed';
   if (assignment.taskStatus !== 'Delivered') return assignment.taskStatus;
   const docs = getAssignmentDocumentProgress(assignment);
   if (!docs.applicable) return 'Delivered';
-  if (docs.allApproved) return 'Completed';
+  // Approval alone only makes an active delivery eligible for completion.
+  if (docs.allApproved) return 'Delivered';
   if (docs.rejected) return 'Needs Correction';
   if (docs.missing) return 'Awaiting Documents';
   if (docs.pending) return 'Under Review';
