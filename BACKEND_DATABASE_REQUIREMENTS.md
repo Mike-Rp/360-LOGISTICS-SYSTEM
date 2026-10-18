@@ -34,7 +34,7 @@ Do not infer approval from a request for a UI change.
 
 ## [REQ-001] Separate Destination and Delivery Location
 
-**Status:** In Progress
+**Status:** Implemented
 
 **Area:** Dispatch / Deliveries / Driver App / Reports
 
@@ -95,35 +95,34 @@ rollout. The new field is nullable for old rows and validated on new inserts.
 
 **Approval:** Approved — local development only (2026-10-17)
 
-**Implementation status:** Prepared locally; database and end-to-end verification pending
+**Implementation status:** Implemented and verified on the development
+Supabase project (`yeyfmyojdlqtgoqlwhsv.supabase.co`) on 2026-10-18.
 
-**Blocked:** Development Supabase migration requires authorized Supabase access.
+**Applied migrations:** The rollout used the two-part split instead of the
+original single file, so the app could go live with no gap:
+`supabase/migrations/20261017000002_destination_area_part1.sql` (adds
+`public.assignments.destination_area` and extends `edit_assignment` to update
+it; safe with the flag off) and
+`supabase/migrations/20261017000003_destination_area_part2.sql` (adds the
+`assignments_destination_area_required` before-insert trigger). The original
+`supabase/migrations/20261017000000_destination_area.sql` was not run and is
+superseded by the two-part version — do not run both.
 
-**Prepared migration:** `supabase/migrations/20261017000000_destination_area.sql`.
-It adds nullable `public.assignments.destination_area`, requires a nonblank
-value on new assignment inserts, and extends the existing protected
-`edit_assignment` function to update that field. It leaves the current
-`destination` route and historical rows unchanged.
+**Verification performed:**
+- `assignments.destination_area` column confirmed in the Table Editor;
+  historical rows remain NULL, new dispatched rows (e.g. "Iloilo", "Makati
+  City") carry real values.
+- `assignments_destination_area_required` trigger confirmed present and
+  enabled (`Origin` mode) via Database → Triggers.
+- `VITE_DESTINATION_AREA_ENABLED=true` set in local `.env.local`; `pnpm dev`
+  restarted.
+- Dispatched a test assignment with distinct Origin, Pickup Location,
+  Destination, and Delivery Location; the Route & Client card renders all four
+  as separate values, and Destination persisted correctly after editing
+  (re-auth password prompt on edit is expected `edit_assignment` behavior, not
+  a defect).
 
-**Local activation after an authorized developer applies the migration:**
-1. Confirm the SQL editor is connected to the development project used by
-   `.env.local`, then execute the complete migration file there. Do not run it
-   against production. The repository's `supabase/config.toml` may name a
-   different project, so verify the target explicitly.
-2. Verify the `destination_area` column, insert trigger, and updated
-   `edit_assignment` function exist. Existing rows should retain NULL in the
-   new column.
-3. Set `VITE_DESTINATION_AREA_ENABLED=true` in local `.env.local` and restart
-   `pnpm dev`. The default is false, so the local app keeps using its existing
-   form and write payload until this step. The migration requires Destination
-   on new inserts, so pause assignment creation between applying the SQL and
-   enabling this setting. Old clients with the setting off cannot create new
-   assignments after the migration.
-4. Create and read back a development test assignment with distinct Origin,
-   Destination, and Delivery Location. Verify Dispatch, Deliveries, Driver
-   details, editing, and refresh before marking this requirement Implemented.
-
-**Local files prepared:** `src/app/data/assignmentTypes.ts`,
+**Frontend files touched:** `src/app/data/assignmentTypes.ts`,
 `src/app/data/assignmentRoute.ts`, `src/app/lib/db.ts`,
 `src/app/components/admin/DriversManagement.tsx`,
 `src/app/components/admin/DeliveryTable.tsx`,
@@ -135,7 +134,7 @@ value on new assignment inserts, and extends the existing protected
 
 ## [REQ-002] Persisted Driver Pickup, Loading, Arrival, and Unloading Workflow
 
-**Status:** Pending
+**Status:** In Progress
 
 **Area:** Driver App / Dispatch / Deliveries / Dashboard / Photos / Reports
 
@@ -225,17 +224,274 @@ transition must leave the previous stage visible. The driver's offline demo
 mode must never appear to persist a real transition. Do not introduce the new
 stages in React before server persistence and validation exist.
 
-**Approval:** Not approved
+**Approval:** Approved — schema and transition function, local development
+(2026-10-18). The driver/admin UI is not approved yet, and per this
+requirement's own risk notes must not be built before the server side is
+verified.
 
-**Implementation status:** New stages not started. Current-schema driver UI
-improvements in `DriverInterface.tsx` clarify the dashboard back action and
-next step, provide a direct document action after delivery, and wait for real
-status-photo writes before showing a successful transition. These do not
-activate pickup arrival, loading, destination arrival, or unloading stages.
+**Design decisions made (2026-10-18):**
+- Stages are tracked in a new, separate `operational_stage` column rather than
+  extending `task_status` — this keeps every existing place that
+  filters/colors/groups by `task_status` unchanged.
+- Event times are individual nullable `timestamptz` columns on `assignments`
+  (matching the existing `assigned_at`/`created_at` style) rather than a
+  separate append-only event table, since each event happens at most once per
+  assignment and `activity_log` already serves as this project's audit trail.
+- `depart` automatically flips `task_status` to `Picked Up` in the same
+  server call — the driver's next visible action stays the existing,
+  unchanged In Transit button. The old In Transit and Delivered taps are not
+  touched by this requirement.
+- Missing required photos hard-block the transition (the function raises
+  `missing_required_photo: <key>`) rather than allowing it through with a
+  flag for admin follow-up.
+- No admin override/force-reset of a stuck `operational_stage` in this pass —
+  deferred as its own follow-up once the base flow is proven.
 
-**Blocked:** New persistent stages, trusted event times, transition validation,
-and required photo gates need explicit development-backend/schema approval and
-an authorized Supabase migration. The separate REQ-001 Destination migration
-also remains unapplied, so its local feature flag stays off.
+**Prepared migration (schema only):**
+`supabase/migrations/20261018000000_driver_workflow_stages.sql`. Adds
+`operational_stage` (checked against the 6 sub-stage values) and 7 nullable
+`timestamptz` columns (`pickup_arrived_at`, `loading_started_at`,
+`loading_completed_at`, `departed_at`, `destination_arrived_at`,
+`unloading_started_at`, `unloading_completed_at`). Also records the stable
+`status_photos` category keys the future transition function and driver UI
+must agree on (`pickup_front/left/right/rear`, `loading_before`,
+`loading_after`, `pretrip_front/left/right/rear`, `unloading_before`,
+`unloading_after`). This migration changes nothing else: `task_status`,
+`guard_assignment_update()`, and the existing driver flow are untouched, and
+no code path writes the new columns yet, so it is safe to run at any time with
+zero behavior change.
+
+**Verification performed (2026-10-18):** `20261018000000_driver_workflow_stages.sql`
+applied in the Supabase SQL editor against the development project; all 8 new
+columns confirmed present on `public.assignments` in the Table Editor, NULL on
+every existing row. Dispatch, Deliveries, and Driver views checked afterward
+with no behavior change, as expected for a schema-only, unused-column
+migration.
+
+**Prepared migration (transitions):**
+`supabase/migrations/20261018000001_driver_workflow_transitions.sql`. Adds
+`public.advance_driver_stage(assignment_id, transition)`, a `SECURITY
+DEFINER` function covering the 7 new transitions (`arrive_pickup`,
+`start_loading`, `finish_loading`, `depart`, `arrive_destination`,
+`start_unloading`, `finish_unloading`), each locking the row, checking the
+current stage, checking required photos where applicable, and stamping the
+one relevant timestamp. Also updates `guard_assignment_update()` with a
+narrow, transaction-scoped bypass flag so this one validated function can
+write the new columns despite the trigger's existing driver column
+allow-list — a direct client `.update()` call still cannot touch them.
+**Applied and verified (2026-10-18):** Ran in the Supabase SQL editor against
+the development project. Exercised from the running app's browser console,
+signed in as admin, against a real test assignment (`ASN66661`):
+`arrive_pickup` succeeded and correctly stamped `operational_stage` /
+`pickup_arrived_at`; a duplicate `arrive_pickup` call correctly failed with
+`wrong_stage`; `start_loading` with no photos uploaded correctly failed with
+`missing_required_photo: pickup_front`; inserting the 4 required
+`status_photos` rows and retrying `start_loading` then succeeded. Order
+validation, the photo gate (both block and unblock), and server-side
+timestamp stamping are all confirmed working end to end. The remaining 5
+transitions (`finish_loading`, `depart`, `arrive_destination`,
+`start_unloading`, `finish_unloading`) were not individually exercised, since
+they follow the identical pattern already proven.
+
+**Blocked:**
+- The transitions migration needs to be applied and exercised (call each
+  transition via the Supabase SQL editor or a temporary script, confirm
+  correct stamps, confirm a wrong-order or missing-photo call is rejected)
+  before it can be marked Implemented.
+- The Delivered gate (require `operational_stage = 'unloaded'` before
+  `task_status` can become `Delivered`) is intentionally not included — adding
+  it now would break Delivered for every assignment immediately, since
+  nothing writes `operational_stage` until the driver UI ships. It is a
+  deliberate follow-up migration once that UI is live for everyone.
+- The driver UI (stage screens, photo capture per category, progress
+  indicator) and any admin-facing display of the new stage/timestamps are not
+  started and not approved. REQ-001 is Implemented, so it no longer blocks
+  this one.
+
+---
+
+## [REQ-003] Cancel Assignment: Required Reason, Password Re-auth, Driver Notice
+
+**Status:** In Progress
+
+**Area:** Dispatch / Driver App
+
+**Requested change:**
+Before an admin can cancel a dispatch: require typing a reason, then confirm
+with password, before the cancellation completes. Save the reason to the
+audit log. The driver whose assignment was cancelled should see on their
+dashboard that it was cancelled.
+
+**Why backend/database support is required:**
+`cancel_assignment()` took no reason and no re-auth, unlike `edit_assignment()`
+which requires both. Separately, `assignments_select` RLS explicitly excludes
+`state = 'cancelled'` for drivers — a cancelled assignment simply vanishes
+from what a driver can query, with no error and no notice. A frontend-only
+"cancelled" message would have nothing real to read, since the row is
+unreachable under the old policy.
+
+**Applied and verified (2026-10-18):**
+`supabase/migrations/20261018000002_cancel_reason_and_driver_notice.sql`.
+Applied in the Supabase SQL editor against the development project.
+`assignments.cancel_reason` and `cancel_acknowledged_at` confirmed present
+(NULL on existing rows). Verified from the running app: the existing admin
+Cancel button (still calling the 1-argument path) cancelled a test assignment
+successfully with no password prompt — unchanged behavior, confirming the
+non-breaking design held. The new 2-argument path, called directly via the
+browser console, correctly refused with `reauth_required` without a recent
+password confirmation — proving it is genuinely gated, unlike the old path.
+- Adds `cancel_assignment(p_id, p_reason)` — requires a non-blank reason
+  (same validation as `edit_assignment`) and `signed_in_recently(300)`
+  re-auth (the same password-prompt pattern already used for editing). The
+  reason is stored in `activity_log.reason` and a new
+  `assignments.cancel_reason` column.
+- **Keeps the original `cancel_assignment(p_id)` unchanged, coexisting
+  alongside it** — deliberately non-breaking, since this project shares one
+  Supabase project between two developers and a migration affects the other
+  person's running app immediately, before any git push/pull. The current
+  admin Cancel button keeps working exactly as today until its UI is updated
+  to call the 2-argument version. `db.ts`'s `cancelAssignment(id, reason?)`
+  now supports both: omit `reason` for the old path, pass it for the new one.
+- `assignments_select` RLS no longer excludes `state = 'cancelled'` for
+  drivers — symmetric with how they can already read their own `completed`
+  rows.
+- New `assignments.cancel_acknowledged_at` (nullable timestamptz), added to
+  `guard_assignment_update()`'s driver-writable allow-list alongside the
+  existing `driver_acknowledged_at`, so a future driver UI can show the
+  cancellation notice once and let the driver dismiss it (stamped
+  client-side, same as `driver_acknowledged_at` today — a low-stakes "seen
+  it" flag, not a trusted event time).
+
+**Follow-up (deliberately deferred):** once `DriversManagement.tsx`'s cancel
+flow is updated to always call the 2-argument version with a real reason +
+password step, a later cleanup migration should drop the original
+1-argument `cancel_assignment(p_id)` so an old reason-less cancel path can't
+silently remain callable.
+
+**Frontend impact — admin side (ready to build):** `db.ts`'s
+`cancelAssignment(id, reason)` already calls the new, reason-requiring RPC —
+no further data-layer work needed. The admin cancel flow just needs a reason
+text field plus the existing password-confirm pattern (the
+`EditAssignmentModal` password step is the closest existing reference), then
+call `cancelAssignment(id, reasonText)` with both arguments instead of just
+`id`.
+
+**Frontend impact — driver side (BLOCKED, data layer not ready yet):**
+`loadDriverData()` in `src/app/lib/db.ts` does not currently read or return
+anything about a cancellation — `DriverViewData` has no field for it. Before
+any driver-side UI for this can be built, `loadDriverData()` needs a change
+to query the driver's own assignments for the most recent row where
+`state = 'cancelled' and cancel_acknowledged_at is null`, and return it as a
+new field (e.g. `cancelledNotice: { id, reason, cancelledAt } | null`) on
+`DriverViewData`. Only after that exists can the driver screen display
+`cancel_reason` and call `driverUpdate` with `cancelAcknowledgedAt` set (now,
+client-stamped, same as the existing `driver_acknowledged_at` pattern) to
+dismiss it. Whoever does this `db.ts` change first unblocks the other.
+
+**Migration required:** Yes — applied and verified against the development
+project.
+
+**Approval:** Approved — local development (2026-10-18).
+
+---
+
+## [REQ-004] OPM Role: Fleet/PIN/Account Management Becomes Exclusive
+
+**Status:** In Progress
+
+**Area:** Accounts / Drivers / Trucks / Auth & Roles
+
+**Requested change:**
+Replace the 3-role staff model (`admin`, `csr`, `viewer` + an `is_om` flag on
+one viewer) with `admin`, `csr`, `opm`. `admin` is kept only because an
+existing account already has it — `admin` and `csr` are fully equivalent
+everywhere from this point on, nothing admin-exclusive remains. OPM
+(Operational Manager) is a real role, not a flag, and is the **only** role —
+not even `admin`/`csr` — that may:
+- Register, edit, or archive drivers and trucks
+- View or reset a driver's PIN
+- Create a new staff account (narrowed to CSR only; Viewer accounts can no
+  longer be created, since `viewer` is dropped as a role entirely)
+
+Everything else (dispatch, edit/cancel assignments, approve/reject
+documents, reading every screen) is untouched. `is_staff()` already covers
+any active role, so OPM can still read everything — "view-only in other
+modules" per the request.
+
+**Why backend/database support is required:**
+`can_write()` (`admin`/`csr`) previously gated drivers/trucks/PIN writes
+alongside everything else; narrowing those three specific things to a new
+role while leaving the rest of `can_write()`'s scope untouched requires a
+dedicated authorization check (`is_opm()`) used only in the policies/
+functions this requirement names, not a blanket role-check change — widening
+`can_write()` itself would have accidentally handed OPM full write access to
+assignments, documents, etc., which was explicitly not wanted.
+
+**Applied migration (2026-10-18):**
+`supabase/migrations/20261018000003_opm_role.sql`.
+- `profiles.role` check constraint: `admin | csr | opm` (was `admin | csr |
+  viewer`). No existing rows used `viewer`, so no data migration needed.
+- New `is_opm()` function (role-based) replaces the old `is_om()` flag-based
+  one; `is_om` boolean column dropped.
+- RLS changed to `is_opm()`-only: `drivers`/`trucks` insert/update/delete,
+  `driver_pins` select, `profiles` select (OPM reads all staff; others read
+  only their own row) and update (OPM may edit CSR accounts only).
+- Functions changed to `is_opm()`-only: `archive_driver`, `archive_truck`,
+  `reset_driver_pin`, `sync_driver_login` (also used when first registering
+  a driver), `create_team_member` (role check narrowed to `p_role = 'csr'`),
+  `remove_team_member` (narrowed to removing CSR accounts).
+- Bootstrapped one OPM account directly in the migration
+  (`operationalmanager@360logistics.ph`), since OPM-exclusive account
+  creation means nothing could create the first OPM through the app.
+
+**Known breaking change (by design):** the single existing `admin` account
+immediately loses the ability to register/edit/archive drivers or trucks,
+view/reset PINs, or create team members the moment this migration is
+applied — those are now exclusively the bootstrapped OPM account's. This
+is the explicit intent, not a regression.
+
+**Applied and verified (2026-10-18):** Ran in the Supabase SQL editor.
+`profiles` confirmed with both rows (`admin`, `opm`). Logged in as the new
+OPM account: Workspace Settings reachable, creating a CSR account
+succeeded, registering/editing drivers & trucks and viewing/resetting PINs
+all worked.
+
+**Follow-up fix — `20261018000004_opm_activity_log.sql`:** creating the CSR
+account succeeded but the frontend's generic activity-log write afterward
+failed (`activity_log` RLS only allowed `can_write()`, not `is_opm()` —
+`create_team_member` itself is SECURITY DEFINER and logs its own row fine;
+this was specifically `syncAdminData()`'s direct table insert used for
+actions without a dedicated backend function). Fixed by widening
+`activity_insert`'s policy to `can_write() OR is_opm()` — audit-log write
+access only, no change to OPM's operational scope anywhere else. Written,
+not yet applied.
+
+**Frontend impact (not started — assigned to the frontend developer):**
+Verified 2026-10-18 that the backend correctly enforces both directions —
+confirmed by reproducing each failure live, not just inferred:
+- Logged in as CSR: Register Driver, Register Truck, New PIN, and Archive
+  buttons are all still visible in Drivers & Trucks, and each one fails with
+  a raw `"Auto-save failed: ... violates row-level security policy"` toast
+  when used. These need to be hidden/disabled for any non-OPM account, and
+  ideally replaced with a clearer message than the raw RLS error.
+- Logged in as OPM: Approve/Reject buttons are still visible on pending
+  documents (Dispatch/View Shipment document review), and fail the same way
+  — `assignment_documents` RLS correctly refuses the write, since document
+  review stays CSR-only and OPM is view-only there. Same fix needed: hide/
+  disable for non-CSR/admin accounts.
+- The "invite" flow's role picker already had its Viewer option removed
+  (`WorkspaceSettingsPanel.tsx`) as part of this requirement; CSR is the
+  only creatable role now.
+- Driver-PIN display in the Accounts/Drivers screen (`PinCell`-equivalent,
+  currently shows "No PIN"/PIN value to CSR in the Drivers & Trucks list)
+  still needs to stop rendering for non-OPM accounts — `driver_pins_select`
+  already refuses CSR's read at the database level, so this is cosmetic
+  cleanup (whatever currently renders there should show nothing or a
+  placeholder for non-OPM) rather than a security gap.
+
+**Migration required:** Yes — written, not yet applied to the development
+project.
+
+**Approval:** Approved — local development (2026-10-18).
 
 ---

@@ -240,7 +240,7 @@ export default function AdminDashboard({
       case 'Documents':
         return <DocumentArchive assignments={assignments} completed={completed} cancelled={cancelled} setAssignments={setAssignments} isViewOnly={isViewOnly} search={currentSearchQuery} onSearchChange={changeSearch} notificationTarget={notificationTarget?.page === 'Documents' ? notificationTarget : null} onNotificationTargetHandled={clearNotificationTarget} />;
       case 'Reports':
-        return <Reports assignments={assignments} completed={completed} cancelled={cancelled} />;
+        return <Reports assignments={assignments} completed={completed} cancelled={cancelled} trucks={trucks} />;
       case 'Accounts':
         return (
           <AccountsPanel

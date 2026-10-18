@@ -183,7 +183,7 @@ export interface AppNotification {
   navigateTo?: string;
 }
 
-export type AdminRole = 'admin' | 'viewer' | 'csr';
+export type AdminRole = 'admin' | 'csr' | 'opm';
 
 export type AdminActivityType =
   | 'login'

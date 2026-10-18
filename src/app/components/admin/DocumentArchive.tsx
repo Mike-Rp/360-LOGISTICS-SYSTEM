@@ -54,7 +54,12 @@ const STATUS_CFG: Record<DocStatus, { label: string; badge: string; icon: React.
 
 /* ── Image Preview Modal ── */
 function ImagePreviewModal({ url, docType, onClose }: { url: string; docType: string; onClose: () => void }) {
-  const isPdf = url.startsWith('data:application/pdf');
+  /* Real uploads are signed Storage URLs, not data: URIs, so there's no reliable
+     way to tell a PDF from an image just by looking at the URL string. Try it as
+     an image first; if the browser can't decode it (because it's actually a PDF),
+     fall back to an iframe, which both PDFs and images render fine in. */
+  const [imgFailed, setImgFailed] = useState(false);
+  const isPdf = url.startsWith('data:application/pdf') || imgFailed;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
@@ -71,11 +76,11 @@ function ImagePreviewModal({ url, docType, onClose }: { url: string; docType: st
         <div className="flex-1 overflow-auto p-4 flex items-center justify-center bg-muted/10">
           {isPdf
             ? <iframe src={url} className="w-full h-[500px] rounded-lg border border-border" title={docType} />
-            : <img src={url} alt={docType} className="max-w-full max-h-[500px] object-contain rounded-xl shadow-md" />
+            : <img src={url} alt={docType} onError={() => setImgFailed(true)} className="max-w-full max-h-[500px] object-contain rounded-xl shadow-md" />
           }
         </div>
         <div className="px-5 py-3 border-t border-border flex-shrink-0">
-          <a href={url} download={`${docType}.jpg`} className="text-xs text-primary underline hover:text-primary/80">
+          <a href={url} download={`${docType}.${isPdf ? 'pdf' : 'jpg'}`} className="text-xs text-primary underline hover:text-primary/80">
             Download file
           </a>
         </div>

@@ -327,35 +327,27 @@ const TOPICS: Topic[] = [
     id: 'security',
     category: 'Admin',
     title: 'Account Security & Access Roles',
-    summary: 'Understand the three admin roles and how access is controlled.',
+    summary: 'Understand the two staff roles and how access is controlled.',
     icon: Shield,
     iconColor: 'text-green-600',
     iconBg: 'bg-green-100',
-    tags: ['security', 'roles', 'access', 'admin', 'operation manager', 'csr', 'viewer', 'permissions'],
+    tags: ['security', 'roles', 'access', 'opm', 'csr', 'permissions'],
     steps: [
       {
         title: 'Account roles',
-        body: 'Admin (full access, reserved for system administration), Operation Manager (manages the team via Workspace Settings — invites CSR and Viewer accounts), CSR (full read/write — can create, edit, and assign tasks), and Viewer (read-only — can browse all data but cannot make changes).',
+        body: 'OPM (Operational Manager — manages the team and fleet via Workspace Settings and Drivers/Trucks, plus read-only access everywhere else) and CSR (full read/write over day-to-day operations — dispatch, editing, cancelling assignments, document review).',
       },
       {
-        title: 'Admin role',
-        body: 'Admins have full control: register drivers and trucks, assign tasks, approve/reject documents, delete accounts, and reset data.',
-      },
-      {
-        title: 'Operation Manager role',
-        body: 'The Operation Manager has the same read-only access as a Viewer over deliveries, plus exclusive access to Workspace Settings, where they invite CSR and Viewer team members and review the company activity log.',
+        title: 'OPM role',
+        body: 'The only role that can register, edit, or archive drivers and trucks, view or reset a driver’s PIN, and create new CSR accounts in Workspace Settings. Everywhere else — Monitor, Deliveries, Documents, Reports — OPM is read-only, same as CSR can read but with no write access to fleet/accounts.',
       },
       {
         title: 'CSR role',
-        body: 'CSR accounts are invited individually by the Operation Manager in Workspace Settings. They have full read/write access — assigning tasks, approving documents — attributed to their own real login.',
-      },
-      {
-        title: 'Viewer role',
-        body: 'Viewers can see all pages but cannot make any changes. Invited by the Operation Manager for supervisors, auditors, or stakeholders who need read-only visibility.',
+        body: 'CSR accounts are created individually by OPM in Workspace Settings. Full read/write access over assignments and documents — dispatching, editing, cancelling, approving/rejecting — attributed to their own real login. CSR cannot touch drivers, trucks, PINs, or staff accounts.',
       },
       {
         title: 'Keeping accounts separate',
-        body: 'Each CSR should use their own individual login, invited by the Operation Manager. Shared logins make it impossible to attribute actions in the Activity Log.',
+        body: 'Each CSR should use their own individual login, created by OPM. Shared logins make it impossible to attribute actions in the Activity Log.',
         warning: 'Never share login credentials between staff. All actions are logged against the account that performed them.',
       },
     ],

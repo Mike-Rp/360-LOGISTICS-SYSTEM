@@ -83,7 +83,6 @@ function AddMemberModal({ onClose, onAdded }: {
 }) {
   const [name,       setName]       = useState('');
   const [email,      setEmail]      = useState('');
-  const [role,       setRole]       = useState<'csr' | 'viewer'>('csr');
   const [password,   setPassword]   = useState('');
   const [showPass,   setShowPass]   = useState(false);
   const [error,      setError]      = useState('');
@@ -101,7 +100,7 @@ function AddMemberModal({ onClose, onAdded }: {
       /* Creates the Supabase Auth login + the profile row in one database call (only the Operation
          Manager is allowed — the function checks). The password is shown ONCE below because Auth
          stores only a hash; nobody, including this app, can read it back later. */
-      const member = await createTeamMember({ name: name.trim(), email: email.trim(), password, role });
+      const member = await createTeamMember({ name: name.trim(), email: email.trim(), password, role: 'csr' });
       setCreated(member);
       onAdded(member);
     } catch (e) {
@@ -139,20 +138,10 @@ function AddMemberModal({ onClose, onAdded }: {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-foreground mb-2">Role <span className="text-red-500">*</span></label>
-            <div className="grid grid-cols-2 gap-2">
-              {(['csr', 'viewer'] as const).map((r) => (
-                <button
-                  key={r}
-                  onClick={() => setRole(r)}
-                  className={`px-3 py-3 rounded-xl border text-left transition-all ${
-                    role === r ? 'border-primary bg-blue-50 ring-2 ring-primary/20' : 'border-border bg-white hover:bg-accent'
-                  }`}
-                >
-                  <p className="text-sm font-semibold text-foreground">{r === 'csr' ? 'CSR' : 'Viewer'}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">{r === 'csr' ? 'Full read/write access' : 'Read-only, no editing'}</p>
-                </button>
-              ))}
+            <label className="block text-sm font-medium text-foreground mb-2">Role</label>
+            <div className="px-3 py-3 rounded-xl border border-border bg-muted/20">
+              <p className="text-sm font-semibold text-foreground">CSR</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Full read/write access. CSR is the only role OPM can create.</p>
             </div>
           </div>
 
@@ -217,7 +206,7 @@ function AddMemberModal({ onClose, onAdded }: {
             </p>
             <p className="text-xs text-amber-600">Email: <strong>{created.email}</strong></p>
             <p className="text-xs text-amber-600">Password: <strong className="font-mono tracking-wide">{created.password}</strong></p>
-            <p className="text-xs text-amber-600">Role: <strong>{created.role === 'csr' ? 'CSR' : 'Viewer'}</strong></p>
+            <p className="text-xs text-amber-600">Role: <strong>CSR</strong></p>
           </div>
           <button onClick={onClose} className="w-full px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors text-sm font-medium">
             Done
@@ -405,12 +394,8 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
                       <p className="text-sm font-medium text-foreground truncate">{m.name}</p>
                       <p className="text-xs text-muted-foreground truncate">{m.email}</p>
                     </div>
-                    <span className={`flex-shrink-0 text-xs font-medium px-2.5 py-1 rounded-lg border ${
-                      m.role === 'csr'
-                        ? 'bg-blue-50 text-blue-700 border-blue-200'
-                        : 'bg-gray-100 text-gray-600 border-gray-200'
-                    }`}>
-                      {m.role === 'csr' ? 'CSR' : 'Viewer'}
+                    <span className="flex-shrink-0 text-xs font-medium px-2.5 py-1 rounded-lg border bg-blue-50 text-blue-700 border-blue-200">
+                      CSR
                     </span>
                     <div className="text-right flex-shrink-0 hidden sm:block">
                       <p className="text-[12px] text-muted-foreground">

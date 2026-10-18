@@ -85,7 +85,7 @@ export type AppSession =
   | null;
 
 const toStaff = (p: Row): StaffSession => ({
-  id: p.id, email: p.email, name: p.name ?? '', role: p.role as AdminRole, isOm: !!p.is_om, isDemo: !!p.is_demo,
+  id: p.id, email: p.email, name: p.name ?? '', role: p.role as AdminRole, isOm: p.role === 'opm', isDemo: !!p.is_demo,
 });
 
 async function fetchProfile(uid: string): Promise<Row | null> {
@@ -642,8 +642,13 @@ export async function editAssignment(id: string, changes: AssignmentEdit, reason
   if (error) throw actionFailure(error);
 }
 
-export async function cancelAssignment(id: string): Promise<void> {
-  const { error } = await supabase.rpc('cancel_assignment', { p_id: id });
+/* Omit `reason` to use the original no-reason/no-reauth path (what the current
+   admin Cancel button still calls); pass it once that UI asks for a reason +
+   password, which resolves to the newer cancel_assignment(p_id, p_reason). */
+export async function cancelAssignment(id: string, reason?: string): Promise<void> {
+  const { error } = reason === undefined
+    ? await supabase.rpc('cancel_assignment', { p_id: id })
+    : await supabase.rpc('cancel_assignment', { p_id: id, p_reason: reason });
   if (error) throw actionFailure(error);
 }
 
@@ -686,12 +691,12 @@ const memberFromRow = (r: Row): TeamMember => ({
 });
 
 export async function listTeamMembers(): Promise<TeamMember[]> {
-  const { data, error } = await supabase.from('profiles').select('*').eq('is_om', false).in('role', ['csr', 'viewer']).order('invited_at');
+  const { data, error } = await supabase.from('profiles').select('*').eq('role', 'csr').order('invited_at');
   if (error) throw new Error(error.message);
   return (data ?? []).map(memberFromRow);
 }
 
-export async function createTeamMember(input: { name: string; email: string; password: string; role: 'csr' | 'viewer' }): Promise<TeamMember> {
+export async function createTeamMember(input: { name: string; email: string; password: string; role: 'csr' }): Promise<TeamMember> {
   const { data, error } = await supabase.rpc('create_team_member', {
     p_name: input.name, p_email: input.email, p_password: input.password, p_role: input.role,
   });

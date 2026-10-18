@@ -676,7 +676,12 @@ function ModalShell({ title, onClose, wide = false, children }: {
 
 /* ─── Image Preview Modal ──────────────────────────── */
 function ImagePreviewModal({ url, docType, onClose }: { url: string; docType: string; onClose: () => void }) {
-  const isPdf = url.startsWith('data:application/pdf');
+  /* Real uploads are signed Storage URLs, not data: URIs, so there's no reliable
+     way to tell a PDF from an image just by looking at the URL string. Try it as
+     an image first; if the browser can't decode it (because it's actually a PDF),
+     fall back to an iframe, which both PDFs and images render fine in. */
+  const [imgFailed, setImgFailed] = useState(false);
+  const isPdf = url.startsWith('data:application/pdf') || imgFailed;
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
@@ -694,11 +699,11 @@ function ImagePreviewModal({ url, docType, onClose }: { url: string; docType: st
           {isPdf ? (
             <iframe src={url} className="w-full h-[500px] rounded-lg border border-border" title={docType} />
           ) : (
-            <img src={url} alt={docType} className="max-w-full max-h-[500px] object-contain rounded-xl shadow-md" />
+            <img src={url} alt={docType} onError={() => setImgFailed(true)} className="max-w-full max-h-[500px] object-contain rounded-xl shadow-md" />
           )}
         </div>
         <div className="px-5 py-3 border-t border-border flex-shrink-0">
-          <a href={url} download={`${docType}.${url.startsWith('data:application/pdf') ? 'pdf' : 'jpg'}`}
+          <a href={url} download={`${docType}.${isPdf ? 'pdf' : 'jpg'}`}
             className="text-xs text-primary underline hover:text-primary/80">Download file</a>
         </div>
       </div>
@@ -1843,11 +1848,14 @@ export default function DriversManagement({
     resetAssignTask();
   };
 
+  /* A document can be (re-)uploaded after the delivery is already archived to
+     `completed` (e.g. a driver fixing a document that failed to save earlier),
+     so review has to reach that array too, not just the still-active one. */
   const handleApproveDoc = (assignId: string, docType: string) => {
-    const a = assignments.find((x) => x.id === assignId);
-    setAssignments((p) => p.map((x) => x.id !== assignId ? x : {
-      ...x, documents: x.documents.map((d) => d.type === docType ? { ...d, docStatus: 'approved' as DocStatus } : d),
-    }));
+    const a = assignments.find((x) => x.id === assignId) ?? completed.find((x) => x.id === assignId);
+    const patch = (d: AssignmentDoc) => d.type === docType ? { ...d, docStatus: 'approved' as DocStatus } : d;
+    setAssignments((p) => p.map((x) => x.id !== assignId ? x : { ...x, documents: x.documents.map(patch) }));
+    setCompleted((p) => p.map((x) => x.id !== assignId ? x : { ...x, documents: x.documents.map(patch) }));
     onLogActivity?.({
       type: 'doc_approved',
       driverName: a?.driverName,
@@ -1858,12 +1866,11 @@ export default function DriversManagement({
   };
 
   const handleRejectDoc = (assignId: string, docType: string, reason: string) => {
-    const a = assignments.find((x) => x.id === assignId);
-    setAssignments((p) => p.map((x) => x.id !== assignId ? x : {
-      ...x, documents: x.documents.map((d) =>
-        d.type === docType ? { ...d, docStatus: 'rejected' as DocStatus, rejectReason: reason.trim() || undefined } : d
-      ),
-    }));
+    const a = assignments.find((x) => x.id === assignId) ?? completed.find((x) => x.id === assignId);
+    const patch = (d: AssignmentDoc) =>
+      d.type === docType ? { ...d, docStatus: 'rejected' as DocStatus, rejectReason: reason.trim() || undefined } : d;
+    setAssignments((p) => p.map((x) => x.id !== assignId ? x : { ...x, documents: x.documents.map(patch) }));
+    setCompleted((p) => p.map((x) => x.id !== assignId ? x : { ...x, documents: x.documents.map(patch) }));
     onLogActivity?.({
       type: 'doc_rejected',
       driverName: a?.driverName,

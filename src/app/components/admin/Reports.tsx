@@ -3,10 +3,10 @@ import { flushSync } from 'react-dom';
 import {
   FileDown, TrendingUp, Package, AlertTriangle,
   X, Eye, Printer, Clock, Truck, Check,
-  User, MapPin, Building2, Timer, AlarmClock,
+  User, MapPin, Building2, Timer, AlarmClock, Gauge,
 } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import type { Assignment, CompletedTask, TaskStatus } from '../../data/assignmentTypes';
+import type { Assignment, CompletedTask, TaskStatus, LocalTruck } from '../../data/assignmentTypes';
 import { parseStoredTimestamp } from '../../data/assignmentTypes';
 import { getAssignmentRoute } from '../../data/assignmentRoute';
 import { PaginationFooter, usePagination } from './Pagination';
@@ -28,7 +28,17 @@ interface DelayRow {
   client: string; scheduledTime: string; reportedAt: string;
   reason: string; type: string; status: 'Resolved' | 'Ongoing';
 }
-type ReportKey = 'weekly' | 'monthly' | 'delay';
+interface TruckUtilRow {
+  plate: string; classification: string; timesAssigned: number;
+  completedTrips: number; cancelledAssignments: number;
+  lastDriver: string; lastUsedDate: string;
+}
+interface DriverUtilRow {
+  name: string; timesAssigned: number; completedDeliveries: number;
+  cancelledAssignments: number; lastTruck: string; lastDeliveryDate: string;
+}
+type ReportKey = 'weekly' | 'monthly' | 'delay' | 'utilization';
+type UtilTab = 'trucks' | 'drivers';
 
 /* ─── Helpers ─────────────────────────────────────── */
 function fmtDate(iso: string) {
@@ -132,6 +142,91 @@ function buildMonthlyRows(completed: CompletedTask[]): MonthlyRow[] {
   });
 }
 
+/* Build truck utilization rows from ALL history (active + completed + cancelled),
+   keyed by plate rather than the live trucks list — a truck that was later
+   deleted still shows its historical usage here, just with no classification
+   on file. This is deliberately about historical usage, not current status:
+   no "Available/Assigned" column, only cumulative counts. */
+function buildTruckUtilRows(
+  assignments: Assignment[], completed: CompletedTask[], cancelled: Assignment[], trucks: { plateNumber: string; classification?: string }[],
+): TruckUtilRow[] {
+  const classByPlate = new Map(trucks.map((t) => [t.plateNumber, t.classification?.trim() || '—']));
+  const byPlate = new Map<string, {
+    classification: string; timesAssigned: number; completedTrips: number; cancelledAssignments: number;
+    lastDriver: string; lastUsedDate: string; lastUsedSort: number;
+  }>();
+
+  const touch = (plate: string, driver: string, dateValue: string, kind: 'completed' | 'cancelled' | 'other') => {
+    if (!plate.trim()) return;
+    let row = byPlate.get(plate);
+    if (!row) {
+      row = {
+        classification: classByPlate.get(plate) ?? '—', timesAssigned: 0, completedTrips: 0,
+        cancelledAssignments: 0, lastDriver: '—', lastUsedDate: '—', lastUsedSort: -1,
+      };
+      byPlate.set(plate, row);
+    }
+    row.timesAssigned += 1;
+    if (kind === 'completed') row.completedTrips += 1;
+    if (kind === 'cancelled') row.cancelledAssignments += 1;
+    const sortValue = parseStoredTimestamp(dateValue)?.getTime() ?? 0;
+    if (sortValue >= row.lastUsedSort) {
+      row.lastUsedSort = sortValue;
+      row.lastDriver = driver.trim() || '—';
+      row.lastUsedDate = dateValue ? fmtDate(dateValue) : '—';
+    }
+  };
+
+  for (const a of assignments) touch(a.truckPlate, a.driverName, a.pickedUpDate || a.deliveryDate, 'other');
+  for (const c of completed)   touch(c.truckPlate, c.driverName, c.completedAt || c.deliveryDate, 'completed');
+  for (const x of cancelled)   touch(x.truckPlate, x.driverName, x.deliveryDate, 'cancelled');
+
+  return [...byPlate.entries()]
+    .map(([plate, r]) => ({
+      plate, classification: r.classification, timesAssigned: r.timesAssigned,
+      completedTrips: r.completedTrips, cancelledAssignments: r.cancelledAssignments,
+      lastDriver: r.lastDriver, lastUsedDate: r.lastUsedDate,
+    }))
+    .sort((a, b) => b.timesAssigned - a.timesAssigned || a.plate.localeCompare(b.plate));
+}
+
+/* Same idea as buildTruckUtilRows, keyed by driver name instead of plate. */
+function buildDriverUtilRows(assignments: Assignment[], completed: CompletedTask[], cancelled: Assignment[]): DriverUtilRow[] {
+  const byName = new Map<string, {
+    timesAssigned: number; completedDeliveries: number; cancelledAssignments: number;
+    lastTruck: string; lastDeliveryDate: string; lastUsedSort: number;
+  }>();
+
+  const touch = (name: string, truck: string, dateValue: string, kind: 'completed' | 'cancelled' | 'other') => {
+    if (!name.trim()) return;
+    let row = byName.get(name);
+    if (!row) {
+      row = { timesAssigned: 0, completedDeliveries: 0, cancelledAssignments: 0, lastTruck: '—', lastDeliveryDate: '—', lastUsedSort: -1 };
+      byName.set(name, row);
+    }
+    row.timesAssigned += 1;
+    if (kind === 'completed') row.completedDeliveries += 1;
+    if (kind === 'cancelled') row.cancelledAssignments += 1;
+    const sortValue = parseStoredTimestamp(dateValue)?.getTime() ?? 0;
+    if (sortValue >= row.lastUsedSort) {
+      row.lastUsedSort = sortValue;
+      row.lastTruck = truck.trim() || '—';
+      row.lastDeliveryDate = dateValue ? fmtDate(dateValue) : '—';
+    }
+  };
+
+  for (const a of assignments) touch(a.driverName, a.truckPlate, a.pickedUpDate || a.deliveryDate, 'other');
+  for (const c of completed)   touch(c.driverName, c.truckPlate, c.completedAt || c.deliveryDate, 'completed');
+  for (const x of cancelled)   touch(x.driverName, x.truckPlate, x.deliveryDate, 'cancelled');
+
+  return [...byName.entries()]
+    .map(([name, r]) => ({
+      name, timesAssigned: r.timesAssigned, completedDeliveries: r.completedDeliveries,
+      cancelledAssignments: r.cancelledAssignments, lastTruck: r.lastTruck, lastDeliveryDate: r.lastDeliveryDate,
+    }))
+    .sort((a, b) => b.timesAssigned - a.timesAssigned || a.name.localeCompare(b.name));
+}
+
 /* ─── CSV Export Helper ───────────────────────────── */
 function downloadCSV(filename: string, headers: string[], rows: string[][]) {
   const csv = [headers, ...rows].map((r) => r.map((c) => `"${c}"`).join(',')).join('\n');
@@ -170,24 +265,36 @@ function EmptyTable({ message }: { message: string }) {
 
 /* ─── Preview Modal ───────────────────────────────── */
 function PreviewModal({
-  reportKey, assignments, completed, onClose,
+  reportKey, assignments, completed, cancelled, trucks, onClose,
 }: {
   reportKey: ReportKey;
   assignments: Assignment[];
   completed: CompletedTask[];
+  cancelled: Assignment[];
+  trucks: { plateNumber: string; classification?: string }[];
   onClose: () => void;
 }) {
   const weeklyRows  = buildWeeklyRows(assignments, completed);
   const delayRows   = buildDelayRows(assignments, completed);
   const monthlyRows = buildMonthlyRows(completed);
+  const [utilTab, setUtilTab] = useState<UtilTab>('trucks');
+  const truckUtilRows  = buildTruckUtilRows(assignments, completed, cancelled, trucks);
+  const driverUtilRows = buildDriverUtilRows(assignments, completed, cancelled);
   const weeklyPage = usePagination(weeklyRows, REPORT_PAGE_SIZE);
   const monthlyPage = usePagination(monthlyRows, REPORT_PAGE_SIZE);
   const delayPage = usePagination(delayRows, REPORT_PAGE_SIZE);
-  const selectedPage = reportKey === 'weekly' ? weeklyPage : reportKey === 'monthly' ? monthlyPage : delayPage;
-  const selectedCount = reportKey === 'weekly' ? weeklyRows.length : reportKey === 'monthly' ? monthlyRows.length : delayRows.length;
+  const truckUtilPage = usePagination(truckUtilRows, REPORT_PAGE_SIZE);
+  const driverUtilPage = usePagination(driverUtilRows, REPORT_PAGE_SIZE);
+  const selectedPage = reportKey === 'weekly' ? weeklyPage : reportKey === 'monthly' ? monthlyPage
+    : reportKey === 'delay' ? delayPage : utilTab === 'trucks' ? truckUtilPage : driverUtilPage;
+  const selectedCount = reportKey === 'weekly' ? weeklyRows.length : reportKey === 'monthly' ? monthlyRows.length
+    : reportKey === 'delay' ? delayRows.length : utilTab === 'trucks' ? truckUtilRows.length : driverUtilRows.length;
   const [printing, setPrinting] = useState(false);
-  const selectedDataKey = JSON.stringify(reportKey === 'weekly' ? weeklyRows : reportKey === 'monthly' ? monthlyRows : delayRows);
-  useEffect(() => { selectedPage.setPage(1); }, [reportKey, selectedDataKey]);
+  const selectedDataKey = JSON.stringify(
+    reportKey === 'weekly' ? weeklyRows : reportKey === 'monthly' ? monthlyRows
+      : reportKey === 'delay' ? delayRows : utilTab === 'trucks' ? truckUtilRows : driverUtilRows,
+  );
+  useEffect(() => { selectedPage.setPage(1); }, [reportKey, utilTab, selectedDataKey]);
   useEffect(() => {
     const showAllForPrint = () => flushSync(() => setPrinting(true));
     const restorePage = () => setPrinting(false);
@@ -201,6 +308,8 @@ function PreviewModal({
   const visibleWeeklyRows = printing ? weeklyRows : weeklyPage.pageItems;
   const visibleMonthlyRows = printing ? monthlyRows : monthlyPage.pageItems;
   const visibleDelayRows = printing ? delayRows : delayPage.pageItems;
+  const visibleTruckUtilRows = printing ? truckUtilRows : truckUtilPage.pageItems;
+  const visibleDriverUtilRows = printing ? driverUtilRows : driverUtilPage.pageItems;
   const tableLayout = 'block w-full min-w-0 xl:table xl:table-fixed print:table print:table-fixed';
   const tableHead = 'hidden xl:table-header-group print:table-header-group';
   const tableBody = 'block xl:table-row-group print:table-row-group';
@@ -210,9 +319,10 @@ function PreviewModal({
   const today = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
   const config = {
-    weekly:  { title: 'Weekly Performance Report',  subtitle: `Generated ${today}` },
-    monthly: { title: 'Monthly Delivery Summary',   subtitle: `Generated ${today}` },
-    delay:   { title: 'Delay & Issues Report',      subtitle: `Generated ${today}` },
+    weekly:      { title: 'Weekly Performance Report',           subtitle: `Generated ${today}` },
+    monthly:     { title: 'Monthly Delivery Summary',            subtitle: `Generated ${today}` },
+    delay:       { title: 'Delay & Issues Report',                subtitle: `Generated ${today}` },
+    utilization: { title: 'Fleet & Driver Utilization Report',   subtitle: `Historical usage, generated ${today}` },
   }[reportKey];
 
   /* Summary stats */
@@ -234,6 +344,18 @@ function PreviewModal({
     ongoing:  delayRows.filter((r) => r.status === 'Ongoing').length,
     types:    [...new Set(delayRows.map((r) => r.type))].length,
   };
+  const truckUtilSummary = {
+    trucks:    truckUtilRows.length,
+    assigned:  truckUtilRows.reduce((s, r) => s + r.timesAssigned, 0),
+    completed: truckUtilRows.reduce((s, r) => s + r.completedTrips, 0),
+    cancelled: truckUtilRows.reduce((s, r) => s + r.cancelledAssignments, 0),
+  };
+  const driverUtilSummary = {
+    drivers:   driverUtilRows.length,
+    assigned:  driverUtilRows.reduce((s, r) => s + r.timesAssigned, 0),
+    completed: driverUtilRows.reduce((s, r) => s + r.completedDeliveries, 0),
+    cancelled: driverUtilRows.reduce((s, r) => s + r.cancelledAssignments, 0),
+  };
 
   /* CSV Export */
   const handleExportCSV = () => {
@@ -247,10 +369,20 @@ function PreviewModal({
         ['Month','Total','On-Time','Delayed','Cancelled','Rate'],
         monthlyRows.map((r) => [r.week,String(r.total),String(r.onTime),String(r.delayed),String(r.cancelled),r.rate]),
       );
-    } else {
+    } else if (reportKey === 'delay') {
       downloadCSV('delay_report.csv',
         ['Date','Driver','Truck #','Route','Client','Scheduled','Reported At','Issue Type','Reason','Status'],
         delayRows.map((r) => [r.date,r.driver,r.truck,r.route,r.client,r.scheduledTime,r.reportedAt,r.type,r.reason,r.status]),
+      );
+    } else if (utilTab === 'trucks') {
+      downloadCSV('truck_utilization_report.csv',
+        ['Plate Number','Classification','Times Assigned','Completed Trips','Cancelled Assignments','Last Driver','Last Used Date'],
+        truckUtilRows.map((r) => [r.plate,r.classification,String(r.timesAssigned),String(r.completedTrips),String(r.cancelledAssignments),r.lastDriver,r.lastUsedDate]),
+      );
+    } else {
+      downloadCSV('driver_utilization_report.csv',
+        ['Driver Name','Times Assigned','Completed Deliveries','Cancelled Assignments','Last Truck Used','Last Delivery Date'],
+        driverUtilRows.map((r) => [r.name,String(r.timesAssigned),String(r.completedDeliveries),String(r.cancelledAssignments),r.lastTruck,r.lastDeliveryDate]),
       );
     }
   };
@@ -319,6 +451,49 @@ function PreviewModal({
                 </div>
               ))}
             </div>
+          )}
+          {reportKey === 'utilization' && (
+            <>
+              <div role="tablist" aria-label="Utilization report type" className="mb-4 inline-flex rounded-lg border border-border bg-muted/30 p-1">
+                {([['trucks', 'Trucks'], ['drivers', 'Drivers']] as const).map(([key, label]) => (
+                  <button key={key} type="button" role="tab" aria-selected={utilTab === key} onClick={() => setUtilTab(key)}
+                    className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                      utilTab === key ? 'bg-white text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                    }`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {utilTab === 'trucks' ? (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {[
+                    { label:'Trucks Used',           value: truckUtilSummary.trucks,    color:'text-blue-600',  bg:'bg-blue-50'  },
+                    { label:'Total Assignments',     value: truckUtilSummary.assigned,  color:'text-foreground',bg:'bg-muted/40' },
+                    { label:'Completed Trips',       value: truckUtilSummary.completed, color:'text-green-600', bg:'bg-green-50' },
+                    { label:'Cancelled Assignments', value: truckUtilSummary.cancelled, color:'text-red-600',   bg:'bg-red-50'   },
+                  ].map((s) => (
+                    <div key={s.label} className={`${s.bg} rounded-xl p-3 text-center`}>
+                      <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{s.label}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {[
+                    { label:'Drivers Used',          value: driverUtilSummary.drivers,   color:'text-blue-600',  bg:'bg-blue-50'  },
+                    { label:'Total Assignments',     value: driverUtilSummary.assigned,  color:'text-foreground',bg:'bg-muted/40' },
+                    { label:'Completed Deliveries',  value: driverUtilSummary.completed, color:'text-green-600', bg:'bg-green-50' },
+                    { label:'Cancelled Assignments', value: driverUtilSummary.cancelled, color:'text-red-600',   bg:'bg-red-50'   },
+                  ].map((s) => (
+                    <div key={s.label} className={`${s.bg} rounded-xl p-3 text-center`}>
+                      <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{s.label}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -518,6 +693,95 @@ function PreviewModal({
                 </table>
               )
           )}
+
+          {/* ── Truck Utilization Table ── */}
+          {reportKey === 'utilization' && utilTab === 'trucks' && (
+            truckUtilRows.length === 0
+              ? <EmptyTable message="No assignment history yet. Truck usage will appear here once deliveries are dispatched." />
+              : (
+                <table className={`${tableLayout} text-sm`}>
+                  <colgroup className="hidden xl:table-column-group print:table-column-group">
+                    {[14, 14, 12, 12, 12, 18, 18].map((width, i) => <col key={i} style={{ width: `${width}%` }} />)}
+                  </colgroup>
+                  <thead className={`${tableHead} sticky top-0 bg-muted/40 border-b border-border z-10`}>
+                    <tr>
+                      {['Plate Number','Classification','Times Assigned','Completed Trips','Cancelled','Last Driver','Last Used Date'].map((h) => (
+                        <th key={h} className="text-left px-2 py-3 text-[11px] leading-tight font-semibold text-muted-foreground tracking-wide break-words">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className={tableBody}>
+                    {visibleTruckUtilRows.map((r) => (
+                      <tr key={r.plate} className={`${tableRow} border-b border-border/40 hover:bg-muted/10 transition-colors`}>
+                        <td data-label="Plate Number" className={tableCell}>
+                          <div className="flex min-w-0 items-start gap-1.5">
+                            <Truck className="w-3.5 h-3.5 text-[#0d9488] flex-shrink-0" />
+                            <span className="min-w-0 break-words font-semibold text-[#0d9488]">{r.plate}</span>
+                          </div>
+                        </td>
+                        <td data-label="Classification" className={`${tableCell} text-muted-foreground`}>{r.classification}</td>
+                        <td data-label="Times Assigned" className={tableCell}><span className="font-semibold text-foreground">{r.timesAssigned}</span></td>
+                        <td data-label="Completed Trips" className={tableCell}><span className="font-semibold text-green-600">{r.completedTrips}</span></td>
+                        <td data-label="Cancelled" className={tableCell}>
+                          <span className={`font-semibold ${r.cancelledAssignments > 0 ? 'text-red-600' : 'text-muted-foreground'}`}>{r.cancelledAssignments}</span>
+                        </td>
+                        <td data-label="Last Driver" className={tableCell}>
+                          <div className="flex min-w-0 items-start gap-1.5">
+                            <User className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                            <span className="min-w-0 break-words">{r.lastDriver}</span>
+                          </div>
+                        </td>
+                        <td data-label="Last Used Date" className={`${tableCell} text-muted-foreground`}>{r.lastUsedDate}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )
+          )}
+
+          {/* ── Driver Utilization Table ── */}
+          {reportKey === 'utilization' && utilTab === 'drivers' && (
+            driverUtilRows.length === 0
+              ? <EmptyTable message="No assignment history yet. Driver usage will appear here once deliveries are dispatched." />
+              : (
+                <table className={`${tableLayout} text-sm`}>
+                  <colgroup className="hidden xl:table-column-group print:table-column-group">
+                    {[20, 14, 16, 14, 16, 20].map((width, i) => <col key={i} style={{ width: `${width}%` }} />)}
+                  </colgroup>
+                  <thead className={`${tableHead} sticky top-0 bg-muted/40 border-b border-border z-10`}>
+                    <tr>
+                      {['Driver Name','Times Assigned','Completed Deliveries','Cancelled','Last Truck Used','Last Delivery Date'].map((h) => (
+                        <th key={h} className="text-left px-2 py-3 text-[11px] leading-tight font-semibold text-muted-foreground tracking-wide break-words">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className={tableBody}>
+                    {visibleDriverUtilRows.map((r) => (
+                      <tr key={r.name} className={`${tableRow} border-b border-border/40 hover:bg-muted/10 transition-colors`}>
+                        <td data-label="Driver Name" className={tableCell}>
+                          <div className="flex min-w-0 items-start gap-1.5">
+                            <User className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                            <span className="min-w-0 break-words font-semibold text-foreground">{r.name}</span>
+                          </div>
+                        </td>
+                        <td data-label="Times Assigned" className={tableCell}><span className="font-semibold text-foreground">{r.timesAssigned}</span></td>
+                        <td data-label="Completed Deliveries" className={tableCell}><span className="font-semibold text-green-600">{r.completedDeliveries}</span></td>
+                        <td data-label="Cancelled" className={tableCell}>
+                          <span className={`font-semibold ${r.cancelledAssignments > 0 ? 'text-red-600' : 'text-muted-foreground'}`}>{r.cancelledAssignments}</span>
+                        </td>
+                        <td data-label="Last Truck Used" className={tableCell}>
+                          <div className="flex min-w-0 items-start gap-1.5">
+                            <Truck className="w-3.5 h-3.5 text-[#0d9488] flex-shrink-0" />
+                            <span className="min-w-0 break-words font-semibold text-[#0d9488]">{r.lastTruck}</span>
+                          </div>
+                        </td>
+                        <td data-label="Last Delivery Date" className={`${tableCell} text-muted-foreground`}>{r.lastDeliveryDate}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )
+          )}
         </div>
 
         <PaginationFooter page={selectedPage.page} totalItems={selectedCount} pageSize={REPORT_PAGE_SIZE}
@@ -527,9 +791,13 @@ function PreviewModal({
         {/* Footer */}
         <div className="px-4 sm:px-6 py-4 border-t border-border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 flex-shrink-0 bg-muted/10">
           <p className="text-xs text-muted-foreground">
-            {reportKey === 'weekly'  && `${weeklyRows.length} record${weeklyRows.length !== 1 ? 's' : ''} total`}
-            {reportKey === 'monthly' && `${monthlyRows.length} month${monthlyRows.length !== 1 ? 's' : ''} total`}
-            {reportKey === 'delay'   && `${delayRows.length} incident${delayRows.length !== 1 ? 's' : ''} total`}
+            {reportKey === 'weekly'      && `${weeklyRows.length} record${weeklyRows.length !== 1 ? 's' : ''} total`}
+            {reportKey === 'monthly'     && `${monthlyRows.length} month${monthlyRows.length !== 1 ? 's' : ''} total`}
+            {reportKey === 'delay'       && `${delayRows.length} incident${delayRows.length !== 1 ? 's' : ''} total`}
+            {reportKey === 'utilization' && utilTab === 'trucks'
+              && `${truckUtilRows.length} truck${truckUtilRows.length !== 1 ? 's' : ''} total`}
+            {reportKey === 'utilization' && utilTab === 'drivers'
+              && `${driverUtilRows.length} driver${driverUtilRows.length !== 1 ? 's' : ''} total`}
           </p>
           <div className="flex items-center gap-2 flex-wrap">
             <button onClick={onClose}
@@ -639,10 +907,11 @@ interface ReportsProps {
   assignments: Assignment[];
   completed:   CompletedTask[];
   cancelled:   Assignment[];
+  trucks:      LocalTruck[];
 }
 
 /* ─── Main Component ──────────────────────────────── */
-export default function Reports({ assignments, completed, cancelled }: ReportsProps) {
+export default function Reports({ assignments, completed, cancelled, trucks }: ReportsProps) {
   const [previewKey, setPreviewKey] = useState<ReportKey | null>(null);
   const [draftRange, setDraftRange] = useState<DateRange>(initialRange);
   const [range, setRange] = useState<DateRange>(initialRange);
@@ -691,10 +960,21 @@ export default function Reports({ assignments, completed, cancelled }: ReportsPr
         ['Month','Total','On-Time','Delayed','Cancelled','Rate'],
         monthlyRows.map((r) => [r.week,String(r.total),String(r.onTime),String(r.delayed),String(r.cancelled),r.rate]),
       );
-    } else {
+    } else if (reportKey === 'delay') {
       downloadCSV('delay_report.csv',
         ['Date','Driver','Truck #','Route','Client','Scheduled','Reported At','Issue Type','Reason','Status'],
         dRows.map((r) => [r.date,r.driver,r.truck,r.route,r.client,r.scheduledTime,r.reportedAt,r.type,r.reason,r.status]),
+      );
+    } else {
+      /* Quick export from the card (no tab context) — one combined file, Trucks then Drivers. */
+      const truckRows  = buildTruckUtilRows(assignments, completed, cancelled, trucks);
+      const driverRows = buildDriverUtilRows(assignments, completed, cancelled);
+      downloadCSV('fleet_driver_utilization_report.csv',
+        ['Section','Name / Plate','Classification','Times Assigned','Completed','Cancelled Assignments','Last Driver / Truck','Last Date'],
+        [
+          ...truckRows.map((r) => ['Truck', r.plate, r.classification, String(r.timesAssigned), String(r.completedTrips), String(r.cancelledAssignments), r.lastDriver, r.lastUsedDate]),
+          ...driverRows.map((r) => ['Driver', r.name, '—', String(r.timesAssigned), String(r.completedDeliveries), String(r.cancelledAssignments), r.lastTruck, r.lastDeliveryDate]),
+        ],
       );
     }
   };
@@ -741,6 +1021,14 @@ export default function Reports({ assignments, completed, cancelled }: ReportsPr
       icon:  AlertTriangle,
       color: 'bg-red-600',
       badge: 'On demand',
+    },
+    {
+      key:   'utilization',
+      title: 'Fleet & Driver Utilization Report',
+      desc:  'Historical usage per truck and driver — times assigned, completed trips, cancellations, and when each was last used. Trucks / Drivers tabs.',
+      icon:  Gauge,
+      color: 'bg-indigo-600',
+      badge: 'Historical',
     },
   ];
 
@@ -956,6 +1244,8 @@ export default function Reports({ assignments, completed, cancelled }: ReportsPr
           reportKey={previewKey}
           assignments={assignments}
           completed={completed}
+          cancelled={cancelled}
+          trucks={trucks}
           onClose={() => setPreviewKey(null)}
         />
       )}

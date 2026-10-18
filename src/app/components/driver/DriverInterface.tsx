@@ -872,7 +872,7 @@ function DriverDrawer({ title, onClose, children, compact = false }: { title: st
   );
 }
 
-function HistoryDetailsSheet({ driverId, assignmentId, onClose }: { driverId: string; assignmentId: string; onClose: () => void }) {
+function HistoryDetailsSheet({ driverId, driverName, assignmentId, onClose }: { driverId: string; driverName: string; assignmentId: string; onClose: () => void }) {
   const { t, document: documentText, status: statusText } = useDriverI18n();
   const [detail, setDetail] = useState<HistoryDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -881,6 +881,44 @@ function HistoryDetailsSheet({ driverId, assignmentId, onClose }: { driverId: st
   const [remarksOverflow, setRemarksOverflow] = useState(false);
   const remarksRef = useRef<HTMLParagraphElement>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  /* A completed delivery's documents are otherwise read-only (no upload flow
+     exists here at all) — this lets a driver fill in a still-missing or
+     rejected document after the fact, e.g. one that failed to save earlier. */
+  const historyFileRef = useRef<HTMLInputElement>(null);
+  const [pendingDocType, setPendingDocType] = useState<string | null>(null);
+  const [uploadingType, setUploadingType] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState('');
+
+  const handleHistoryDocUpload = async (docType: string, file: File) => {
+    setUploadError('');
+    setUploadingType(docType);
+    try {
+      const raw = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error('read failed'));
+        reader.readAsDataURL(file);
+      });
+      const compressed = await compressImage(raw);
+      const ext = compressed.startsWith('data:application/pdf') ? 'pdf' : 'jpg';
+      const safeDocType = docType.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+      const path = `docs/${assignmentId}/${safeDocType}_${Date.now()}.${ext}`;
+      const fileUrl = await uploadImage(compressed, path);
+      const nextDocuments = (detail?.documents ?? []).map((d) =>
+        d.type === docType ? { ...d, uploaded: true, docStatus: 'pending' as DocStatus, fileUrl } : d);
+      await driverUpdate(driverName, assignmentId, { documents: nextDocuments }, {
+        type: 'doc_upload', message: `[${detail?.truckPlate ?? ''}] "${docType}" uploaded`,
+        truckPlate: detail?.truckPlate ?? '', docType, navigateTo: 'Documents',
+      });
+      setDetail((prev) => prev ? { ...prev, documents: nextDocuments } : prev);
+    } catch (err) {
+      console.error('[history document upload] failed:', err);
+      setUploadError(t('home.saveError'));
+    } finally {
+      setUploadingType(null);
+    }
+  };
 
   useEffect(() => {
     let alive = true;
@@ -971,9 +1009,23 @@ function HistoryDetailsSheet({ driverId, assignmentId, onClose }: { driverId: st
                       {doc.uploaded && <p className="text-xs text-gray-500">{'uploadedAt' in doc && typeof doc.uploadedAt === 'string' ? manilaStamp(doc.uploadedAt, t('common.notAvailable')) : t('history.uploadTimeUnavailable')}</p>}
                     </div>
                     {url && <a href={url} target="_blank" rel="noopener noreferrer" className="shrink-0 min-h-11 px-3 flex items-center text-sm font-semibold text-green-700">{t('common.view')}</a>}
+                    {(!doc.uploaded || doc.docStatus === 'rejected') && (
+                      <button type="button" disabled={uploadingType === doc.type}
+                        onClick={() => { setPendingDocType(doc.type); historyFileRef.current?.click(); }}
+                        className="shrink-0 min-h-11 px-3 flex items-center text-sm font-semibold text-green-700 disabled:opacity-50">
+                        {uploadingType === doc.type ? t('history.uploading') : t('history.upload')}
+                      </button>
+                    )}
                   </div>;
                 })}
               </div> : <p className="text-sm text-gray-500 mt-3">{t('history.noDocuments')}</p>}
+              {uploadError && <p className="text-sm text-red-600 mt-2">{uploadError}</p>}
+              <input ref={historyFileRef} type="file" accept="image/*,application/pdf" className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f && pendingDocType) handleHistoryDocUpload(pendingDocType, f);
+                  e.target.value = '';
+                }} />
             </section>
           </>}
         </div>
@@ -1218,7 +1270,15 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
         setDocBlurErrors((p) => { const { [docType]: _drop, ...rest } = p; return rest; });
 
         const compressed = await compressImage(raw);
-        const path = `docs/${data.assignment!.id}/${encodeURIComponent(docType.replace(/\s+/g, '_'))}_${Date.now()}.jpg`;
+        /* compressImage() only transforms real images; a PDF data URL fails to
+           decode as an <img> and passes through unchanged, so this still says
+           application/pdf here — use that to store it under the right extension. */
+        const ext = compressed.startsWith('data:application/pdf') ? 'pdf' : 'jpg';
+        /* Replace every character that isn't a letter/digit, not just whitespace —
+           "Waybill / Delivery Receipt" has a literal '/' that previously survived
+           into the Storage path and broke it (Storage rejected the resulting key). */
+        const safeDocType = docType.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+        const path = `docs/${data.assignment!.id}/${safeDocType}_${Date.now()}.${ext}`;
         const fileUrl = await uploadImage(compressed, path);
         await pushUpdate(
           { documents: data.assignment!.documents.map((d) => d.type === docType ? { ...d, uploaded: true, docStatus: 'pending' as DocStatus, fileUrl } : d) },
@@ -1661,7 +1721,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
           <DriverPageControls page={shownHistoryPage} pages={historyPages} onPage={setHistoryPage} />
         </> : <div className="bg-white rounded-2xl border border-gray-200 px-5 py-7 text-center text-gray-500">{historySearch ? t('history.noMatches') : t('history.empty')}</div>}
       </main>
-      {selectedHistoryId && <HistoryDetailsSheet key={selectedHistoryId} driverId={driverId} assignmentId={selectedHistoryId} onClose={closeHistoryDetail} />}
+      {selectedHistoryId && <HistoryDetailsSheet key={selectedHistoryId} driverId={driverId} driverName={driverName} assignmentId={selectedHistoryId} onClose={closeHistoryDetail} />}
       {LanguageNotice}
       {StatusNotice}
     </div>;

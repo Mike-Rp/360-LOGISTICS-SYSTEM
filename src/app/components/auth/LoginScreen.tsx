@@ -128,7 +128,7 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
 
     setAdminLoading(true);
     try {
-      /* Admin, Operation Manager, CSR and Viewer are all Supabase Auth users now — one call.
+      /* OPM and CSR are both Supabase Auth users — one call.
          Which role you get comes from your row in the `profiles` table, not from this code. */
       const session = await signInStaff(inputEmail, inputPass);
       await onAdminLogin(session);
