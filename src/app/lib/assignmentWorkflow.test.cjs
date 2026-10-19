@@ -15,11 +15,16 @@ function loadTypeScript(file, resolve = require) {
 }
 
 function loadWorkflow(requiredTypes) {
-  const data = loadTypeScript(join(__dirname, '../data/assignmentTypes.ts'));
+  const colors = loadTypeScript(join(__dirname, '../data/statusColors.ts'));
+  const data = loadTypeScript(join(__dirname, '../data/assignmentTypes.ts'), id => {
+    assert.equal(id, './statusColors');
+    return colors;
+  });
   const documentTypes = requiredTypes ?? data.DOCUMENT_TYPES;
   const timing = loadTypeScript(join(__dirname, 'assignmentTiming.ts'));
   const workflow = loadTypeScript(join(__dirname, 'assignmentWorkflow.ts'), id => {
     if (id === './assignmentTiming') return timing;
+    if (id === '../data/statusColors') return colors;
     assert.equal(id, '../data/assignmentTypes');
     return { ...data, DOCUMENT_TYPES: documentTypes };
   });

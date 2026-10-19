@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { MapPin, Package, CheckCircle2, Truck, Building2, Filter, ChevronRight } from 'lucide-react';
 import type { Assignment, CompletedTask, LocalTruck, TaskStatus } from '../../data/assignmentTypes';
 import { taskStatusConfig } from '../../data/assignmentTypes';
+import { statusColors } from '../../data/statusColors';
 import { assignmentDisplayStatusConfig, getAssignmentDisplayStatus, getAssignmentDocumentProgress } from '../../lib/assignmentWorkflow';
 import { ADMIN_NAVIGATION_EVENT, adminHref, followAdminLink, pushAdminNavigation } from '../../lib/adminNavigation';
 import { matchesAssignmentDate } from '../../lib/assignmentDateFilter';
@@ -58,7 +59,10 @@ function DocumentsAction({ assignment }: { assignment: Assignment }) {
       </button>
     );
   }
-  const color = docs.rejected ? 'bg-red-50 text-red-700' : docs.allApproved ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700';
+  const color = docs.rejected ? statusColors['Needs Correction'].badge
+    : docs.allApproved ? statusColors.Completed.badge
+    : docs.missing ? statusColors['Awaiting Documents'].badge
+    : statusColors['Under Review'].badge;
   const count = docs.applicable || docs.uploaded ? `${docs.uploaded}/${docs.required}` : 'View uploads';
   return (
     <a href={adminHref('Documents', { assignmentId: assignment.id })}
@@ -226,6 +230,11 @@ export default function DeliveryTable({
   const [period, setPeriod] = useState<FilterPeriod>('all');
   const [remarksAssignment, setRemarksAssignment] = useState<Assignment | null>(null);
   const [summaryId, setSummaryId] = useState<string | null>(null);
+  const [linkedCompletedId, setLinkedCompletedId] = useState<string | null>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('tab') === 'completed' ? params.get('assignment') : null;
+  });
+  const [highlightCompletedId, setHighlightCompletedId] = useState<string | null>(null);
 
   const truckFor = (assignment: Assignment) =>
     trucks.find((truck) => truck.id === assignment.truckId) ??
@@ -244,8 +253,8 @@ export default function DeliveryTable({
     .filter((a) => matchesSearch([a.truckPlate, a.id, a.driverName, a.destination, a.destinationArea ?? '', a.company, a.taskStatus])), (assignment) => assignment.id);
 
   const filteredDone = sortNewestFirst(completed
-    .filter((c) => matchesPeriod(c, period))
-    .filter((c) => matchesSearch([c.truckPlate, c.id, c.driverName, c.destination, c.destinationArea ?? '', c.company])), (assignment) => assignment.id);
+    .filter((c) => c.id === linkedCompletedId || (matchesPeriod(c, period) &&
+      matchesSearch([c.truckPlate, c.id, c.driverName, c.destination, c.destinationArea ?? '', c.company]))), (assignment) => assignment.id);
 
   const filteredCancelled = sortNewestFirst(cancelled
     .filter((a) => matchesPeriod(a, period))
@@ -261,8 +270,13 @@ export default function DeliveryTable({
   };
   useEffect(() => {
     const openCompleted = () => {
-      if (new URLSearchParams(window.location.search).get('tab') !== 'completed') return;
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('tab') !== 'completed') {
+        setLinkedCompletedId(null);
+        return;
+      }
       setTab('completed');
+      setLinkedCompletedId(params.get('assignment'));
       resetPages();
     };
     openCompleted();
@@ -275,13 +289,32 @@ export default function DeliveryTable({
   }, []);
   const selectTab = (next: 'active' | 'completed' | 'cancelled') => {
     setTab(next);
+    setLinkedCompletedId(null);
+    setHighlightCompletedId(null);
     resetPages();
     const url = new URL(window.location.href);
-    if (url.searchParams.has('tab')) {
+    if (url.searchParams.has('tab') || url.searchParams.has('assignment')) {
       url.searchParams.delete('tab');
+      url.searchParams.delete('assignment');
       window.history.replaceState(window.history.state, '', url);
     }
   };
+  const linkedCompletedIndex = filteredDone.findIndex((assignment) => assignment.id === linkedCompletedId);
+  const linkedCompletedPage = linkedCompletedIndex < 0 ? null : Math.floor(linkedCompletedIndex / DELIVERIES_PAGE_SIZE) + 1;
+  useEffect(() => {
+    if (tab === 'completed' && linkedCompletedPage !== null) completedPage.setPage(linkedCompletedPage);
+  }, [tab, linkedCompletedPage, linkedCompletedId]);
+  useLayoutEffect(() => {
+    if (!linkedCompletedId || tab !== 'completed' || completedPage.page !== linkedCompletedPage) return;
+    const row = Array.from(document.querySelectorAll<HTMLElement>('[data-completed-assignment]'))
+      .find((element) => element.dataset.assignmentId === linkedCompletedId && element.getClientRects().length > 0);
+    if (!row) return;
+    row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    row.focus({ preventScroll: true });
+    setHighlightCompletedId(linkedCompletedId);
+    const timer = window.setTimeout(() => setHighlightCompletedId(null), 1800);
+    return () => window.clearTimeout(timer);
+  }, [linkedCompletedId, tab, linkedCompletedPage, completedPage.page]);
   const newAssignmentId = useLocalAddedHighlight('assignment', resetPages);
   useLayoutEffect(() => { resetPages(); }, [search]);
 
@@ -487,7 +520,9 @@ export default function DeliveryTable({
                   </thead>
                   <tbody className="divide-y divide-border">
                     {completedPage.pageItems.map((c) => (
-                      <tr key={c.id} style={newRecordHighlight(c.id, newAssignmentId)} className={"hover:bg-accent/50 transition-colors" + (q ? " bg-yellow-50/30" : "")}>
+                      <tr key={c.id} data-completed-assignment="" data-assignment-id={c.id} tabIndex={-1}
+                        style={newRecordHighlight(c.id, highlightCompletedId ?? newAssignmentId)}
+                        className={"hover:bg-accent/50 transition-colors focus:outline-none" + (highlightCompletedId === c.id ? " ring-2 ring-inset ring-primary/40" : "") + (q ? " bg-yellow-50/30" : "")}>
                         <td className="px-2 py-3 min-w-0 break-words">
                           <p className="font-semibold text-foreground"><Highlight text={c.truckPlate} query={search} /></p>
                           <TruckMetadata assignment={c} truck={truckFor(c)} query={search} />
@@ -517,7 +552,9 @@ export default function DeliveryTable({
               {/* Tablet and mobile card list */}
               <div className="xl:hidden divide-y divide-border">
                 {completedPage.pageItems.map((c) => (
-                  <div key={c.id} style={newRecordHighlight(c.id, newAssignmentId)} className={`p-4 min-w-0 space-y-2 ${q ? 'bg-yellow-50/30' : ''}`}>
+                  <div key={c.id} data-completed-assignment="" data-assignment-id={c.id} tabIndex={-1}
+                    style={newRecordHighlight(c.id, highlightCompletedId ?? newAssignmentId)}
+                    className={`p-4 min-w-0 space-y-2 focus:outline-none ${highlightCompletedId === c.id ? 'ring-2 ring-inset ring-primary/40' : ''} ${q ? 'bg-yellow-50/30' : ''}`}>
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <span className="min-w-0 font-semibold text-foreground break-words"><Highlight text={c.truckPlate} query={search} /></span>
                       <AssignmentStatusBadge assignment={c} />

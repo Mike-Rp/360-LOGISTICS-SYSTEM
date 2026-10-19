@@ -18,6 +18,7 @@
 import { supabase } from './supabaseClient';
 import { DOCUMENT_TYPES } from '../data/assignmentTypes';
 import { destinationAreaEnabled } from '../data/assignmentRoute';
+import { locationFieldsFromRow, locationColumnsForRow, invalidLocationEdit } from './assignmentLocation';
 import type {
   Assignment, AssignmentDoc, CompletedTask, LocalDriver, LocalTruck, AppNotification,
   AdminActivityEntry, AdminRole, StatusPhoto, DelayReport, TeamMember,
@@ -213,6 +214,8 @@ function assignmentFromRow(r: Row, docs: Row[], photos: Row[], delays: Row[]): A
     truckPlate: r.truck_plate ?? '', truckId: r.truck_id ?? '',
     destination: r.destination ?? '', destinationArea: r.destination_area ?? null, company: r.company ?? '',
     pickupLocation: r.pickup_location ?? '', pickupTime: r.pickup_time ?? '', pickedUpDate: r.picked_up_date ?? '',
+    /* REQ-005 exact stops — null on older assignments (and before the migration is applied) */
+    ...locationFieldsFromRow(r),
     eta: r.eta ?? '', ata: r.ata ?? '', deliveryDate: r.delivery_date ?? '', remarks: r.remarks ?? '',
     taskStatus: r.task_status, assignedAt: r.assigned_at ?? '',
     operationalStage: r.operational_stage ?? null,
@@ -388,6 +391,8 @@ function flatten(d: AdminData): Flat {
       ...(destinationAreaEnabled ? { destination_area: a.destinationArea ?? null } : {}),
       company: a.company ?? '',
       pickup_location: a.pickupLocation ?? '', pickup_time: a.pickupTime ?? '', picked_up_date: a.pickedUpDate ?? '',
+      /* REQ-005: only sent when present and valid — rows without exact stops are unchanged */
+      ...locationColumnsForRow(a),
       eta: a.eta ?? '', ata: a.ata ?? '', delivery_date: a.deliveryDate ?? '', remarks: a.remarks ?? '',
       task_status: a.taskStatus, assigned_at: a.assignedAt ?? '',
       issue_reason: a.issueReason ?? null, driver_acknowledged_at: a.driverAcknowledgedAt ?? null,
@@ -622,11 +627,22 @@ export interface AssignmentEdit {
   driverId?: string; truckId?: string; destination?: string; destinationArea?: string; company?: string; pickupLocation?: string;
   pickupTime?: string; pickedUpDate?: string; eta?: string; deliveryDate?: string; remarks?: string;
 }
-const EDIT_COLUMNS: Record<keyof AssignmentEdit, string> = {
+/* REQ-005 exact stops — kept separate so existing `Required<AssignmentEdit>` form state
+   is unaffected. Send latitude + longitude together (numbers, or both null to clear).
+   Changing pickupLocation / deliveryLocation without its coordinates clears the old ones. */
+export interface AssignmentLocationEdit {
+  deliveryLocation?: string;
+  pickupLatitude?: number | null; pickupLongitude?: number | null;
+  deliveryLatitude?: number | null; deliveryLongitude?: number | null;
+}
+const EDIT_COLUMNS: Record<keyof (AssignmentEdit & AssignmentLocationEdit), string> = {
   driverId: 'driver_id', truckId: 'truck_id', destination: 'destination',
   destinationArea: 'destination_area', company: 'company',
   pickupLocation: 'pickup_location', pickupTime: 'pickup_time', pickedUpDate: 'picked_up_date',
   eta: 'eta', deliveryDate: 'delivery_date', remarks: 'remarks',
+  deliveryLocation: 'delivery_location',
+  pickupLatitude: 'pickup_latitude', pickupLongitude: 'pickup_longitude',
+  deliveryLatitude: 'delivery_latitude', deliveryLongitude: 'delivery_longitude',
 };
 
 /* The functions raise short codes like 'not_editable' — turn them back into a typed error */
@@ -642,9 +658,12 @@ function actionFailure(error: { message?: string; code?: string }): AssignmentAc
   return new AssignmentActionError('network', m);
 }
 
-export async function editAssignment(id: string, changes: AssignmentEdit, reason: string): Promise<void> {
+export async function editAssignment(id: string, changes: AssignmentEdit & AssignmentLocationEdit, reason: string): Promise<void> {
+  /* Catch NaN / half pairs here: JSON.stringify would turn NaN into null and silently clear */
+  const badLocation = invalidLocationEdit(changes);
+  if (badLocation) throw new AssignmentActionError('invalid', badLocation);
   const payload = Object.fromEntries(
-    Object.entries(changes).map(([k, v]) => [EDIT_COLUMNS[k as keyof AssignmentEdit], v]),
+    Object.entries(changes).map(([k, v]) => [EDIT_COLUMNS[k as keyof (AssignmentEdit & AssignmentLocationEdit)], v]),
   );
   const { error } = await supabase.rpc('edit_assignment', { p_id: id, p_changes: payload, p_reason: reason });
   if (error) throw actionFailure(error);

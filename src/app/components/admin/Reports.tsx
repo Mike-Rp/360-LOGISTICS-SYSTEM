@@ -9,6 +9,7 @@ import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer,
 import type { Assignment, CompletedTask, TaskStatus, LocalTruck } from '../../data/assignmentTypes';
 import { parseStoredTimestamp } from '../../data/assignmentTypes';
 import { getAssignmentRoute } from '../../data/assignmentRoute';
+import { statusColors } from '../../data/statusColors';
 import { PaginationFooter, usePagination } from './Pagination';
 
 const REPORT_PAGE_SIZE = 8;
@@ -470,7 +471,7 @@ function PreviewModal({
                     { label:'Trucks Used',           value: truckUtilSummary.trucks,    color:'text-blue-600',  bg:'bg-blue-50'  },
                     { label:'Total Assignments',     value: truckUtilSummary.assigned,  color:'text-foreground',bg:'bg-muted/40' },
                     { label:'Completed Trips',       value: truckUtilSummary.completed, color:'text-green-600', bg:'bg-green-50' },
-                    { label:'Cancelled Assignments', value: truckUtilSummary.cancelled, color:'text-red-600',   bg:'bg-red-50'   },
+                    { label:'Cancelled Assignments', value: truckUtilSummary.cancelled, color:'text-slate-600', bg:'bg-slate-50' },
                   ].map((s) => (
                     <div key={s.label} className={`${s.bg} rounded-xl p-3 text-center`}>
                       <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
@@ -484,7 +485,7 @@ function PreviewModal({
                     { label:'Drivers Used',          value: driverUtilSummary.drivers,   color:'text-blue-600',  bg:'bg-blue-50'  },
                     { label:'Total Assignments',     value: driverUtilSummary.assigned,  color:'text-foreground',bg:'bg-muted/40' },
                     { label:'Completed Deliveries',  value: driverUtilSummary.completed, color:'text-green-600', bg:'bg-green-50' },
-                    { label:'Cancelled Assignments', value: driverUtilSummary.cancelled, color:'text-red-600',   bg:'bg-red-50'   },
+                    { label:'Cancelled Assignments', value: driverUtilSummary.cancelled, color:'text-slate-600', bg:'bg-slate-50' },
                   ].map((s) => (
                     <div key={s.label} className={`${s.bg} rounded-xl p-3 text-center`}>
                       <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
@@ -554,15 +555,11 @@ function PreviewModal({
                         </td>
                         <td data-label="Status" className={tableCell}>
                           <span className={`text-xs px-2 py-0.5 rounded-full border font-medium whitespace-nowrap ${
-                            r.status === 'On Time' || r.status === 'Completed'
-                              ? 'bg-green-100 text-green-700 border-green-200'
+                            r.status === 'On Time'
+                              ? statusColors.Completed.badge
                             : r.status === 'Delayed'
-                              ? 'bg-red-100 text-red-700 border-red-200'
-                            : r.status === 'In Transit'
-                              ? 'bg-blue-100 text-blue-700 border-blue-200'
-                            : r.status === 'Picked Up'
-                              ? 'bg-amber-100 text-amber-700 border-amber-200'
-                            : 'bg-gray-100 text-gray-600 border-gray-200'
+                              ? statusColors['Needs Correction'].badge
+                              : statusColors[r.status].badge
                           }`}>{r.status}</span>
                         </td>
                       </tr>
@@ -819,14 +816,13 @@ function PreviewModal({
   );
 }
 
-/* The dashboard already uses these status colours; keep analytics in the same palette. */
 const STATUS_COLORS: Record<TaskStatus, string> = {
-  'Assigned': '#a855f7',
-  'Picked Up': '#38bdf8',
-  'In Transit': '#1d4ed8',
-  'Delivered': '#22c55e',
-  'Failed / Issue': '#ef4444',
-  'Cancelled': '#d1d5db',
+  Assigned: statusColors.Assigned.chart,
+  'Picked Up': statusColors['Picked Up'].chart,
+  'In Transit': statusColors['In Transit'].chart,
+  Delivered: statusColors.Delivered.chart,
+  'Failed / Issue': statusColors['Failed / Issue'].chart,
+  Cancelled: statusColors.Cancelled.chart,
 };
 const STATUS_ORDER: TaskStatus[] = [
   'Assigned', 'Picked Up', 'In Transit', 'Delivered', 'Failed / Issue', 'Cancelled',

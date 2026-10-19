@@ -1,5 +1,7 @@
 /* Shared types for assignments — used by both Admin and Driver views */
 
+import { statusColors } from './statusColors';
+
 export const DOCUMENT_TYPES = [
   'Proof of Delivery',
   'Receiving Acknowledgement Report',
@@ -69,6 +71,15 @@ export interface Assignment {
   destinationArea?: string | null;
   company: string;
   pickupLocation: string;
+  /* REQ-005 exact selected stops (Mapbox). Latitude/longitude always come as a pair;
+     null for assignments created before coordinates were stored — fall back to the
+     address text (pickupLocation / getDeliveryLocation(destination)). Never invented. */
+  pickupLatitude?: number | null;
+  pickupLongitude?: number | null;
+  /** Exact delivery address; null on older assignments, whose address lives inside `destination`. */
+  deliveryLocation?: string | null;
+  deliveryLatitude?: number | null;
+  deliveryLongitude?: number | null;
   pickupTime: string;
   pickedUpDate: string;
   eta: string;
@@ -150,17 +161,15 @@ export const OM_EMAIL = 'operationmanager@360logistics.ph';
    never available to the real admin/OM/CSR/Viewer accounts. */
 export const DEMO_ADMIN_EMAIL = 'adminabuse@360logistics.ph';
 
-/* dot = small colored circle (used inline, no emoji circles)
-   Colour meanings: green = done/good, blue = moving/working (sky = just picked up,
-   deep blue = in transit), purple = assigned not started, amber = waiting for
-   someone to act, red = problem, gray = inactive/ended. */
+/* Legacy task statuses share the same presentation colors as operational and
+   document statuses. Picked Up intentionally aliases At Pickup. */
 export const taskStatusConfig: Record<TaskStatus, { badge: string; dot: string; label: string }> = {
-  'Assigned':       { badge: 'bg-purple-100 text-purple-700 border-purple-200', dot: 'bg-purple-500',  label: 'Assigned' },
-  'Picked Up':      { badge: 'bg-sky-100 text-sky-700 border-sky-200',         dot: 'bg-sky-400',     label: 'Picked Up' },
-  'In Transit':     { badge: 'bg-blue-100 text-blue-800 border-blue-300',      dot: 'bg-blue-700',    label: 'In Transit' },
-  'Delivered':      { badge: 'bg-green-100 text-green-700 border-green-200',   dot: 'bg-green-500',   label: 'Delivered' },
-  'Failed / Issue': { badge: 'bg-red-100 text-red-700 border-red-200',         dot: 'bg-red-500',     label: 'Failed / Issue' },
-  'Cancelled':      { badge: 'bg-gray-100 text-gray-600 border-gray-200',      dot: 'bg-gray-400',    label: 'Cancelled' },
+  'Assigned':       { ...statusColors.Assigned, label: 'Assigned' },
+  'Picked Up':      { ...statusColors['Picked Up'], label: 'Picked Up' },
+  'In Transit':     { ...statusColors['In Transit'], label: 'In Transit' },
+  'Delivered':      { ...statusColors.Delivered, label: 'Delivered' },
+  'Failed / Issue': { ...statusColors['Failed / Issue'], label: 'Failed / Issue' },
+  'Cancelled':      { ...statusColors.Cancelled, label: 'Cancelled' },
 };
 
 /* Driver / truck availability as shown on screen. Display only — the stored values

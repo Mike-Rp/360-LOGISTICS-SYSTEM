@@ -4,6 +4,8 @@ import type { Assignment, LocalTruck } from '../../data/assignmentTypes';
 import { getAssignmentDocumentProgress } from '../../lib/assignmentWorkflow';
 import { getAssignmentRoute, getDeliveryLocation } from '../../data/assignmentRoute';
 import { formatOperationalStamp } from '../../lib/assignmentOperational';
+import { splitDisplayDateTime } from '../../lib/displayDateTime';
+import { statusColors } from '../../data/statusColors';
 import { adminHref, pushAdminNavigation } from '../../lib/adminNavigation';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/dialog';
 import ASNWithCopy from './ASNWithCopy';
@@ -14,6 +16,17 @@ function SummaryField({ label, value }: { label: string; value?: string | null }
   return <div className="min-w-0">
     <dt className="text-[13px] font-medium text-muted-foreground">{label}</dt>
     <dd className="mt-0.5 break-words text-sm font-medium text-foreground">{value || '—'}</dd>
+  </div>;
+}
+
+function SummaryDateTimeField({ label, value }: { label: string; value?: string | null }) {
+  const stamp = splitDisplayDateTime(value);
+  return <div className="min-w-0">
+    <dt className="text-[13px] font-medium text-muted-foreground">{label}</dt>
+    <dd className="mt-0.5 flex flex-col text-sm font-medium text-foreground">
+      <span className="whitespace-nowrap">{stamp?.date ?? '—'}</span>
+      {stamp?.time && <span className="whitespace-nowrap">{stamp.time}</span>}
+    </dd>
   </div>;
 }
 
@@ -41,7 +54,7 @@ export default function CompletedDeliverySummary({ assignment, truck, onClose }:
         <DialogTitle className="text-xl">Delivery Summary</DialogTitle>
         <DialogDescription id="delivery-summary-description" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
           {assignment && <ASNWithCopy value={assignment.id}>{assignment.id}</ASNWithCopy>}
-          <span className="inline-flex items-center gap-1 rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-xs font-semibold text-green-700">
+          <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold ${statusColors.Completed.badge}`}>
             <CheckCircle2 className="h-3.5 w-3.5" /> Completed
           </span>
           {docs?.allApproved && <span>All {docs.required} required documents approved</span>}
@@ -62,8 +75,8 @@ export default function CompletedDeliverySummary({ assignment, truck, onClose }:
                 <SummaryField label="Pickup Location" value={assignment.pickupLocation} />
                 <SummaryField label="Destination" value={assignment.destinationArea} />
                 <div className="min-[430px]:col-span-2"><SummaryField label="Delivery Location" value={getDeliveryLocation(assignment)} /></div>
-                <SummaryField label="Pickup date / time" value={[assignment.pickedUpDate, assignment.pickupTime].filter(Boolean).join(' · ')} />
-                <SummaryField label="Delivered date / time" value={deliveredAt} />
+                <SummaryDateTimeField label="Pickup date / time" value={[assignment.pickedUpDate, assignment.pickupTime].filter(Boolean).join(' · ')} />
+                <SummaryDateTimeField label="Delivered date / time" value={deliveredAt} />
               </dl>
             </section>
 

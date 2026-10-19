@@ -2,6 +2,7 @@ import { Activity } from 'lucide-react';
 import ASNWithCopy from '../ASNWithCopy';
 import type { AppNotification, CompletedTask, TaskStatus } from '../../../data/assignmentTypes';
 import { parseStoredTimestamp, taskStatusConfig } from '../../../data/assignmentTypes';
+import { statusColors } from '../../../data/statusColors';
 
 interface Props {
   notifications: AppNotification[];
@@ -24,7 +25,7 @@ type Row = {
 };
 
 const EVENT_BADGE = {
-  doc:    { label: 'Document', cls: 'bg-amber-100 text-amber-700 border-amber-200' },   // waiting for review
+  doc:    { label: 'Document', cls: statusColors['Under Review'].badge },   // waiting for review
   delay:  { label: 'Delay',    cls: 'bg-red-100 text-red-700 border-red-200' },         // problem
   issue:  { label: 'Issue',    cls: 'bg-red-100 text-red-700 border-red-200' },
   status: { label: 'Status update', cls: 'bg-gray-100 text-gray-600 border-gray-200' },

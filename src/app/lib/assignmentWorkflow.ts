@@ -1,4 +1,5 @@
 import { DOCUMENT_TYPES, taskStatusConfig } from '../data/assignmentTypes';
+import { statusColors } from '../data/statusColors';
 import type { AppNotification, Assignment, TaskStatus } from '../data/assignmentTypes';
 import { getPhysicalDeliveryTimestamp } from './assignmentTiming';
 
@@ -13,24 +14,24 @@ export const ASSIGNMENT_DISPLAY_STATUSES = [
 
 /** SVG colours matching the shared badge/dot colour families below. */
 export const assignmentDisplayStatusChartColors: Record<AssignmentDisplayStatus, string> = {
-  'Assigned': '#a855f7',
-  'Picked Up': '#38bdf8',
-  'In Transit': '#1d4ed8',
-  'Delivered': '#22c55e',
-  'Awaiting Documents': '#f59e0b',
-  'Under Review': '#d97706',
-  'Needs Correction': '#ef4444',
-  'Completed': '#15803d',
-  'Failed / Issue': '#b91c1c',
-  'Cancelled': '#9ca3af',
+  'Assigned': statusColors.Assigned.chart,
+  'Picked Up': statusColors['Picked Up'].chart,
+  'In Transit': statusColors['In Transit'].chart,
+  'Delivered': statusColors.Delivered.chart,
+  'Awaiting Documents': statusColors['Awaiting Documents'].chart,
+  'Under Review': statusColors['Under Review'].chart,
+  'Needs Correction': statusColors['Needs Correction'].chart,
+  'Completed': statusColors.Completed.chart,
+  'Failed / Issue': statusColors['Failed / Issue'].chart,
+  'Cancelled': statusColors.Cancelled.chart,
 };
 
 export const assignmentDisplayStatusConfig = {
   ...taskStatusConfig,
-  'Awaiting Documents': { label: 'Awaiting Documents', badge: 'bg-amber-50 text-amber-700 border-amber-200', dot: 'bg-amber-400' },
-  'Under Review': { label: 'Under Review', badge: 'bg-amber-50 text-amber-700 border-amber-200', dot: 'bg-amber-400' },
-  'Needs Correction': { label: 'Needs Correction', badge: taskStatusConfig['Failed / Issue'].badge, dot: taskStatusConfig['Failed / Issue'].dot },
-  'Completed': { label: 'Completed', badge: taskStatusConfig.Delivered.badge, dot: taskStatusConfig.Delivered.dot },
+  'Awaiting Documents': { label: 'Awaiting Documents', ...statusColors['Awaiting Documents'] },
+  'Under Review': { label: 'Under Review', ...statusColors['Under Review'] },
+  'Needs Correction': { label: 'Needs Correction', ...statusColors['Needs Correction'] },
+  'Completed': { label: 'Completed', ...statusColors.Completed },
 } satisfies Record<AssignmentDisplayStatus, { label: string; badge: string; dot: string }>;
 
 export function getAssignmentDocumentProgress(assignment: Assignment) {

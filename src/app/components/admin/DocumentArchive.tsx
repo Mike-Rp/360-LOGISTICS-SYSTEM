@@ -8,6 +8,7 @@ import ASNWithCopy from './ASNWithCopy';
 import type { Assignment, CompletedTask, DocStatus } from '../../data/assignmentTypes';
 import { assignmentDisplayStatusConfig, getAssignmentDisplayStatus, getAssignmentDocumentSummary } from '../../lib/assignmentWorkflow';
 import type { AssignmentDisplayStatus } from '../../lib/assignmentWorkflow';
+import { statusColors } from '../../data/statusColors';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
 import { sortNewestFirst, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
 import { matchesAssignmentDate } from '../../lib/assignmentDateFilter';
@@ -47,9 +48,9 @@ function savedFilters(): { status: DocFilter; date: ArchiveDatePeriod } {
 }
 
 const STATUS_CFG: Record<DocStatus, { label: string; badge: string; icon: React.ReactNode }> = {
-  pending:  { label: 'Pending',  badge: 'bg-amber-50 text-amber-700 border-amber-200', icon: <Clock        className="w-3 h-3" /> },
-  approved: { label: 'Approved', badge: 'bg-green-50 text-green-700 border-green-200', icon: <CheckCircle2 className="w-3 h-3" /> },
-  rejected: { label: 'Rejected', badge: 'bg-red-50   text-red-700   border-red-200',   icon: <XCircle      className="w-3 h-3" /> },
+  pending:  { label: 'Pending',  badge: statusColors['Under Review'].badge, icon: <Clock        className="w-3 h-3" /> },
+  approved: { label: 'Approved', badge: statusColors.Completed.badge, icon: <CheckCircle2 className="w-3 h-3" /> },
+  rejected: { label: 'Rejected', badge: statusColors['Needs Correction'].badge, icon: <XCircle className="w-3 h-3" /> },
 };
 
 /* ── Image Preview Modal ── */
@@ -134,7 +135,7 @@ function AssignmentStatusBadge({ status }: { status: AssignmentDisplayStatus }) 
 function DocumentStatusSummary({ summary }: {
   summary: DocGroup['documentSummary'];
 }) {
-  const badge = summary.tone === 'missing' ? 'bg-gray-100 text-gray-600 border-gray-200' : STATUS_CFG[summary.tone].badge;
+  const badge = summary.tone === 'missing' ? statusColors['Awaiting Documents'].badge : STATUS_CFG[summary.tone].badge;
   return (
     <div className="min-w-0 space-y-1">
       <span className={`inline-flex max-w-full break-words rounded-full border px-2 py-0.5 text-xs font-medium ${badge}`}>{summary.label}</span>
@@ -563,7 +564,7 @@ export default function DocumentArchive({ assignments, completed, cancelled = []
           /* badge = count colour on an unselected tab; badgeOn = on the selected green tab
              (white pill + coloured text so it stays readable on green) */
           { key: 'all',      label: 'All',      badge: 'bg-gray-100 text-gray-600',   badgeOn: 'bg-white text-gray-700'  },
-          { key: 'pending',  label: 'Pending review', badge: 'bg-amber-100 text-amber-700', badgeOn: 'bg-white text-amber-700' },
+          { key: 'pending',  label: 'Pending review', badge: 'bg-cyan-100 text-cyan-800', badgeOn: 'bg-white text-cyan-800' },
           { key: 'approved', label: 'All approved', badge: 'bg-green-100 text-green-700', badgeOn: 'bg-white text-green-700' },
           { key: 'rejected', label: 'Rejected', badge: 'bg-red-100 text-red-700',     badgeOn: 'bg-white text-red-700'   },
         ] as { key: DocFilter; label: string; badge: string; badgeOn: string }[]).map(({ key, label, badge, badgeOn }) => (

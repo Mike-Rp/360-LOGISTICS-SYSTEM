@@ -1,25 +1,18 @@
 import { Check, ChevronDown, ChevronUp, Eye, FileText, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { Assignment, StatusPhoto } from '../../data/assignmentTypes';
-import { OPERATIONAL_PHOTO_GROUPS, formatOperationalStamp } from '../../lib/assignmentOperational';
+import { OPERATIONAL_PHOTO_GROUPS } from '../../lib/assignmentOperational';
+import { splitDisplayDateTime } from '../../lib/displayDateTime';
 
-function formatEvidenceTimestamp(value: string): string {
-  const stamp = formatOperationalStamp(value) ?? value;
-  const match = stamp.match(/^([A-Za-z]{3,9} \d{1,2}, \d{4})(?:,| ·)?\s+0?(\d{1,2}:\d{2}\s*[AP]M)$/i);
-  return match ? `${match[1]} · ${match[2].replace(/\s+/g, ' ')}` : stamp;
-}
-
-export function OperationalPhotoItem({ groupTitle, label, photo, required = true, showRequiredLabel = false, onPreview }: {
+export function OperationalPhotoItem({ groupTitle, label, photo, required = true, onPreview }: {
   groupTitle: string;
   label: string;
   photo?: StatusPhoto;
   required?: boolean;
-  showRequiredLabel?: boolean;
   onPreview: (url: string, type: string) => void;
 }) {
-  const labelRow = <div className="mt-2 flex items-baseline justify-between gap-2">
+  const labelRow = <div className="mt-2">
     <span className="break-words text-sm font-medium text-foreground">{label}</span>
-    {showRequiredLabel && <span className="shrink-0 text-[13px] text-muted-foreground">{required ? 'Required' : 'Optional'}</span>}
   </div>;
 
   if (!photo?.url) return <div className="min-w-0 py-1">
@@ -29,6 +22,7 @@ export function OperationalPhotoItem({ groupTitle, label, photo, required = true
     </p>
   </div>;
 
+  const timestamp = splitDisplayDateTime(photo.timestamp);
   return <div className="min-w-0">
     <button type="button" onClick={() => onPreview(photo.url, `${groupTitle} · ${label}`)}
       className="group relative block w-full overflow-hidden rounded-md bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
@@ -41,7 +35,10 @@ export function OperationalPhotoItem({ groupTitle, label, photo, required = true
       </span>
     </button>
     {labelRow}
-    {photo.timestamp && <p className="mt-0.5 text-[13px] text-muted-foreground">{formatEvidenceTimestamp(photo.timestamp)}</p>}
+    {timestamp && <div className="mt-0.5 flex flex-col text-xs leading-[1.35] sm:text-[13px]">
+      <span className="whitespace-nowrap text-muted-foreground">{timestamp.date}</span>
+      {timestamp.time && <span className="whitespace-nowrap text-foreground/65">{timestamp.time}</span>}
+    </div>}
   </div>;
 }
 
@@ -102,7 +99,7 @@ export function OperationalEvidence({ assignment, onPreview, expandedGroup, onEx
           <div className={`grid gap-x-3 gap-y-4 sm:gap-x-4 ${isAngles ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-1 min-[430px]:grid-cols-2'}`}>
             {group.slots.map(({ key, label, photo }) => <OperationalPhotoItem key={key}
               groupTitle={group.title} label={label} photo={photo}
-              showRequiredLabel={!isAngles && !isLegacy} onPreview={onPreview} />)}
+              onPreview={onPreview} />)}
           </div>
         </div>}
       </div>;

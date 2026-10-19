@@ -3,7 +3,7 @@ import { toast } from 'sonner';
 import {
   User, Truck, MapPin, Building2, Calendar, MessageSquare,
   X, ClipboardList, CheckCircle2,
-  FileText, Check, XCircle, AlertTriangle, Clock,
+  FileText, Check, XCircle, AlertTriangle, Clock, Lock,
   Package, Trash2, ChevronDown, ChevronUp, ZoomIn,
   Navigation, Timer, Camera, Search,
   Plus, ArrowLeft, ArrowRight, ChevronLeft, ChevronRight,
@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { RegisterDriverModal, RegisterTruckModal } from './RegisterModals';
 import { Popover, PopoverAnchor, PopoverContent } from '../ui/popover';
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from '../ui/dialog';
 import TruckImage from '../TruckImage';
 import ASNWithCopy from './ASNWithCopy';
 import DocumentsSummaryCard from './DocumentsSummaryCard';
@@ -20,15 +21,19 @@ import DeliveryTimingBadge from './DeliveryTimingBadge';
 import PickupTimingNotice from './PickupTimingNotice';
 import { getDispatchTimingNotices } from '../../lib/assignmentTiming';
 import { OPERATIONAL_STEPS, OPERATIONAL_PHOTO_GROUPS, getAdminOperationalProgress, formatOperationalStamp, formatOperationalDuration } from '../../lib/assignmentOperational';
+import { statusColors } from '../../data/statusColors';
 import { assignmentDisplayStatusConfig, canCompleteAssignment, getAssignmentDisplayStatus, getAssignmentDocumentProgress, getDocumentAgingState, type AssignmentDisplayStatus } from '../../lib/assignmentWorkflow';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
 import { sortNewestFirst, markLocalRecordAdded, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
-import { ADMIN_NAVIGATION_EVENT, adminHref, followAdminLink, pushAdminNavigation } from '../../lib/adminNavigation';
+import { ADMIN_NAVIGATION_EVENT, pushAdminNavigation } from '../../lib/adminNavigation';
 import { TRUCK_CLASSIFICATIONS, truckSideImageFor, capacityKgOnly } from '../../data/truckTypes';
 import { destinationAreaEnabled, getAssignmentRoute, getDeliveryLocation } from '../../data/assignmentRoute';
+import MapboxLocationInput from './MapboxLocationInput';
+import { mapboxRouteArea, type SelectedLocation } from '../../lib/mapboxLocations';
+import { coordinatePair } from '../../lib/assignmentLocation';
 import {
   verifyOwnPassword, editAssignment, cancelAssignment, syncAdminData, AssignmentActionError,
-  type AssignmentActionErrorCode, type AssignmentEdit,
+  type AssignmentActionErrorCode, type AssignmentEdit, type AssignmentLocationEdit,
 } from '../../lib/db';
 
 /* ── Highlight helper ── */
@@ -492,29 +497,6 @@ function StepProgress({ step, total = 2 }: { step: number; total?: number }) {
   );
 }
 
-/* Manual location input; browser autocomplete stays disabled for these fields only. */
-function LocationInput({ value, onChange, placeholder, hasError, icon }: {
-  value: string; onChange: (v: string) => void;
-  placeholder?: string; hasError?: boolean; icon?: React.ReactNode;
-}) {
-  return (
-    <div className="relative">
-      {icon && (
-        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none">
-          {icon}
-        </span>
-      )}
-      <input
-        type="text" value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        autoComplete="off"
-        className={`${fieldBase} ${fieldTone(hasError)} ${icon ? 'pl-9' : ''}`}
-      />
-    </div>
-  );
-}
-
 /* Dropdown that degrades into a clickable "add one" action when empty */
 function ResourceSelect({ value, onChange, options, placeholder, emptyLabel, onAdd, hasError }: {
   value: string; onChange: (v: string) => void;
@@ -660,11 +642,8 @@ function StatusBadge({ status, size = 'sm', acknowledged = true }: { status: Ass
 function DispatchStatusBadge({ assignment }: { assignment: Assignment }) {
   const stage = getAdminOperationalProgress(assignment).badge;
   if (!stage) return <StatusBadge status={getAssignmentDisplayStatus(assignment)} acknowledged={!!assignment.driverAcknowledgedAt} />;
-  const tone = stage === 'At Pickup' ? 'border-sky-200 bg-sky-50 text-sky-700'
-    : stage === 'Loading' ? 'border-amber-200 bg-amber-50 text-amber-800'
-      : stage === 'Arrived' ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
-        : 'border-orange-200 bg-orange-50 text-orange-800';
-  return <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${tone}`}>
+  const color = statusColors[stage as keyof typeof statusColors];
+  return <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${color.badge}`}>
     <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />{stage}
   </span>;
 }
@@ -763,19 +742,19 @@ function DeliveryStepper({ assignment }: { assignment: Assignment }) {
         ? `Progress ended · ${assignment.taskStatus}` : `Step ${progress.index + 1} of 7 · ${progress.label}`}</p>
       <div className="grid grid-cols-4 gap-y-3 sm:grid-cols-7" aria-label="Physical delivery stages">
         {OPERATIONAL_STEPS.map((step, i) => {
+          const color = statusColors[step];
           const done = complete[i] && (i < progress.index || i === 6);
-          const active = !progress.terminal && i === progress.index && !done;
+          const active = !progress.terminal && i === progress.index;
           return (
             <div key={step} className="relative flex min-w-0 flex-col items-center text-center">
               {i < OPERATIONAL_STEPS.length - 1 && <span aria-hidden="true"
                 className={`absolute top-[11px] left-1/2 right-[-50%] h-0.5 ${i === 3 ? 'hidden sm:block' : ''} ${done ? 'bg-green-500' : 'bg-border'}`} />}
               <span aria-hidden="true" className={`relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 ${
-                done ? 'border-green-600 bg-green-600 text-white'
-                  : active ? 'border-blue-600 bg-blue-50 text-blue-700'
-                    : 'border-border bg-white text-muted-foreground'}`}>
+                active ? color.activeStep : done ? 'border-green-600 bg-green-600 text-white'
+                  : 'border-border bg-white text-muted-foreground'}`}>
                 {done ? <Check className="h-4 w-4" /> : <span className="text-xs font-semibold">{i + 1}</span>}
               </span>
-              <span className={`mt-1.5 px-0.5 text-[13px] leading-tight ${active ? 'font-semibold text-blue-700' : done ? 'font-medium text-foreground' : 'text-muted-foreground'}`}>
+              <span className={`mt-1.5 px-0.5 text-[13px] leading-tight ${active ? `font-semibold ${color.activeLabel}` : done ? 'font-medium text-foreground' : 'text-muted-foreground'}`}>
                 {step}
               </span>
             </div>
@@ -928,13 +907,15 @@ const docTypeIcon = (type: string) => {
   return <FileText className={cls} />;
 };
 
-/* Color-coded chip: gray = awaiting upload, amber = pending, green = approved, red = rejected */
-function DocChip({ doc }: { doc: AssignmentDoc }) {
+/* Document chips use the same families as the assignment's document status. */
+function DocChip({ doc, uploadAvailable }: { doc: AssignmentDoc; uploadAvailable: boolean }) {
   const cfg = !doc.uploaded
-    ? { cls: 'bg-gray-100 text-gray-600 border-gray-200', icon: <Clock className="w-3 h-3" />, label: 'Awaiting upload' }
-    : doc.docStatus === 'approved' ? { cls: 'bg-green-50 text-green-700 border-green-200', icon: <Check className="w-3 h-3" />, label: 'Approved' }
-    : doc.docStatus === 'rejected' ? { cls: 'bg-red-50 text-red-700 border-red-200', icon: <XCircle className="w-3 h-3" />, label: 'Rejected' }
-    : { cls: 'bg-amber-50 text-amber-700 border-amber-200', icon: <Clock className="w-3 h-3" />, label: 'Pending review' };
+    ? uploadAvailable
+      ? { cls: statusColors['Awaiting Documents'].badge, icon: <Clock className="w-3 h-3" />, label: 'Awaiting upload' }
+      : { cls: statusColors.Cancelled.badge, icon: <Lock className="w-3 h-3" />, label: 'Locked' }
+    : doc.docStatus === 'approved' ? { cls: statusColors.Completed.badge, icon: <Check className="w-3 h-3" />, label: 'Approved' }
+    : doc.docStatus === 'rejected' ? { cls: statusColors['Needs Correction'].badge, icon: <XCircle className="w-3 h-3" />, label: 'Rejected' }
+    : { cls: statusColors['Under Review'].badge, icon: <Clock className="w-3 h-3" />, label: 'Pending review' };
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[12px] font-medium whitespace-nowrap ${cfg.cls}`}>
       {cfg.icon}{cfg.label}
@@ -1229,7 +1210,7 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
                         <span className="text-muted-foreground flex-shrink-0 mt-0.5">{docTypeIcon(doc.type)}</span>
                         <span className="text-sm font-medium text-foreground break-words">{doc.type}</span>
                       </div>
-                      <DocChip doc={doc} />
+                      <DocChip doc={doc} uploadAvailable={documentProgress?.applicable ?? false} />
                     </div>
                     {doc.uploaded && (
                       <div className="flex items-center justify-end gap-1.5 mt-2">
@@ -1395,6 +1376,14 @@ const REAUTH_COOLDOWN_MS = 30_000;
 let reauthFails       = 0;
 let reauthLockedUntil = 0;
 
+function savedMapboxStop(address: string | null | undefined, latitude: number | null | undefined,
+  longitude: number | null | undefined, city: string | null): SelectedLocation | null {
+  const point = coordinatePair(latitude, longitude);
+  if (!address?.trim() || !point) return null;
+  return { formatted: address, name: address, city, region: null,
+    latitude: point.latitude, longitude: point.longitude, featureId: null };
+}
+
 function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose, onSaved, onServerChange }: {
   /* Live copy from props — null once it leaves the active list (completed/cancelled elsewhere) */
   assignment: Assignment | null;
@@ -1409,18 +1398,23 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose
 
   const [f, setF] = useState({
     driverId: original?.driverId ?? '', truckId: original?.truckId ?? '',
-    from: routeFrom ?? '', to: routeTo ?? '', destinationArea: original?.destinationArea ?? '',
+    from: routeFrom ?? '', to: original?.deliveryLocation || routeTo || '', destinationArea: original?.destinationArea ?? '',
     company: original?.company ?? '', pickupLocation: original?.pickupLocation ?? '',
     pickup: displayToIso(original?.pickedUpDate ?? ''), delivery: displayToIso(original?.deliveryDate ?? ''),
     pickupTime: displayToTime24(original?.pickupTime ?? ''), eta: displayToTime24(original?.eta ?? ''),
     remarks: original?.remarks ?? '', reason: '',
   });
+  const [pickupSelected, setPickupSelected] = useState<SelectedLocation | null>(() =>
+    savedMapboxStop(original?.pickupLocation, original?.pickupLatitude, original?.pickupLongitude, routeFrom ?? null));
+  const [deliverySelected, setDeliverySelected] = useState<SelectedLocation | null>(() =>
+    savedMapboxStop(original?.deliveryLocation, original?.deliveryLatitude, original?.deliveryLongitude,
+      original?.destinationArea ?? null));
   const [badDates,  setBadDates]  = useState<BadDates>({ pickup: false, delivery: false });
   const [errors,    setErrors]    = useState<Record<string, string>>({});
   const [formError, setFormError] = useState('');
 
   /* Password confirmation step */
-  const [pending,  setPending]  = useState<AssignmentEdit | null>(null);
+  const [pending,  setPending]  = useState<(AssignmentEdit & AssignmentLocationEdit) | null>(null);
   const [password, setPassword] = useState('');
   const [pwError,  setPwError]  = useState('');
   const [busy,     setBusy]     = useState(false);
@@ -1465,11 +1459,13 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose
     const e: Record<string, string> = {};
     if (!f.driverId)              e.driver         = 'Select a driver.';
     if (!f.truckId)               e.truck          = 'Select a truck.';
-    if (!f.from.trim())           e.from           = 'Enter an origin.';
-    if (!f.to.trim())             e.to             = 'Enter a delivery location.';
-    if (destinationAreaEnabled && original.destinationArea && !f.destinationArea.trim()) e.destinationArea = 'Enter a destination.';
+    if (!pickupSelected || pickupSelected.formatted !== f.pickupLocation ||
+      !mapboxRouteArea(pickupSelected) || f.from.trim() !== mapboxRouteArea(pickupSelected))
+      e.pickupLocation = 'Select a pickup location with a city or area from Mapbox.';
+    if (!deliverySelected || deliverySelected.formatted !== f.to ||
+      !mapboxRouteArea(deliverySelected) || f.destinationArea.trim() !== mapboxRouteArea(deliverySelected))
+      e.to = 'Select a delivery location with a city or area from Mapbox.';
     if (!f.company.trim())        e.company        = 'Enter a client name.';
-    if (!f.pickupLocation.trim()) e.pickupLocation = 'Enter a pickup location.';
     Object.assign(e, scheduleErrors({
       pickup: f.pickup, delivery: f.delivery, pickupTime: f.pickupTime, eta: f.eta, remarks: f.remarks, bad: badDates,
     }));
@@ -1480,7 +1476,7 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose
   };
 
   /* Only the fields that differ from the current record, in the stored formats */
-  const buildChanges = (): AssignmentEdit => {
+  const buildChanges = (): AssignmentEdit & AssignmentLocationEdit => {
     const base = assignment ?? original;
     const next: Required<AssignmentEdit> = {
       driverId: f.driverId, truckId: f.truckId,
@@ -1498,9 +1494,33 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose
       pickupTime: base.pickupTime, pickedUpDate: base.pickedUpDate,
       eta: base.eta, deliveryDate: base.deliveryDate, remarks: base.remarks,
     };
-    return Object.fromEntries(
+    const changes: AssignmentEdit & AssignmentLocationEdit = Object.fromEntries(
       (Object.keys(next) as (keyof AssignmentEdit)[]).filter((k) => next[k] !== before[k]).map((k) => [k, next[k]]),
     );
+    const pickupPoint = pickupSelected?.formatted === f.pickupLocation ? pickupSelected : null;
+    if (pickupPoint && (changes.pickupLocation !== undefined ||
+      pickupPoint.latitude !== base.pickupLatitude || pickupPoint.longitude !== base.pickupLongitude)) {
+      changes.pickupLatitude = pickupPoint.latitude;
+      changes.pickupLongitude = pickupPoint.longitude;
+    } else if (changes.pickupLocation !== undefined && base.pickupLatitude != null) {
+      changes.pickupLatitude = null;
+      changes.pickupLongitude = null;
+    }
+    const deliveryAddress = f.to.trim();
+    const deliveryPoint = deliverySelected?.formatted === f.to ? deliverySelected : null;
+    if (deliveryAddress !== (base.deliveryLocation ?? '') &&
+      (deliveryPoint || deliveryAddress !== getDeliveryLocation(base))) {
+      changes.deliveryLocation = deliveryAddress;
+    }
+    if (deliveryPoint && (changes.deliveryLocation !== undefined ||
+      deliveryPoint.latitude !== base.deliveryLatitude || deliveryPoint.longitude !== base.deliveryLongitude)) {
+      changes.deliveryLatitude = deliveryPoint.latitude;
+      changes.deliveryLongitude = deliveryPoint.longitude;
+    } else if (changes.deliveryLocation !== undefined && base.deliveryLatitude != null) {
+      changes.deliveryLatitude = null;
+      changes.deliveryLongitude = null;
+    }
+    return changes;
   };
 
   const handleSave = () => {
@@ -1581,36 +1601,30 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose
           )}
 
           <div>
-            <FieldLabel required>Origin</FieldLabel>
-            <LocationInput value={f.from} onChange={(v) => set('from', v)}
-              placeholder="City or area of origin" hasError={!!errors.from}
-              icon={<MapPin className="w-3.5 h-3.5" />} />
-            {errText('from')}
-          </div>
-
-          <div>
             <FieldLabel required>Pickup Location</FieldLabel>
-            <LocationInput value={f.pickupLocation} onChange={(v) => set('pickupLocation', v)}
-              placeholder="Warehouse or pickup point"
-              hasError={!!errors.pickupLocation} icon={<Package className="w-3.5 h-3.5" />} />
+            <MapboxLocationInput value={f.pickupLocation} selected={pickupSelected}
+              onChange={(v) => { if (pickupSelected) set('from', ''); setPickupSelected(null); set('pickupLocation', v); }}
+              onSelect={(place) => { setPickupSelected(place); set('pickupLocation', place.formatted); set('from', mapboxRouteArea(place)); }}
+              placeholder="Search exact pickup address or location" hasError={!!errors.pickupLocation} />
             {errText('pickupLocation')}
           </div>
 
-          {destinationAreaEnabled && <div>
-            <FieldLabel required={!!original.destinationArea}>Destination</FieldLabel>
-            <LocationInput value={f.destinationArea} onChange={(v) => set('destinationArea', v)}
-              placeholder="City or area of destination" hasError={!!errors.destinationArea}
-              icon={<Navigation className="w-3.5 h-3.5" />} />
-            {errText('destinationArea')}
-          </div>}
-
           <div>
             <FieldLabel required>Delivery Location</FieldLabel>
-            <LocationInput value={f.to} onChange={(v) => set('to', v)}
-              placeholder="Exact delivery point" hasError={!!errors.to}
-              icon={<MapPin className="w-3.5 h-3.5" />} />
+            <MapboxLocationInput value={f.to} selected={deliverySelected}
+              onChange={(v) => { if (deliverySelected) set('destinationArea', ''); setDeliverySelected(null); set('to', v); }}
+              onSelect={(place) => { setDeliverySelected(place); set('to', place.formatted); set('destinationArea', mapboxRouteArea(place)); }}
+              placeholder="Search exact delivery address or location" hasError={!!errors.to} />
             {errText('to')}
           </div>
+
+          {pickupSelected?.formatted === f.pickupLocation && deliverySelected?.formatted === f.to
+            && mapboxRouteArea(pickupSelected) && mapboxRouteArea(deliverySelected) &&
+            <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm">
+              <span className="block font-medium text-foreground">Route</span>
+              <span className="block break-words text-foreground">{mapboxRouteArea(pickupSelected)} → {mapboxRouteArea(deliverySelected)}</span>
+              <span className="block text-xs text-muted-foreground">Automatically detected</span>
+            </div>}
 
           <div>
             <FieldLabel required>Client</FieldLabel>
@@ -1828,15 +1842,6 @@ export default function DriversManagement({
     setMissingTarget(false);
   }, [reviewQueueOpen]);
 
-  useEffect(() => {
-    if (!completedOpen) return;
-    const onEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setCompletedOpen(false);
-    };
-    window.addEventListener('keydown', onEscape);
-    return () => window.removeEventListener('keydown', onEscape);
-  }, [completedOpen]);
-
   /* ── Assign Task wizard ── */
   const [taskStep,        setTaskStep]        = useState<1 | 2>(1);
   const [taskDriverId,    setTaskDriverId]    = useState('');
@@ -1850,6 +1855,8 @@ export default function DriversManagement({
   const [taskPickedUpDate, setTaskPickedUpDate] = useState('');
   const [taskRemarks,     setTaskRemarks]     = useState('');
   const [taskPickupLocation, setTaskPickupLocation] = useState('');
+  const [taskPickupSelected, setTaskPickupSelected] = useState<SelectedLocation | null>(null);
+  const [taskDeliverySelected, setTaskDeliverySelected] = useState<SelectedLocation | null>(null);
   /* Native time inputs → 24-hour "HH:MM" strings */
   const [taskPickupTime,  setTaskPickupTime]  = useState('');
   const [taskEta,         setTaskEta]         = useState('');
@@ -1868,7 +1875,8 @@ export default function DriversManagement({
     setShowAssignTask(false); setTaskStep(1); setTaskDriverId(''); setTaskTruckId('');
     setTaskFrom(''); setTaskTo(''); setTaskDestinationArea('');
     setTaskCompany(''); setTaskDate(''); setTaskPickedUpDate(''); setTaskRemarks('');
-    setTaskPickupLocation(''); setTaskPickupTime(''); setTaskEta('');
+    setTaskPickupLocation(''); setTaskPickupSelected(null); setTaskDeliverySelected(null);
+    setTaskPickupTime(''); setTaskEta('');
     setTaskErrors({}); setTaskBadDates({ pickup: false, delivery: false });
   };
 
@@ -1887,11 +1895,13 @@ export default function DriversManagement({
     const e: Record<string, string> = {};
     if (!taskDriverId)              e.driver         = 'Select a driver.';
     if (!taskTruckId)               e.truck          = 'Select a truck.';
-    if (!taskFrom.trim())           e.from           = 'Enter an origin.';
-    if (destinationAreaEnabled && !taskDestinationArea.trim()) e.destinationArea = 'Enter a destination.';
-    if (!taskTo.trim())             e.to             = 'Enter a delivery location.';
+    if (!taskPickupSelected || taskPickupSelected.formatted !== taskPickupLocation ||
+      !mapboxRouteArea(taskPickupSelected) || taskFrom.trim() !== mapboxRouteArea(taskPickupSelected))
+      e.pickupLocation = 'Select a pickup location with a city or area from Mapbox.';
+    if (!taskDeliverySelected || taskDeliverySelected.formatted !== taskTo ||
+      !mapboxRouteArea(taskDeliverySelected) || taskDestinationArea.trim() !== mapboxRouteArea(taskDeliverySelected))
+      e.to = 'Select a delivery location with a city or area from Mapbox.';
     if (!taskCompany.trim())        e.company        = 'Enter a client name.';
-    if (!taskPickupLocation.trim()) e.pickupLocation = 'Enter a pickup location.';
     setTaskErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -1922,6 +1932,13 @@ export default function DriversManagement({
       ...(destinationAreaEnabled ? { destinationArea: taskDestinationArea.trim() } : {}),
       company:         taskCompany.trim(),
       pickupLocation:  taskPickupLocation.trim(),
+      ...(taskPickupSelected?.formatted === taskPickupLocation ? {
+        pickupLatitude: taskPickupSelected.latitude, pickupLongitude: taskPickupSelected.longitude,
+      } : {}),
+      deliveryLocation: taskTo.trim(),
+      ...(taskDeliverySelected?.formatted === taskTo ? {
+        deliveryLatitude: taskDeliverySelected.latitude, deliveryLongitude: taskDeliverySelected.longitude,
+      } : {}),
       pickupTime:      time24ToDisplay(taskPickupTime),
       pickedUpDate:    isoToDisplay(taskPickedUpDate),
       eta:             time24ToDisplay(taskEta),
@@ -2119,6 +2136,10 @@ export default function DriversManagement({
     return [{ assignment, date }];
   }).sort((left, right) => right.date.getTime() - left.date.getTime() || right.assignment.id.localeCompare(left.assignment.id));
   const visibleCompleted = recentCompleted.slice(0, RECENT_COMPLETED_LIMIT);
+  const openCompletedDelivery = (assignmentId: string) => {
+    setCompletedOpen(false);
+    pushAdminNavigation('Deliveries', { assignmentId }, 'completed');
+  };
   const activePageArea = useStablePageHeight(activePage.page, visibleAssignments.length, MONITOR_PAGE_SIZE, `${search}|${classificationFilter}`);
 
   const viewDetailsAssign = viewDetailsId
@@ -2134,47 +2155,48 @@ export default function DriversManagement({
       {missingTarget && <p role="status" className="rounded-lg border border-border bg-white px-4 py-3 text-sm text-muted-foreground">This item is no longer available.</p>}
 
       {/* ── Header ── */}
-      <div className={'relative flex flex-col justify-between gap-4 2xl:flex-row 2xl:items-center ' + (completedOpen ? 'z-50' : '')}>
+      <div className="relative flex flex-col justify-between gap-4 2xl:flex-row 2xl:items-center">
         <div className="min-w-0 2xl:flex-1">
           <h2 className="text-2xl font-semibold text-foreground">Dispatch &amp; Drivers</h2>
           <p className="text-sm text-muted-foreground mt-1">Manage dispatch assignments, drivers, and delivery operations.</p>
         </div>
         <div className="grid w-full min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 xl:flex xl:flex-nowrap xl:items-center xl:justify-end 2xl:w-auto">
-          <div className="relative z-50 w-full min-w-0 sm:col-span-2 xl:w-auto">
-            <button type="button" onClick={() => setCompletedOpen((open) => !open)}
-              aria-expanded={completedOpen} aria-controls="recent-completed-panel" aria-haspopup="dialog"
-              className="relative z-50 inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-border bg-white px-3 text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-muted/30 xl:w-auto">
-              <CheckCircle2 className="h-4 w-4 shrink-0 text-green-500" /> Recent Completed
-              <span className="rounded-full bg-green-500 px-2 py-0.5 text-xs text-white">{recentCompleted.length}</span>
-              <ChevronDown className={'h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-150 ' + (completedOpen ? 'rotate-180' : '')} />
-            </button>
-            <div aria-hidden="true" onClick={() => setCompletedOpen(false)}
-              className={'fixed inset-0 z-40 bg-black/20 transition-opacity duration-150 ' + (completedOpen ? 'visible opacity-100' : 'invisible pointer-events-none opacity-0')} />
-            <div id="recent-completed-panel" role="dialog" aria-label="Recent Completed Deliveries" aria-hidden={!completedOpen}
-              className={'fixed inset-x-0 bottom-0 z-50 max-h-[70vh] min-w-0 overflow-x-hidden overflow-y-auto rounded-t-2xl border border-border bg-white shadow-xl sm:rounded-2xl transition-all duration-150 sm:absolute sm:inset-x-0 sm:bottom-auto sm:top-full sm:mt-2 xl:left-auto xl:right-0 xl:w-[min(52rem,calc(100vw-2rem))] ' + (completedOpen ? 'visible translate-y-0 opacity-100' : 'invisible pointer-events-none -translate-y-1 opacity-0')}>
-              <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-border bg-white px-4 py-3">
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <CheckCircle2 className="h-5 w-5 shrink-0 text-green-500" />
-                  <div className="min-w-0">
-                    <h3 className="font-semibold text-foreground">Recent Completed Deliveries</h3>
-                    <p className="text-xs text-muted-foreground">Today &amp; yesterday</p>
-                  </div>
+          <div className="w-full min-w-0 sm:col-span-2 xl:w-auto">
+            <Dialog open={completedOpen} onOpenChange={setCompletedOpen}>
+              <DialogTrigger asChild>
+                <button type="button"
+                  className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-border bg-white px-3 text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-muted/30 xl:w-auto">
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-green-500" /> Recent Completed
                   <span className="rounded-full bg-green-500 px-2 py-0.5 text-xs text-white">{recentCompleted.length}</span>
-                </div>
-                <button type="button" onClick={() => setCompletedOpen(false)} aria-label="Close recent completed deliveries"
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted/50 hover:text-foreground">
-                  <X className="h-4 w-4" />
+                  <ChevronDown className={'h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-150 ' + (completedOpen ? 'rotate-180' : '')} />
                 </button>
+              </DialogTrigger>
+            <DialogContent hideCloseButton aria-describedby="recent-completed-description"
+              className="top-0 left-0 flex h-dvh max-h-dvh w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 p-0 shadow-xl sm:top-1/2 sm:left-1/2 sm:h-[min(84vh,720px)] sm:max-h-[720px] sm:w-[94vw] sm:max-w-[880px] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl sm:border">
+              <div className="flex shrink-0 items-center gap-3 border-b border-border bg-white px-4 py-4 sm:px-6">
+                <span aria-hidden="true" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-green-100 text-green-700">
+                  <Check className="h-4 w-4" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    <DialogTitle className="text-base font-semibold leading-tight text-foreground">Recent Completed Deliveries</DialogTitle>
+                    <span className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-green-100 px-1.5 text-xs font-semibold text-green-700">{recentCompleted.length}</span>
+                  </div>
+                  <DialogDescription id="recent-completed-description" className="mt-0.5 text-[13px] leading-tight">Today &amp; yesterday</DialogDescription>
+                </div>
+                <DialogClose aria-label="Close recent completed deliveries" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+                  <X className="h-4 w-4" />
+                </DialogClose>
               </div>
+              <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
               {recentCompleted.length === 0 ? (
                 <p className="px-4 py-6 text-center text-sm text-muted-foreground">No recent completed deliveries.</p>
               ) : (
-                <>
                   <div>
                     <table className="hidden w-full table-fixed text-xs lg:table xl:text-sm">
                       <colgroup>
-                        <col className="w-[17%]" /><col className="w-[15%]" /><col className="w-[19%]" />
-                        <col className="w-[16%]" /><col className="w-[14%]" /><col className="w-[19%]" />
+                        <col className="w-[20%]" /><col className="w-[14%]" /><col className="w-[18%]" />
+                        <col className="w-[15%]" /><col className="w-[14%]" /><col className="w-[19%]" />
                       </colgroup>
                       <thead>
                         <tr className="border-b border-border bg-muted/30">
@@ -2185,13 +2207,25 @@ export default function DriversManagement({
                       </thead>
                       <tbody>
                         {visibleCompleted.map(({ assignment: c, date }) => (
-                          <tr key={c.id} className="border-b border-border/50 transition-colors hover:bg-muted/10">
-                            <td className="px-2 py-3 align-top [overflow-wrap:anywhere]">
+                          <tr key={c.id} role="link" tabIndex={0}
+                            aria-label={`View completed delivery ${c.id} for ${c.driverName}`}
+                            onClick={(event) => {
+                              if ((event.target as Element).closest('button, a')) return;
+                              openCompletedDelivery(c.id);
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return;
+                              event.preventDefault();
+                              openCompletedDelivery(c.id);
+                            }}
+                            className="cursor-pointer border-b border-border/50 transition-colors hover:bg-muted/30 focus-visible:bg-muted/30 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary">
+                            <td className="px-2 py-3 align-top">
                               <div className="flex min-w-0 items-start gap-2">
                                 <Truck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#0d9488]" />
                                 <span className="min-w-0">
-                                  <span className="font-semibold text-[#0d9488]">{c.truckPlate}</span>
-                                  <span className="block text-xs text-muted-foreground"><ASNWithCopy value={c.id} />{trucks.find((t) => t.id === c.truckId)?.classification && ` · ${trucks.find((t) => t.id === c.truckId)?.classification}`}</span>
+                                  <span className="block whitespace-nowrap font-semibold text-[#0d9488]">{c.truckPlate}</span>
+                                  <span className="block whitespace-nowrap text-xs text-muted-foreground"><ASNWithCopy value={c.id} noWrap /></span>
+                                  {trucks.find((t) => t.id === c.truckId)?.classification && <span className="block break-words text-xs text-muted-foreground">{trucks.find((t) => t.id === c.truckId)?.classification}</span>}
                                 </span>
                               </div>
                             </td>
@@ -2208,9 +2242,20 @@ export default function DriversManagement({
                     </table>
                     <div className="divide-y divide-border/50 lg:hidden">
                       {visibleCompleted.map(({ assignment: c, date }) => (
-                        <div key={c.id} className="grid min-w-0 grid-cols-[5.5rem_minmax(0,1fr)] gap-x-3 gap-y-2 px-4 py-3 text-sm [overflow-wrap:anywhere]">
+                        <div key={c.id} role="link" tabIndex={0}
+                          aria-label={`View completed delivery ${c.id} for ${c.driverName}`}
+                          onClick={(event) => {
+                            if ((event.target as Element).closest('button, a')) return;
+                            openCompletedDelivery(c.id);
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return;
+                            event.preventDefault();
+                            openCompletedDelivery(c.id);
+                          }}
+                          className="grid min-w-0 cursor-pointer grid-cols-[5.5rem_minmax(0,1fr)] gap-x-3 gap-y-2 px-4 py-3 text-sm transition-colors hover:bg-muted/30 focus-visible:bg-muted/30 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary [overflow-wrap:anywhere]">
                           <span className="text-xs font-semibold text-muted-foreground">TRUCK #</span>
-                          <span className="inline-flex min-w-0 items-start gap-2 text-[#0d9488]"><Truck className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span className="min-w-0"><span className="font-semibold">{c.truckPlate}</span><span className="block text-xs text-muted-foreground"><ASNWithCopy value={c.id} />{trucks.find((t) => t.id === c.truckId)?.classification && ` · ${trucks.find((t) => t.id === c.truckId)?.classification}`}</span></span></span>
+                          <span className="inline-flex min-w-0 items-start gap-2 text-[#0d9488]"><Truck className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span className="min-w-0"><span className="block whitespace-nowrap font-semibold">{c.truckPlate}</span><span className="block whitespace-nowrap text-xs text-muted-foreground"><ASNWithCopy value={c.id} noWrap /></span>{trucks.find((t) => t.id === c.truckId)?.classification && <span className="block break-words text-xs text-muted-foreground">{trucks.find((t) => t.id === c.truckId)?.classification}</span>}</span></span>
                           <span className="text-xs font-semibold text-muted-foreground">DRIVER</span><span className="min-w-0 text-foreground">{c.driverName}</span>
                           <span className="text-xs font-semibold text-muted-foreground">ROUTE</span><span className="min-w-0 text-foreground">{getAssignmentRoute(c)}</span>
                           <span className="text-xs font-semibold text-muted-foreground">CUSTOMER</span><span className="min-w-0 text-foreground">{c.company}</span>
@@ -2221,16 +2266,18 @@ export default function DriversManagement({
                       ))}
                     </div>
                   </div>
-                  <div className="sticky bottom-0 border-t border-border bg-white px-4 py-3">
-                    <a href={adminHref('Deliveries', undefined, 'completed')}
-                      onClick={(event) => followAdminLink(event, () => { setCompletedOpen(false); pushAdminNavigation('Deliveries', undefined, 'completed'); })}
-                      className="inline-flex min-h-10 max-w-full items-center gap-2 text-sm font-medium text-primary hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
-                      <span className="min-w-0 break-words">View all completed deliveries</span><ArrowRight aria-hidden="true" className="h-4 w-4 shrink-0" />
-                    </a>
-                  </div>
-                </>
               )}
-            </div>
+              </div>
+              <div className="flex shrink-0 flex-col gap-3 border-t border-border bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+                <p className="text-sm text-muted-foreground">Showing {visibleCompleted.length}{recentCompleted.length > visibleCompleted.length ? ` of ${recentCompleted.length}` : ''} completed deliver{visibleCompleted.length === 1 ? 'y' : 'ies'}</p>
+                <button type="button" onClick={() => { setCompletedOpen(false); pushAdminNavigation('Deliveries', undefined, 'completed'); }}
+                  className="inline-flex min-h-11 w-full items-center gap-2 rounded-lg border border-border bg-white px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:w-auto">
+                  <ClipboardList aria-hidden="true" className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <span>View All Completed Deliveries</span><ChevronRight aria-hidden="true" className="ml-auto h-4 w-4 shrink-0 text-muted-foreground" />
+                </button>
+              </div>
+            </DialogContent>
+            </Dialog>
           </div>
           <div className="relative w-full min-w-0 xl:w-48">
             <select
@@ -2321,11 +2368,11 @@ export default function DriversManagement({
             return (
               <div key={a.id}
                 style={newRecordHighlight(a.id, newAssignmentId)}
-                className={`rounded-xl border-[0.5px] overflow-hidden ${
+                className={`flex h-full flex-col rounded-xl border-[0.5px] overflow-hidden ${
                   sq ? 'border-yellow-400 bg-yellow-50/30' : timing?.kind === 'overdue' || pickupTiming?.kind === 'pickup_overdue' ? 'border-red-200 bg-white' : 'border-border bg-white'
                 }`}
               >
-                <div className="p-4 sm:p-5">
+                <div className="flex flex-1 flex-col p-4 sm:p-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <h3 className="text-base sm:text-lg font-bold leading-tight text-foreground break-words">{truck?.classification || 'Truck'}</h3>
@@ -2361,28 +2408,31 @@ export default function DriversManagement({
                     </div>
                   </div>
 
-                  {pickupTiming?.kind === 'pickup_overdue' && (
-                    <div className="mt-3"><PickupTimingNotice timing={pickupTiming} /></div>
-                  )}
+                  <div className="flex flex-col md:mt-3 md:min-h-[4.5rem] md:gap-2">
+                    {pickupTiming?.kind === 'pickup_overdue' && (
+                      <div className="mt-3 md:mt-0"><PickupTimingNotice timing={pickupTiming} /></div>
+                    )}
 
-                  {activeDuration && <p className="mt-3 text-sm text-muted-foreground">
-                    {a.operationalStage === 'loading' ? 'Loading' : 'Unloading'} in progress · {activeDuration}
-                  </p>}
-                  {operational.syncWarning && <p className="mt-3 text-sm text-amber-800" role="status">
-                    {operational.syncWarning}
-                  </p>}
+                    {activeDuration && <p className="mt-3 text-sm text-muted-foreground md:mt-0">
+                      {a.operationalStage === 'loading' ? 'Loading' : 'Unloading'} in progress · {activeDuration}
+                    </p>}
+                    {operational.syncWarning && <p className="mt-3 text-sm text-amber-800 md:mt-0" role="status">
+                      {operational.syncWarning}
+                    </p>}
 
-                  {documentAge && (
-                    <div className="mt-3 flex min-w-0 items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-800">
-                      <Clock className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-                      <div className="min-w-0 text-xs leading-snug">
-                        <p className="font-semibold">Waiting for documents{ageText ? ` · ${ageText}` : ''}</p>
-                        {documentAge.deliveredOn && <p className="mt-0.5 text-amber-700">Delivery completed on {documentAge.deliveredOn}.</p>}
+                    {documentAge && (
+                      <div className="mt-3 flex min-w-0 items-start gap-2 rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2.5 text-yellow-800 md:mt-0">
+                        <Clock className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                        <div className="min-w-0 text-xs leading-snug">
+                          <p className="font-semibold">Waiting for documents{ageText ? ` · ${ageText}` : ''}</p>
+                          {documentAge.deliveredOn && <p className="mt-0.5 text-yellow-800">Delivery completed on {documentAge.deliveredOn}.</p>}
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    )}
+                  </div>
 
-                  <div className="mt-4 rounded-lg bg-muted/40 p-3">
+                  <div className="mt-4 md:mt-auto md:pt-4">
+                  <div className="rounded-lg bg-muted/40 p-3 md:min-h-24">
                     {/* Segmented document bar — green only ever means approved */}
                     <div className="flex items-center justify-between text-xs mb-1.5">
                       <span className="font-medium text-foreground">Documents</span>
@@ -2406,6 +2456,7 @@ export default function DriversManagement({
                         <Clock className="w-3 h-3 text-gray-400" />{docs.missing} awaiting upload
                       </span>
                     </div>
+                  </div>
                   </div>
                 </div>
 
@@ -2486,52 +2537,39 @@ export default function DriversManagement({
                   ) : null;
                 })()}
 
-                {/* Route — keep the existing origin/destination bindings */}
+                {/* Exact locations set the existing route fields through structured Mapbox geography. */}
                 <div className="space-y-4">
                   <div>
-                    <FieldLabel required>Origin</FieldLabel>
-                    <LocationInput
-                      value={taskFrom}
-                      onChange={(v) => { setTaskFrom(v); setTaskErrors((p) => ({ ...p, from: '' })); }}
-                      placeholder="City or area of origin"
-                      hasError={!!taskErrors.from}
-                      icon={<MapPin className="w-3.5 h-3.5" />}
-                    />
-                    {taskErrors.from && <p className="text-xs text-red-500 mt-1">{taskErrors.from}</p>}
-                  </div>
-                  <div>
                     <FieldLabel required>Pickup Location</FieldLabel>
-                    <LocationInput
+                    <MapboxLocationInput
                       value={taskPickupLocation}
-                      onChange={(v) => { setTaskPickupLocation(v); setTaskErrors((p) => ({ ...p, pickupLocation: '' })); }}
-                      placeholder="Warehouse or pickup point"
+                      selected={taskPickupSelected}
+                      onChange={(v) => { setTaskPickupLocation(v); if (taskPickupSelected) { setTaskPickupSelected(null); setTaskFrom(''); } setTaskErrors((p) => ({ ...p, pickupLocation: '' })); }}
+                      onSelect={(place) => { setTaskPickupSelected(place); setTaskPickupLocation(place.formatted); setTaskFrom(mapboxRouteArea(place)); setTaskErrors((p) => ({ ...p, pickupLocation: '' })); }}
+                      placeholder="Search exact pickup address or location"
                       hasError={!!taskErrors.pickupLocation}
-                      icon={<Package className="w-3.5 h-3.5" />}
                     />
                     {taskErrors.pickupLocation && <p className="text-xs text-red-500 mt-1">{taskErrors.pickupLocation}</p>}
                   </div>
-                  {destinationAreaEnabled && <div>
-                    <FieldLabel required>Destination</FieldLabel>
-                    <LocationInput
-                      value={taskDestinationArea}
-                      onChange={(v) => { setTaskDestinationArea(v); setTaskErrors((p) => ({ ...p, destinationArea: '' })); }}
-                      placeholder="City or area of destination"
-                      hasError={!!taskErrors.destinationArea}
-                      icon={<Navigation className="w-3.5 h-3.5" />}
-                    />
-                    {taskErrors.destinationArea && <p className="text-xs text-red-500 mt-1">{taskErrors.destinationArea}</p>}
-                  </div>}
                   <div>
                     <FieldLabel required>Delivery Location</FieldLabel>
-                    <LocationInput
+                    <MapboxLocationInput
                       value={taskTo}
-                      onChange={(v) => { setTaskTo(v); setTaskErrors((p) => ({ ...p, to: '' })); }}
-                      placeholder="Exact delivery point"
+                      selected={taskDeliverySelected}
+                      onChange={(v) => { setTaskTo(v); if (taskDeliverySelected) { setTaskDeliverySelected(null); setTaskDestinationArea(''); } setTaskErrors((p) => ({ ...p, to: '' })); }}
+                      onSelect={(place) => { setTaskDeliverySelected(place); setTaskTo(place.formatted); setTaskDestinationArea(mapboxRouteArea(place)); setTaskErrors((p) => ({ ...p, to: '' })); }}
+                      placeholder="Search exact delivery address or location"
                       hasError={!!taskErrors.to}
-                      icon={<Navigation className="w-3.5 h-3.5" />}
                     />
                     {taskErrors.to && <p className="text-xs text-red-500 mt-1">{taskErrors.to}</p>}
                   </div>
+                  {taskPickupSelected?.formatted === taskPickupLocation && taskDeliverySelected?.formatted === taskTo
+                    && mapboxRouteArea(taskPickupSelected) && mapboxRouteArea(taskDeliverySelected) &&
+                    <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm">
+                      <span className="block font-medium text-foreground">Route</span>
+                      <span className="block break-words text-foreground">{mapboxRouteArea(taskPickupSelected)} → {mapboxRouteArea(taskDeliverySelected)}</span>
+                      <span className="block text-xs text-muted-foreground">Automatically detected</span>
+                    </div>}
                 </div>
 
                 {/* Client */}

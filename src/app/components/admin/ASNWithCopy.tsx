@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Check, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 
-export default function ASNWithCopy({ value, children }: { value: string; children?: ReactNode }) {
+export default function ASNWithCopy({ value, children, noWrap = false }: { value: string; children?: ReactNode; noWrap?: boolean }) {
   const asn = value.trim();
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -21,7 +21,7 @@ export default function ASNWithCopy({ value, children }: { value: string; childr
 
   return (
     <span className="group/asn inline-flex min-w-0 max-w-full items-center gap-1 align-middle">
-      <span className="min-w-0 break-all whitespace-normal transition-colors duration-150 motion-reduce:transition-none group-hover/asn:text-primary group-focus-within/asn:text-primary group-hover/asn:[&_mark]:text-primary group-focus-within/asn:[&_mark]:text-primary">{children ?? asn}</span>
+      <span className={`${noWrap ? 'whitespace-nowrap' : 'min-w-0 break-all whitespace-normal'} transition-colors duration-150 motion-reduce:transition-none group-hover/asn:text-primary group-focus-within/asn:text-primary group-hover/asn:[&_mark]:text-primary group-focus-within/asn:[&_mark]:text-primary`}>{children ?? asn}</span>
       <button type="button" aria-label={`Copy ${asn}`} title={`Copy ${asn}`}
         onKeyDown={event => event.stopPropagation()}
         onClick={async event => {

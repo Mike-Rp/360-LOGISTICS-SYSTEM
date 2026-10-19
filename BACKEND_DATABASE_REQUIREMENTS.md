@@ -379,10 +379,11 @@ five transitions were exercised later through the Driver UI as recorded below.
   after its data model and authorization are approved.
 - The applied `20261018000001_driver_workflow_transitions.sql` checks only
   `operational_stage = 'unloading'` for `finish_unloading`. It does not require
-  `unloading_before` or `unloading_after`; the current Driver UI still treats
-  them as optional. The updated client rule needs a reviewed RPC change plus
-  matching Driver photo labels/gate. Existing delivered assignments that lack
-  these photos must remain readable and must not be retroactively invalidated.
+  `unloading_before` or `unloading_after`. The local Driver UI now labels both
+  photos Required and checks each saved photo before enabling its next slide.
+  A direct RPC call can still bypass that UI gate. The updated client rule
+  needs a reviewed RPC change. Existing delivered assignments that lack these
+  photos must remain readable and must not be retroactively invalidated.
 - The same applied transition function allows `start_loading` without
   `loading_before`. The local Driver UI now labels it Required and checks its
   persisted photo row before enabling the slider; Admin Photos and Activity
@@ -474,6 +475,159 @@ dismiss it. Whoever does this `db.ts` change first unblocks the other.
 project.
 
 **Approval:** Approved — local development (2026-10-18).
+
+---
+
+## [REQ-005] Verified dispatch location selection and route-area derivation
+
+**Status:** Completed — backend persistence applied to 360Logistics DB and verified (2026-10-20)
+
+**Area:** Dispatch location entry / Driver navigation / route summaries
+
+**Requested change:** Allow dispatchers to select verified pickup and delivery
+places, then derive the general Origin and Destination areas from structured
+place data rather than typing those areas separately.
+
+**Current implementation:** Dispatch saves an exact `pickup_location`, a
+general `destination_area`, and a combined `destination` string containing
+`Origin → exact Delivery Location`. The development frontend now uses Mapbox
+Geocoding API v6 address autocomplete for pickup and delivery. Every request
+uses `permanent=true`; Search Box and temporary geocoding are not used. A
+selected result supplies a formatted address, structured city when available,
+and coordinates. Dispatch now sends selected coordinate pairs with the exact
+pickup and delivery addresses, and edit reloads persisted pairs for map
+verification. If city is absent, manual route-area entry remains available.
+No provider place ID is stored. Driver
+photo capture has reverse geocoding, but those GPS readings describe where
+evidence was taken; they cannot validate planned pickup or delivery places.
+
+**Required integration:** Select a real place/address through a provider and
+obtain a formatted address plus structured city/area for each stop. Define how
+the selected data is validated and persisted before removing manual Origin and
+Destination inputs. Preserve the existing route representation and historical
+assignments, or migrate them under a reviewed compatibility plan. Store planned
+coordinates for both stops after the backend change is reviewed; never infer coordinates or
+city names by splitting free-form address text. Protect any provider key that
+requires a server-side secret.
+
+**Frontend impact:** Dispatch create/edit forms show a read-only route preview
+when both selected results include structured cities, and omit routine manual
+Origin/Destination entry in that case. Mapbox map verification opens only
+when the dispatcher clicks the icon. Driver route preview uses persisted
+coordinates first, then resolves a historical exact address through Mapbox
+on explicit request. Typed text without selecting a provider result is not
+treated as a verified location.
+
+**Mapbox option chosen (2026-10-20):** [Mapbox Geocoding v6](https://docs.mapbox.com/api/search/geocoding/)
+allows permanent results to be stored, but permanent access requires a credit
+card on file or an enterprise contract. Geocoding v6 does not return POIs.
+[Mapbox's Geocoding documentation](https://docs.mapbox.com/mapbox-search-js/api/core/geocoding/)
+requires feature suggestions to be displayed with Mapbox map services, so
+development map verification and Driver route preview use Mapbox. The public
+`VITE_MAPBOX_ACCESS_TOKEN` should be restricted to approved origins. The web
+route preview does not provide live voice-guided navigation.
+
+**Backend implementation (2026-10-20):**
+
+*Database* — extends the existing `public.assignments` table (no new table):
+
+| Column | Type | Status |
+|---|---|---|
+| `pickup_location` | text | **reused**, unchanged — exact pickup address |
+| `pickup_latitude`, `pickup_longitude` | double precision, nullable | new |
+| `delivery_location` | text, nullable | new — exact delivery address |
+| `delivery_latitude`, `delivery_longitude` | double precision, nullable | new |
+
+`destination` (`Origin → exact delivery location`) and `destination_area` are
+unchanged; there is no separate `origin` column — the origin stays inside
+`destination`. `double precision` matches the existing `status_photos.lat/lng`.
+Optional `pickup_mapbox_id` / `delivery_mapbox_id` were **not** added (not required).
+
+*Validation (database, every write path):* CHECK constraints
+`assignments_pickup_coords_check` / `assignments_delivery_coords_check` —
+latitude −90…90, longitude −180…180, NaN/±Infinity rejected, latitude and
+longitude both set or both null, and coordinates only alongside a non-empty
+address. A reversed Philippine pair (latitude ≈ 121) fails the latitude range.
+
+*Stale-coordinate rule:* trigger `assignments_location_consistency`
+(`clear_stale_assignment_coordinates()`) clears a stop's coordinates when its
+address changes without new coordinates. Drivers cannot change any of these
+columns (`guard_assignment_update` already rejects all but status/acknowledgement).
+
+*Create* — Dispatch create is the existing `syncAdminData()` insert into
+`assignments` (`db.ts`). The row now also carries `pickup_latitude`,
+`pickup_longitude`, `delivery_location`, `delivery_latitude`,
+`delivery_longitude` **only when present and valid** (`locationColumnsForRow`),
+so rows without exact stops are written exactly as before.
+
+*Edit* — `edit_assignment(p_id, p_changes, p_reason)` now also accepts
+`delivery_location`, `pickup_latitude`, `pickup_longitude`,
+`delivery_latitude`, `delivery_longitude`. Coordinates must be JSON numbers
+(or both null to clear), in range, and sent as a pair; otherwise it raises
+`invalid_coordinates` (22023 → the app's `invalid` error). An address change
+without coordinates clears the old ones and records that in the audit diff;
+re-sending the same point with a relabelled address keeps it. Everything else
+(authorization, password re-check, Assigned-only lock, swaps, audit) is unchanged.
+App side: `editAssignment(id, changes, reason)` takes the new fields through a
+separate `AssignmentLocationEdit` type and rejects NaN / half pairs before sending.
+
+*Read / response* — `assignmentFromRow()` (`db.ts`), used by the admin lists,
+View Shipment, Driver Current Task and driver history detail, returns
+`pickupLatitude`, `pickupLongitude`, `deliveryLocation`, `deliveryLatitude`,
+`deliveryLongitude` alongside `pickupLocation`, `destination`, `destinationArea`.
+
+*Field names for the frontend* (`Assignment` in `data/assignmentTypes.ts`):
+`pickupLocation`, `pickupLatitude`, `pickupLongitude`, `deliveryLocation`,
+`deliveryLatitude`, `deliveryLongitude` (numbers; null when absent).
+Convert Mapbox `geometry.coordinates` `[longitude, latitude]` with
+`fromMapboxPosition()` from `lib/assignmentLocation.ts`.
+
+*Historical / null fallback* — all existing assignments keep NULL in every new
+column; nothing is backfilled or derived from `destination`. They keep using
+`pickup_location` and `destination` (`getDeliveryLocation()`), unchanged.
+
+*Tests* — `src/app/lib/assignmentLocation.test.cjs` (10 unit tests: create/read
+round trip, Mapbox order, validation, historical rows) and
+`supabase/tests/req005_assignment_locations.test.sql` (create, read, edit,
+stale clearing, relabel, validation, historical, driver lock; rolls itself back).
+
+**Verification (2026-10-20, 360Logistics DB):** after both migrations were
+applied, `req005_assignment_locations.test.sql` passed all **20 checks**
+("REQ-005 TESTS PASSED (20 checks)"), with the driver check run against a real
+driver login (not skipped). Confirmed:
+- pickup/delivery addresses and coordinates persist on create and come back
+  unchanged on read; pickup and delivery edits replace only their own stop;
+- invalid coordinates are rejected — out of range, NaN/Infinity, strings,
+  reversed pairs, coordinates without an address, and half pairs (latitude
+  without longitude or vice versa), both by `edit_assignment` and by the table
+  constraints on any write path;
+- historical assignments without the new fields still save and edit as before;
+- drivers cannot modify assignment coordinates (rejected with 42501).
+The test rolled back: 0 test rows or audit entries remained, and 0 live rows
+hold a half coordinate pair.
+
+**Search Box excluded:** The previously requested Search JS React/Search
+Box approach conflicts with this app's planned storage. [Mapbox Search Box API
+documentation](https://docs.mapbox.com/api/search/search-box/) says returned
+data is for temporary use and to contact Mapbox sales when position data must
+be stored. Do not use Search Box results for assignments. Confirm account
+eligibility, expected costs and the Mapbox map/route behavior before deployment.
+The development token and permanent-geocoding API were verified locally.
+
+**Migration:** Yes — both applied to 360Logistics DB (2026-10-20):
+- `supabase/migrations/20261020000000_assignment_location_coordinates.sql` —
+  columns, constraints, stale-coordinate trigger, `edit_assignment` update.
+- `supabase/migrations/20261020000001_assignment_location_coords_pair_fix.sql` —
+  replaces only the two coordinate-pair constraints so a half pair is rejected
+  (the original `... or (lat between ... and lng between ...)` evaluated to NULL,
+  which a CHECK accepts). The original file was corrected the same way for
+  fresh databases.
+The new columns are nullable, so existing inserts are unaffected; the frontend
+may now send the new fields.
+
+**Approval:** Development-only frontend provider integration authorized.
+Backend persistence requested by the user on 2026-10-20, implemented,
+applied to 360Logistics DB and verified (20/20 database checks) on 2026-10-20.
 
 ---
 

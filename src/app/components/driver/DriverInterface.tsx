@@ -1,17 +1,23 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { lazy, Suspense, useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import {
   LogOut, Package, CheckCircle2, XCircle, Camera, WifiOff,
   Clock, Truck, AlertTriangle, FileText, Building2,
   ChevronRight, ChevronLeft, Lock, ArrowDown,
-  RefreshCw, RotateCcw, X, Phone, Bell, Menu, History, Languages,
+  RefreshCw, RotateCcw, X, Phone, Bell, Menu, History, Languages, MapPin, Navigation,
 } from 'lucide-react';
 import type { Assignment, CompletedTask, TaskStatus, StatusPhoto, DocStatus } from '../../data/assignmentTypes';
 import { taskStatusConfig } from '../../data/assignmentTypes';
+import { statusColors } from '../../data/statusColors';
+import { OPERATIONAL_STEPS } from '../../lib/assignmentOperational';
 import { loadDriverData, loadDriverCompletedDelivery, driverUpdate, advanceDriverStage, uploadImage } from '../../lib/db';
 import { getDeliveryTimingStatus, getPickupTimingStatus, type DeliveryTimingStatus } from '../../lib/assignmentTiming';
 import { assignmentDisplayStatusConfig, getAssignmentDisplayStatus, getAssignmentDocumentProgress, getDocumentAgingState } from '../../lib/assignmentWorkflow';
 import { DriverLanguageProvider, useDriverI18n, type DriverLanguage } from './driverI18n';
 import { destinationAreaEnabled, getAssignmentRoute, getDeliveryLocation } from '../../data/assignmentRoute';
+import { coordinatePair } from '../../lib/assignmentLocation';
+import type { RouteSnapshot } from '../shared/MapboxMapPanel';
+
+const MapboxMapPanel = lazy(() => import('../shared/MapboxMapPanel'));
 
 /* ── Types ── */
 interface CompletedHistoryItem {
@@ -240,8 +246,9 @@ function DriverOverdueNotice({ timing, deliveryDate, compact = false }: {
 /* ════════════════════════════════════════════════════════════
    SLIDE-TO-CONFIRM CONTROL
    ════════════════════════════════════════════════════════════ */
-function SlideToConfirm({ label, onConfirm, disabled = false }: {
-  label: string; onConfirm: () => boolean | Promise<boolean>; disabled?: boolean;
+function SlideToConfirm({ label, completedLabel, onConfirm, disabled = false }: {
+  label: string; completedLabel?: string;
+  onConfirm: () => boolean | (() => void) | Promise<boolean | (() => void)>; disabled?: boolean;
 }) {
   const { t } = useDriverI18n();
   const [dragX,      setDragX]      = useState(0);
@@ -251,9 +258,11 @@ function SlideToConfirm({ label, onConfirm, disabled = false }: {
   const startRef = useRef(0);
   const busyRef = useRef(false);
   const completionTimer = useRef<number | null>(null);
+  const pendingStageUpdate = useRef<(() => void) | null>(null);
 
   useEffect(() => () => {
     if (completionTimer.current !== null) window.clearTimeout(completionTimer.current);
+    pendingStageUpdate.current?.();
   }, []);
 
   const THUMB_W = 64;
@@ -273,15 +282,21 @@ function SlideToConfirm({ label, onConfirm, disabled = false }: {
     try {
       const saved = await onConfirm();
       if (saved) {
+        pendingStageUpdate.current = typeof saved === 'function' ? saved : null;
+        setDragX(getMax());
         setPhase('completed');
-        completionTimer.current = window.setTimeout(reset, 650);
+        completionTimer.current = window.setTimeout(() => {
+          pendingStageUpdate.current?.();
+          pendingStageUpdate.current = null;
+          reset();
+        }, 800);
       } else {
         reset();
       }
     } catch {
       reset();
     }
-  }, [disabled, onConfirm, reset]);
+  }, [disabled, getMax, onConfirm, reset]);
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (disabled || busyRef.current) return;
@@ -300,17 +315,18 @@ function SlideToConfirm({ label, onConfirm, disabled = false }: {
     else setDragX(0);
   };
   const onPointerCancel = () => { setIsDragging(false); setDragX(0); };
+  const visuallyDisabled = disabled && phase === 'ready';
 
   return (
     <div
       ref={trackRef}
       role="slider"
-      tabIndex={disabled ? -1 : 0}
+      tabIndex={visuallyDisabled ? -1 : 0}
       aria-label={label}
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={Math.round((dragX / Math.max(1, getMax())) * 100)}
-      aria-disabled={disabled}
+      aria-disabled={disabled || phase !== 'ready'}
       onKeyDown={(event) => {
         if (disabled || busyRef.current) return;
         if (event.key === 'ArrowRight') { event.preventDefault(); setDragX((x) => Math.min(getMax(), x + getMax() / 4)); }
@@ -318,31 +334,34 @@ function SlideToConfirm({ label, onConfirm, disabled = false }: {
         if ((event.key === 'Enter' || event.key === ' ') && dragX >= getMax() * 0.82) { event.preventDefault(); fire(); }
       }}
       className={`relative h-[68px] rounded-2xl overflow-hidden select-none ${
-        disabled ? 'bg-gray-100' : phase === 'completed' ? 'bg-green-200' : 'bg-green-100'
+        visuallyDisabled ? 'bg-gray-100' : phase === 'completed' ? 'bg-green-600' : 'bg-green-100'
       }`}
     >
       {/* Fill */}
-      {!disabled && phase === 'ready' && (
+      {!visuallyDisabled && (
         <div
-          className="absolute inset-y-0 left-0 bg-green-200 pointer-events-none"
-          style={{ width: `${dragX + THUMB_W + PAD}px` }}
+          className={`pointer-events-none absolute inset-y-0 left-0 ${phase === 'completed' ? 'bg-green-600' : 'bg-green-300'} ${isDragging ? '' : 'transition-[width] duration-300 ease-out motion-reduce:transition-none'}`}
+          style={{ width: phase === 'completed' ? '100%' : `${dragX + THUMB_W + PAD}px` }}
         />
       )}
+      {!visuallyDisabled && phase === 'ready' && !isDragging &&
+        <div aria-hidden="true" className="driver-slide-sweep pointer-events-none absolute inset-0" />}
       {/* Label */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        <span className={`max-w-full pl-16 pr-3 text-center text-sm sm:text-base font-bold leading-tight ${disabled ? 'text-gray-400' : 'text-green-900'}`}>
-          {phase === 'completed' ? t('slide.confirmed') : phase === 'saving' ? t('slide.updating') : label}
+        <span className={`max-w-full pl-16 pr-3 text-center text-sm sm:text-base font-bold leading-tight ${visuallyDisabled ? 'text-gray-400' : phase === 'completed' ? 'text-white' : 'text-green-950'}`}>
+          {phase === 'completed' ? (completedLabel ?? t('slide.confirmed')) : phase === 'saving' ? t('slide.updating') : label}
         </span>
       </div>
       {/* Thumb */}
-      {!disabled && (
+      {!visuallyDisabled && (
         <div
-          className="absolute top-[4px] bottom-[4px] flex items-center justify-center bg-green-700 rounded-xl shadow-lg cursor-grab active:cursor-grabbing"
+          className="driver-slide-thumb absolute top-[4px] bottom-[4px] flex items-center justify-center bg-green-700 rounded-xl shadow-md cursor-grab active:cursor-grabbing"
           style={{
-            left: `${dragX + PAD}px`,
+            left: `${PAD}px`,
             width: `${THUMB_W}px`,
             touchAction: 'none',
-            transition: isDragging ? 'none' : 'left 0.3s cubic-bezier(0.4,0,0.2,1)',
+            transform: `translate3d(${dragX}px, 0, 0)`,
+            transition: isDragging ? 'none' : undefined,
           }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -351,7 +370,9 @@ function SlideToConfirm({ label, onConfirm, disabled = false }: {
         >
           {phase === 'completed'
             ? <CheckCircle2 className="w-7 h-7 text-white" />
-            : <ChevronRight className="w-7 h-7 text-white" />
+            : <span aria-hidden="true" className="flex items-center gap-0.5 text-3xl font-light leading-none text-white">
+                {[0, 1, 2].map((index) => <span key={index} className="driver-slide-chevron" style={{ animationDelay: `${index * 160}ms` }}>›</span>)}
+              </span>
           }
         </div>
       )}
@@ -367,20 +388,127 @@ function OperationalProgress({ phase }: { phase: DriverPhase }) {
     : phase === 'loading' || phase === 'pretrip' ? 2
     : phase === 'trip_pending' || phase === 'in_transit' ? 3
     : phase === 'arrived' ? 4 : phase === 'unloading' || phase === 'delivery_pending' ? 5 : 6;
-  return <div className="rounded-2xl border border-gray-200 bg-white px-5 py-4 shadow-sm">
-    <p className="text-base font-bold text-gray-900">{t('workflow.step', { step: step + 1, stage: labels[step] })}</p>
-    <div className="mt-4 flex items-center gap-1.5" aria-label={t('workflow.step', { step: step + 1, stage: labels[step] })}>
+  const next = phase === 'assigned' ? { stage: labels[1], help: t('task.proceedPickup') }
+    : phase === 'pickup' || phase === 'legacy_picked_up' ? { stage: labels[2], help: t('task.nextLoading') }
+      : phase === 'loading' || phase === 'pretrip' ? { stage: labels[3], help: t('task.nextTrip') }
+        : phase === 'trip_pending' ? { stage: labels[3], help: t('task.nextTripSync') }
+          : phase === 'in_transit' ? { stage: labels[4], help: t('task.nextArrival') }
+            : phase === 'arrived' ? { stage: labels[5], help: t('task.nextUnloading') }
+              : phase === 'unloading' || phase === 'delivery_pending' ? { stage: labels[6], help: t('task.nextDelivery') }
+                : { stage: t('task.documents'), help: t('task.deliveryCompletedUploadPrompt') };
+  const color = statusColors[OPERATIONAL_STEPS[step]];
+  return <section className="rounded-2xl border border-gray-200 bg-white px-4 py-4 shadow-sm sm:px-5" aria-label={t('task.progress')}>
+    <p className="text-sm font-bold uppercase tracking-wide text-gray-500">{t('task.progress')}</p>
+    <div className="mt-2 flex flex-wrap items-end justify-between gap-x-3 gap-y-1">
+      <h2 className={`text-2xl font-bold leading-tight ${color.activeLabel}`}>{labels[step]}</h2>
+      <p className="text-sm font-semibold text-gray-600">{t('workflow.stepCount', { step: step + 1 })}</p>
+    </div>
+    <div className="mt-4 grid grid-cols-7 gap-1.5" aria-label={t('workflow.step', { step: step + 1, stage: labels[step] })}>
       {labels.map((label, index) => {
         const done = phase === 'delivered' || index < step;
-        return <span key={label} title={label} aria-hidden="true"
-          className={`flex h-8 min-w-0 flex-1 items-center justify-center rounded-full border ${done
-            ? 'border-green-600 bg-green-600 text-white' : index === step
-              ? 'border-green-600 bg-green-50 text-green-700' : 'border-gray-200 bg-gray-100 text-gray-400'}`}>
-          {done ? <CheckCircle2 className="h-5 w-5" /> : index === step ? <span className="h-3 w-3 rounded-full bg-green-600" /> : null}
+        const active = index === step;
+        return <span key={label} title={label} aria-label={label}
+          className={`flex h-9 min-w-0 items-center justify-center rounded-lg border text-sm font-bold ${done
+            ? 'border-green-600 bg-green-600 text-white' : active ? color.activeStep
+              : 'border-gray-200 bg-gray-100 text-gray-500'}`}>
+          {done ? <CheckCircle2 className="h-5 w-5" aria-hidden="true" /> : index + 1}
         </span>;
       })}
     </div>
-  </div>;
+    <div className="mt-4 border-t border-gray-100 pt-3">
+      <p className="text-base font-bold text-gray-900">{t('task.nextStage', { stage: next.stage })}</p>
+      <p className="mt-1 text-sm leading-relaxed text-gray-600">{next.help}</p>
+    </div>
+  </section>;
+}
+
+type RouteStop = 'pickup' | 'delivery';
+type RouteSession = { assignmentId: string; stop: RouteStop; destinationKey: string; snapshot?: RouteSnapshot };
+
+function TaskRouteCard({ assignment, activeRoute, onStartRoute, onRouteSnapshot, onStopRoute }: {
+  assignment: Assignment;
+  activeRoute: RouteSession | null;
+  onStartRoute: (session: RouteSession) => void;
+  onRouteSnapshot: (session: RouteSession) => void;
+  onStopRoute: () => void;
+}) {
+  const { t } = useDriverI18n();
+  const [viewingStop, setViewingStop] = useState<number | null>(null);
+  const mapboxAvailable = !!(import.meta.env.VITE_MAPBOX_ACCESS_TOKEN ?? '').trim();
+  const origin = assignment.destination.includes('→') ? assignment.destination.split('→')[0]?.trim() : '';
+  const pickupPoint = coordinatePair(assignment.pickupLatitude, assignment.pickupLongitude);
+  const deliveryPoint = coordinatePair(assignment.deliveryLatitude, assignment.deliveryLongitude);
+  const stops = [
+    { title: t('home.pickupAt'), location: assignment.pickupLocation, mapLocation: assignment.pickupLocation,
+      point: pickupPoint, area: origin, action: t('task.navigatePickup') },
+    // A legacy destination without the route separator could be only a city.
+    { title: t('home.deliverTo'), location: assignment.deliveryLocation || getDeliveryLocation(assignment),
+      mapLocation: assignment.deliveryLocation || (assignment.destination.includes('→') ? getDeliveryLocation(assignment) : ''),
+      point: deliveryPoint, area: assignment.destinationArea, action: t('task.navigateDelivery') },
+  ];
+  const routeKeys = stops.map((stop) => `${stop.mapLocation}|${stop.point?.latitude ?? ''}|${stop.point?.longitude ?? ''}`);
+  const currentRoute = activeRoute?.assignmentId === assignment.id
+    && activeRoute.destinationKey === routeKeys[activeRoute.stop === 'pickup' ? 0 : 1] ? activeRoute : null;
+  const selectedStop = viewingStop === 0 ? 'pickup' : 'delivery';
+  const selectedSession: Omit<RouteSession, 'snapshot'> | null = viewingStop === null ? null : {
+    assignmentId: assignment.id, stop: selectedStop, destinationKey: routeKeys[viewingStop],
+  };
+  return <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm sm:p-5" aria-label={t('task.route')}>
+    {stops.map((stop, index) => {
+      const canNavigate = mapboxAvailable && (!!stop.point || !!stop.mapLocation.trim());
+      return <div key={stop.title}>
+      {index > 0 && <div className="my-3 ml-5 flex h-7 items-center border-l-2 border-dashed border-gray-300 pl-3">
+        <ArrowDown className="h-5 w-5 text-gray-500" aria-hidden="true" />
+      </div>}
+      <div className="flex min-w-0 items-start gap-3">
+        <MapPin className={`mt-1 h-6 w-6 shrink-0 ${index === 0 ? 'text-sky-700' : 'text-emerald-700'}`} aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-bold uppercase tracking-wide text-gray-500">{stop.title}</p>
+          <p className="mt-1 break-words text-lg font-bold leading-snug text-gray-900">{stop.location || '—'}</p>
+          {stop.area && !stop.location.toLowerCase().includes(stop.area.toLowerCase()) &&
+            <p className="mt-0.5 break-words text-sm leading-snug text-gray-600">{stop.area}</p>}
+          <button type="button" disabled={!canNavigate}
+            onClick={() => setViewingStop(index)}
+            className="mt-2 inline-flex min-h-11 items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm font-bold text-green-800 hover:bg-green-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-green-700 disabled:cursor-not-allowed disabled:text-gray-500 disabled:opacity-60"
+            aria-label={stop.action}>
+            <Navigation className="h-4 w-4" aria-hidden="true" />{stop.action}
+          </button>
+          {!canNavigate && <p className="mt-1 text-sm text-amber-800">{t('task.exactLocationUnavailable')}</p>}
+        </div>
+      </div>
+    </div>;
+    })}
+    {viewingStop !== null && <Suspense fallback={null}><MapboxMapPanel
+      destination={{ address: stops[viewingStop].mapLocation,
+        latitude: stops[viewingStop].point?.latitude, longitude: stops[viewingStop].point?.longitude }}
+      title={stops[viewingStop].action}
+      focusedTitle={t(viewingStop === 0 ? 'task.routePickupTitle' : 'task.routeDeliveryTitle')}
+      enableRouteMode
+      routeActive={currentRoute?.stop === selectedStop}
+      initialRoute={currentRoute?.stop === selectedStop ? currentRoute.snapshot : undefined}
+      blockedByRoute={currentRoute && currentRoute.stop !== selectedStop
+        ? t(currentRoute.stop === 'pickup' ? 'task.mapStopPickupFirst' : 'task.mapStopDeliveryFirst') : undefined}
+      onStartRoute={(snapshot) => { if (selectedSession) onStartRoute({ ...selectedSession, snapshot }); }}
+      onRouteSnapshot={(snapshot) => {
+        if (selectedSession) onRouteSnapshot({ ...selectedSession, snapshot });
+      }}
+      onStopRoute={onStopRoute}
+      messages={{
+        loading: t('task.mapLoading'), unavailable: t('task.mapUnavailable'),
+        finding: t('task.mapFinding'), notVerified: t('task.mapNotVerified'),
+        selected: t('task.mapSelected'), gettingLocation: t('task.mapGettingLocation'),
+        noLocation: t('task.mapNoLocation'), routePreview: t('task.mapRoutePreview'),
+        locationDenied: t('task.mapLocationDenied'), noRoute: t('task.mapNoRoute'),
+        close: t('task.mapClose'), startRoute: t('task.mapStartRoute'),
+        routeActive: t('task.mapRouteActive'), resumeRoute: t('task.mapResumeRoute'),
+        stopRoute: t('task.mapStopRoute'), stopConfirm: t('task.mapStopConfirm'),
+        cancel: t('task.mapCancel'),
+        backToPreview: t('task.mapBackToPreview'), nextDirection: t('task.mapNextDirection'),
+        allDirections: t('task.mapAllDirections'),
+      }}
+      routeFromCurrentLocation={!currentRoute || currentRoute.stop === selectedStop}
+      onClose={() => setViewingStop(null)} /></Suspense>}
+  </section>;
 }
 
 function ElapsedTime({ start }: { start?: string | null }) {
@@ -687,7 +815,7 @@ function DocRow({ doc, onUpload, isDelivered, isBlurry, isFocused }: {
     <div ref={rowRef} tabIndex={-1} className={`rounded-2xl border p-4 space-y-3 ${isFocused ? 'ring-2 ring-green-600 ring-offset-2' : ''} ${
       isApproved  ? 'bg-green-50 border-green-200' :
       isRejected  ? 'bg-red-50 border-red-200' :
-      isPending   ? 'bg-amber-50 border-amber-200' :
+      isPending   ? 'bg-cyan-50 border-cyan-200' :
       !isDelivered? 'bg-gray-50 border-gray-100 opacity-60' :
                     'bg-white border-gray-200'
     }`}>
@@ -695,14 +823,14 @@ function DocRow({ doc, onUpload, isDelivered, isBlurry, isFocused }: {
         <div className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${
           isApproved  ? 'bg-green-100' :
           isRejected  ? 'bg-red-100' :
-          isPending   ? 'bg-amber-100' :
+          isPending   ? 'bg-cyan-100' :
           !isDelivered? 'bg-gray-100' :
                         'bg-green-100'
         }`}>
           {!isDelivered ? <Lock className="w-5 h-5 text-gray-300" /> :
            isApproved   ? <CheckCircle2 className="w-6 h-6 text-green-600" /> :
            isRejected   ? <XCircle className="w-6 h-6 text-red-500" /> :
-           isPending    ? <Clock className="w-6 h-6 text-amber-500" /> :
+           isPending    ? <Clock className="w-6 h-6 text-cyan-600" /> :
                           <Camera className="w-6 h-6 text-green-600" />}
         </div>
         <div className="flex-1 min-w-0">
@@ -712,7 +840,7 @@ function DocRow({ doc, onUpload, isDelivered, isBlurry, isFocused }: {
           <p className={`text-sm mt-0.5 font-medium ${
             isApproved  ? 'text-green-700' :
             isRejected  ? 'text-red-600' :
-            isPending   ? 'text-amber-600' :
+            isPending   ? 'text-cyan-800' :
             !isDelivered? 'text-gray-400' :
                           'text-green-700'
           }`}>
@@ -1014,7 +1142,10 @@ function HistoryDetailsSheet({ driverId, driverName, assignmentId, onClose }: { 
                 {docRows.map((doc) => {
                   const url = safeUrl(doc.fileUrl);
                   const status = !doc.uploaded ? t('history.awaitingUpload') : statusText(doc.docStatus);
-                  const color = !doc.uploaded ? 'bg-gray-100 text-gray-600' : doc.docStatus === 'approved' ? 'bg-green-50 text-green-700' : doc.docStatus === 'rejected' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700';
+                  const color = !doc.uploaded ? statusColors['Awaiting Documents'].badge
+                    : doc.docStatus === 'approved' ? statusColors.Completed.badge
+                    : doc.docStatus === 'rejected' ? statusColors['Needs Correction'].badge
+                    : statusColors['Under Review'].badge;
                   return <div key={doc.type} className="min-w-0 flex items-center gap-3 rounded-xl border border-gray-200 p-3">
                     {doc.type === 'Proof of Delivery' && url && isImage(url) ? (
                       <button type="button" onClick={() => setPreviewUrl(url)} aria-label={t('history.enlargeProof')} className="shrink-0 w-11 h-11 rounded-lg overflow-hidden border border-gray-200">
@@ -1073,6 +1204,8 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
   const [lastSync, setLastSync] = useState<Date | null>(null);
   const [syncing,  setSyncing]  = useState(false);
   const [updating, setUpdating] = useState(false);
+  // Route viewing is a Driver UI session, independent of persisted delivery stages.
+  const [activeRoute, setActiveRoute] = useState<RouteSession | null>(null);
   /* Shown when a write failed. Separate from `online`: the "Offline" banner says the
      connection dropped, this says a specific change of theirs did not save. */
   const [actionError, setActionError] = useState('');
@@ -1269,7 +1402,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
     } finally { setUpdating(false); }
   };
 
-  const handleOperationalSlide = async (): Promise<boolean> => {
+  const handleOperationalSlide = async (): Promise<false | (() => void)> => {
     const assignment = data?.assignment;
     if (!assignment) return false;
     if (!online) { setActionError(t('workflow.noConnection')); return false; }
@@ -1308,9 +1441,9 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
         } catch (error) { console.warn('[driver workflow] status saved, notification failed:', error); }
       }
       const fresh = await loadDriverData(driverId);
-      setData(fresh);
       setActionError('');
-      return true;
+      // Let the shared slider show its short success state before changing screens.
+      return () => setData(fresh);
     } catch (error) {
       console.error('[driver workflow] transition failed:', error);
       try { setData(await loadDriverData(driverId)); } catch { /* Keep last confirmed view. */ }
@@ -1386,6 +1519,9 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
 
   /* ── Derived values ── */
   const a           = data?.assignment ?? null;
+  useEffect(() => {
+    setActiveRoute((current) => current && current.assignmentId !== a?.id ? null : current);
+  }, [a?.id]);
   const phase       = a && a.taskStatus !== 'Failed / Issue' && a.taskStatus !== 'Cancelled'
     ? getDriverPhase(a) : null;
   const isDelivered = a?.taskStatus === 'Delivered';
@@ -1553,7 +1689,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
 
   const menuButton = (expanded = false, fullWidth = false) => (
     <button type="button" onClick={() => setActiveDrawer('menu')} aria-haspopup="dialog"
-      className={`${expanded ? 'min-h-12 min-w-28 max-[359px]:w-full px-4 text-base' : 'min-h-11 px-2.5 text-sm'} ${fullWidth ? 'w-full' : ''} rounded-xl border border-gray-200 bg-white text-gray-700 font-semibold flex items-center justify-center gap-1.5 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-green-700`}>
+      className={`${expanded ? 'min-h-12 min-w-28 px-4 text-base' : 'min-h-11 px-2.5 text-sm'} ${fullWidth ? 'w-full' : ''} rounded-xl border border-gray-200 bg-white text-gray-700 font-semibold flex items-center justify-center gap-1.5 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-green-700`}>
       <Menu className={`${expanded ? 'w-5 h-5' : 'w-4 h-4'} shrink-0`} aria-hidden="true" /> {t('menu.title')}
     </button>
   );
@@ -1686,11 +1822,11 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
                 {postDelivery && documentProgress && (
                   <div className="px-4 pt-3 space-y-3">
                     {displayStatus === 'Awaiting Documents' && (
-                      <div className="flex min-w-0 items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-800">
+                      <div className={`flex min-w-0 items-start gap-2 rounded-xl border px-3 py-2.5 ${statusColors['Awaiting Documents'].badge}`}>
                         <Clock className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
                         <div className="min-w-0 text-sm leading-snug">
                           <p className="font-bold">{t('home.documentsNeeded')}{documentAgeText ? ` · ${documentAgeText}` : ''}</p>
-                          {documentAge?.deliveredOn && <p className="mt-0.5 text-amber-700">{t('home.deliveredOn', { date: documentAge.deliveredOn })}</p>}
+                          {documentAge?.deliveredOn && <p className="mt-0.5 text-yellow-800">{t('home.deliveredOn', { date: documentAge.deliveredOn })}</p>}
                         </div>
                       </div>
                     )}
@@ -1704,7 +1840,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
                       </div>
                     )}
                     {(displayStatus === 'Under Review' || allDocsApproved) && (
-                      <div className={`flex min-w-0 items-start gap-2 rounded-xl border px-3 py-2.5 ${allDocsApproved ? 'border-green-200 bg-green-50 text-green-800' : 'border-blue-200 bg-blue-50 text-blue-800'}`}>
+                      <div className={`flex min-w-0 items-start gap-2 rounded-xl border px-3 py-2.5 ${allDocsApproved ? statusColors.Completed.badge : statusColors['Under Review'].badge}`}>
                         {allDocsApproved ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" /> : <Clock className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}
                         <p className="min-w-0 text-sm font-bold leading-snug">{t(allDocsApproved ? 'home.allApproved' : 'home.allSubmitted')}</p>
                       </div>
@@ -1831,9 +1967,18 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
     : phase === 'arrived' ? 'workflow.startUnloading'
     : phase === 'unloading' ? 'workflow.finishUnloading'
     : phase === 'delivery_pending' ? 'workflow.finishDeliverySync' : null;
+  const completedAction = phase === 'assigned' ? 'workflow.arrivePickupDone'
+    : phase === 'pickup' ? 'workflow.startLoadingDone'
+    : phase === 'loading' ? 'workflow.finishLoadingDone'
+    : phase === 'pretrip' ? 'workflow.startTripDone'
+    : phase === 'in_transit' ? 'workflow.arriveDestinationDone'
+    : phase === 'arrived' ? 'workflow.startUnloadingDone'
+    : phase === 'unloading' ? 'workflow.finishUnloadingDone' : null;
   const requiredPhotoKeys: readonly OperationalPhotoKey[] = phase === 'pickup' ? [...OPERATIONAL_PHOTOS.pickup, 'loading_before']
     : phase === 'loading' ? ['loading_after']
-      : phase === 'pretrip' ? OPERATIONAL_PHOTOS.pretrip : [];
+      : phase === 'pretrip' ? OPERATIONAL_PHOTOS.pretrip
+        : phase === 'arrived' ? ['unloading_before']
+          : phase === 'unloading' ? ['unloading_after'] : [];
   const photosIncomplete = !!a && requiredPhotoKeys.some((key) => !a.statusPhotos?.[key]?.url);
   const pickupTruckPhotosIncomplete = phase === 'pickup' && !!a && OPERATIONAL_PHOTOS.pickup
     .some((key) => !a.statusPhotos?.[key]?.url);
@@ -1850,28 +1995,19 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
     <div className="min-h-screen bg-gray-50 flex flex-col">
 
       {/* ── Task Header ── */}
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-20 shadow-sm">
-        <div className="px-4 py-3 flex flex-wrap items-center gap-3">
-          {/* Back */}
-          <button
-            onClick={() => setScreen('dashboard')}
-            className="flex min-h-11 items-center gap-1.5 text-gray-600 font-bold text-sm flex-shrink-0 py-1 pr-2"
-          >
-            <ChevronLeft className="w-5 h-5" /> {t('task.backDashboard')}
-          </button>
-
-          {/* Driver name + plate */}
-          <div className="flex-1 min-w-[80px]">
-            <p className="text-base font-bold text-foreground truncate leading-tight">{driverName}</p>
-            {a?.truckPlate && (
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <Truck className="w-3.5 h-3.5 text-gray-400" />
-                <span className="text-sm text-gray-500 font-mono font-bold">{a.truckPlate}</span>
-              </div>
-            )}
+      <header className="sticky top-0 z-20 border-b border-gray-200 bg-white shadow-sm">
+        <div className="mx-auto max-w-2xl px-4 py-3">
+          <div className="flex items-center justify-between gap-2">
+            <button type="button" onClick={() => setScreen('dashboard')}
+              className="inline-flex min-h-12 min-w-0 items-center gap-1 rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-700 focus-visible:outline-2 focus-visible:outline-green-700">
+              <ChevronLeft className="h-5 w-5 shrink-0" aria-hidden="true" /> {t('task.dashboardButton')}
+            </button>
+            {menuButton(true)}
           </div>
-
-          {menuButton(true)}
+          <h1 className="mt-4 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 break-words text-[22px] font-bold leading-tight text-gray-900">
+            <span>{driverName}</span>
+            {a?.truckPlate && <span className="text-xl font-medium text-gray-600"><span className="max-[389px]:hidden">· </span>{a.truckPlate}</span>}
+          </h1>
         </div>
       </header>
 
@@ -1879,7 +2015,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
       {updating && <div className="h-1 bg-primary/20"><div className="h-full w-1/2 bg-primary animate-pulse rounded-full" /></div>}
 
       {/* ── Scrollable content ── */}
-      <div className="flex-1 overflow-y-auto px-4 py-5 space-y-5 pb-36">
+      <div className="mx-auto w-full max-w-2xl flex-1 space-y-5 overflow-y-auto px-4 py-5 pb-36">
 
         {/* No assignment edge case */}
         {!a && (
@@ -1896,37 +2032,21 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
           <>
             {!isFailed && !isCancelled && phase &&
               (phase !== 'delivered' || !!a.unloadingCompletedAt) && <OperationalProgress phase={phase} />}
-            {/* ── Route Summary ── */}
-            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm px-5 py-5 space-y-4">
-              <div>
-                <p className="text-sm font-bold text-gray-400 uppercase tracking-wide">{t('home.pickupAt')}</p>
-                <p className="text-xl font-bold text-foreground mt-1 leading-snug">{a.pickupLocation}</p>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="flex-1 h-px bg-gray-200" />
-                <ArrowDown className="w-5 h-5 text-gray-400 flex-shrink-0" />
-                <div className="flex-1 h-px bg-gray-200" />
-              </div>
-              <div>
-                <p className="text-sm font-bold text-gray-400 uppercase tracking-wide">{t('home.deliverTo')}</p>
-                <p className="text-xl font-bold text-green-700 mt-1 leading-snug">{getDeliveryLocation(a)}</p>
-              </div>
-            </div>
-
-            {phase === 'assigned' && (
-              <p className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800">
-                {t('task.proceedPickup')}
-              </p>
-            )}
+            <TaskRouteCard assignment={a} activeRoute={activeRoute}
+              onStartRoute={setActiveRoute}
+              onRouteSnapshot={(session) => setActiveRoute((current) => current
+                && current.assignmentId === session.assignmentId && current.stop === session.stop
+                && current.destinationKey === session.destinationKey ? session : current)}
+              onStopRoute={() => setActiveRoute(null)} />
 
             {isDelivered && (
-              <div className="rounded-2xl border border-green-200 bg-green-50 px-4 py-4 space-y-3">
+              <div className={`rounded-2xl border px-4 py-4 space-y-3 ${statusColors.Delivered.badge}`}>
                 {(a.unloadingCompletedAt || a.statusPhotos?.Delivered?.timestamp) &&
-                  <p className="text-sm font-semibold text-green-900">{t('workflow.deliveryDone', {
+                  <p className="text-sm font-semibold text-emerald-900">{t('workflow.deliveryDone', {
                     time: a.unloadingCompletedAt ? manilaStamp(a.unloadingCompletedAt) : a.statusPhotos?.Delivered?.timestamp ?? '',
                   })}</p>}
                 {displayStatus === 'Awaiting Documents' && (
-                  <p className="text-sm font-semibold leading-snug text-green-900">{t('task.deliveryCompletedUploadPrompt')}</p>
+                  <p className="text-sm font-semibold leading-snug text-emerald-900">{t('task.deliveryCompletedUploadPrompt')}</p>
                 )}
                 <button type="button" onClick={() => {
                   const target = displayStatus === 'Needs Correction'
@@ -2025,13 +2145,13 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
               {t('workflow.tripStartedAt', { time: manilaStamp(a.departedAt ?? undefined) })}
             </div>}
             {phase === 'arrived' && <>
-              <div className="rounded-2xl border border-green-200 bg-green-50 p-4 text-sm text-green-900">
+              <div className={`rounded-2xl border p-4 text-sm ${statusColors.Arrived.badge}`}>
                 <p className="font-bold text-base">{t('workflow.arrivedMessage')}</p>
                 <p className="mt-1 break-words">{getDeliveryLocation(a)}</p>
                 <p className="mt-1">{t('workflow.arrivedAt', { time: manilaStamp(a.destinationArrivedAt ?? undefined) })}</p>
               </div>
               <OperationalPhotos assignment={a} keys={['unloading_before']}
-                title={t('workflow.beforeUnloading')} required={false} onSelect={setOperationalPhotoTarget} />
+                title={t('workflow.beforeUnloading')} required onSelect={setOperationalPhotoTarget} />
             </>}
             {phase === 'unloading' && <>
               <div className="rounded-2xl border border-gray-200 bg-white p-4 text-sm text-gray-700">
@@ -2040,26 +2160,34 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
                 <ElapsedTime start={a.unloadingStartedAt} />
               </div>
               <OperationalPhotos assignment={a} keys={['unloading_after']}
-                title={t('workflow.afterUnloading')} required={false} onSelect={setOperationalPhotoTarget} />
+                title={t('workflow.afterUnloading')} required onSelect={setOperationalPhotoTarget} />
             </>}
             {phase === 'delivery_pending' && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">{t('workflow.deliveryPending')}</p>}
 
-            {/* ── Task Details (flat, always visible) ── */}
-            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm px-5 py-3">
-              <h3 className="text-base font-bold text-foreground py-3 border-b border-gray-100 mb-1">{t('task.details')}</h3>
-              <DetailRow label={t('task.id')} value={a.id} />
-              <DetailRow label={t('task.truck')} value={a.truckPlate} />
-              <DetailRow label={t('task.pickupLocation')} value={a.pickupLocation} />
-              <DetailRow label={t('task.route')} value={getAssignmentRoute(a)} />
-              {destinationAreaEnabled && <DetailRow label={t('task.destination')} value={a.destinationArea || '—'} />}
-              <DetailRow label={t('task.deliveryLocation')} value={getDeliveryLocation(a)} />
-              <DetailRow label={t('task.client')} value={a.company} />
-              <DetailRow label={t('task.pickupDate')} value={a.pickedUpDate} />
-              <DetailRow label={t('task.pickupTime')} value={a.pickupTime} />
-              <DetailRow label={t('task.deliveryDate')} value={a.deliveryDate} />
-              <DetailRow label={t('task.deliveryDue')} value={a.ata ?? a.eta} />
-              <DetailRow label={t('task.instructions')} value={a.remarks} />
-            </div>
+            {/* Supplementary assignment data stays available without crowding the current action. */}
+            <details className="group rounded-2xl border border-gray-200 bg-white shadow-sm">
+              <summary className="flex min-h-16 cursor-pointer list-none items-center justify-between gap-3 px-5 py-3 focus-visible:outline-2 focus-visible:outline-green-700 [&::-webkit-details-marker]:hidden">
+                <span className="min-w-0">
+                  <span className="block text-base font-bold text-gray-900">{t('task.details')}</span>
+                  <span className="mt-0.5 block text-sm text-gray-600">{t('task.detailsHint')}</span>
+                </span>
+                <ChevronRight className="h-5 w-5 shrink-0 text-gray-500 transition-transform group-open:rotate-90" aria-hidden="true" />
+              </summary>
+              <div className="border-t border-gray-100 px-5 py-2 pb-4">
+                <DetailRow label={t('task.id')} value={a.id} />
+                <DetailRow label={t('task.truck')} value={a.truckPlate} />
+                <DetailRow label={t('task.pickupLocation')} value={a.pickupLocation} />
+                <DetailRow label={t('task.route')} value={getAssignmentRoute(a)} />
+                {destinationAreaEnabled && <DetailRow label={t('task.destination')} value={a.destinationArea || '—'} />}
+                <DetailRow label={t('task.deliveryLocation')} value={getDeliveryLocation(a)} />
+                <DetailRow label={t('task.client')} value={a.company} />
+                <DetailRow label={t('task.pickupDate')} value={a.pickedUpDate} />
+                <DetailRow label={t('task.pickupTime')} value={a.pickupTime} />
+                <DetailRow label={t('task.deliveryDate')} value={a.deliveryDate} />
+                <DetailRow label={t('task.deliveryDue')} value={a.ata ?? a.eta} />
+                <DetailRow label={t('task.instructions')} value={a.remarks} />
+              </div>
+            </details>
 
             {/* ── Delay reports history ── */}
             {(a.delayReports ?? []).length > 0 && (
@@ -2116,21 +2244,26 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
       {/* ── Sticky bottom action ── */}
       {a && !isTerminal && workflowAction && (
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-4 pt-4 pb-6 shadow-[0_-4px_20px_rgba(0,0,0,0.10)] z-20">
-          {(photosIncomplete || blockSlider) && <p className="mb-3 text-sm font-semibold text-amber-800">
-            {blockSlider ? t('slide.reportDelay') : t(phase === 'loading' ? 'workflow.completeLoadingPhoto'
-              : phase === 'pickup' && !pickupTruckPhotosIncomplete ? 'workflow.completeBeforeLoadingPhoto' : 'workflow.completeFour')}
-          </p>}
-          <SlideToConfirm
-            label={t(workflowAction)}
-            disabled={updating || photosIncomplete || blockSlider || !online}
-            onConfirm={async () => {
-              if (phase === 'legacy_picked_up') {
-                setPhotoTarget('In Transit');
-                return false;
-              }
-              return handleOperationalSlide();
-            }}
-          />
+          <div className="mx-auto max-w-2xl">
+            {(photosIncomplete || blockSlider) && <p className="mb-3 text-sm font-semibold text-amber-800">
+              {blockSlider ? t('slide.reportDelay') : t(phase === 'loading' ? 'workflow.completeLoadingPhoto'
+                : phase === 'arrived' ? 'workflow.completeBeforeUnloadingPhoto'
+                  : phase === 'unloading' ? 'workflow.completeAfterUnloadingPhoto'
+                    : phase === 'pickup' && !pickupTruckPhotosIncomplete ? 'workflow.completeBeforeLoadingPhoto' : 'workflow.completeFour')}
+            </p>}
+            <SlideToConfirm
+              label={t(workflowAction)}
+              completedLabel={completedAction ? t(completedAction) : undefined}
+              disabled={updating || photosIncomplete || blockSlider || !online}
+              onConfirm={async () => {
+                if (phase === 'legacy_picked_up') {
+                  setPhotoTarget('In Transit');
+                  return false;
+                }
+                return handleOperationalSlide();
+              }}
+            />
+          </div>
         </div>
       )}
 
@@ -2140,8 +2273,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
         title={operationalPhotoName}
         instruction={t('workflow.photoSlot', {
           angle: operationalPhotoName,
-          requirement: t(['unloading_before', 'unloading_after'].includes(operationalPhotoTarget)
-            ? 'workflow.optional' : 'workflow.required'),
+          requirement: t('workflow.required'),
         })}
         onConfirm={handleOperationalPhotoConfirmed} onCancel={() => setOperationalPhotoTarget(null)} />}
       {delaySheet   && (

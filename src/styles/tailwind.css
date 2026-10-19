@@ -2,3 +2,32 @@
 @source '../**/*.{js,ts,jsx,tsx}';
 
 @import 'tw-animate-css';
+
+@keyframes driver-slide-chevron {
+  0%, 65%, 100% { opacity: 0.55; transform: translateX(0); }
+  30% { opacity: 1; transform: translateX(3px); }
+}
+
+@keyframes driver-slide-sweep {
+  0%, 35% { transform: translateX(-100%); }
+  70%, 100% { transform: translateX(100%); }
+}
+
+.driver-slide-chevron {
+  display: inline-block;
+  animation: driver-slide-chevron 2.4s ease-in-out infinite;
+}
+
+.driver-slide-thumb {
+  transition: transform 360ms cubic-bezier(0.2, 1.08, 0.35, 1);
+}
+
+.driver-slide-sweep {
+  background: linear-gradient(105deg, transparent 44%, rgb(255 255 255 / 0.18) 50%, transparent 56%);
+  animation: driver-slide-sweep 5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .driver-slide-chevron, .driver-slide-sweep { animation: none; }
+  .driver-slide-thumb { transition: none; }
+}
