@@ -4,7 +4,7 @@ import {
   CheckCircle2, Shield, KeyRound, Phone,
   Package, Weight, Trash2, AlertTriangle, Archive,
 } from 'lucide-react';
-import type { LocalDriver, LocalTruck, AdminRole, AdminActivityInput, Assignment } from '../../data/assignmentTypes';
+import type { LocalDriver, LocalTruck, AdminActivityInput, Assignment } from '../../data/assignmentTypes';
 import { availabilityConfig } from '../../data/assignmentTypes';
 import { RegisterDriverModal, RegisterTruckModal } from './RegisterModals';
 import TruckImage from '../TruckImage';
@@ -124,9 +124,8 @@ interface Props {
   setTrucks: React.Dispatch<React.SetStateAction<LocalTruck[]>>;
   /* Needed to block deleting a driver who still has an open task (see activeTaskFor). */
   assignments?: Assignment[];
-  isViewOnly?: boolean;
+  canManageFleetAccounts: boolean;
   onResetAll?: () => Promise<void>;
-  adminRole?: AdminRole | null;
   savingToDb?: boolean;
   onLogActivity?: (entry: AdminActivityInput) => void;
   /* Runs a database-function change (archive / new PIN), then reloads — see App.tsx */
@@ -144,7 +143,7 @@ const ROLE_LABEL: Record<string, string> = {
 
 type TabView = 'Drivers' | 'Trucks';
 
-export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, assignments = [], isViewOnly = false, onResetAll, adminRole, savingToDb, onLogActivity, onServerChange, archivedDrivers = [], archivedTrucks = [], search }: Props) {
+export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, assignments = [], canManageFleetAccounts, onResetAll, savingToDb, onLogActivity, onServerChange, archivedDrivers = [], archivedTrucks = [], search }: Props) {
   const [tab, setTab] = useState<TabView>('Drivers');
   const [driverView, setDriverView] = useState<'active' | 'archived'>('active');
   const [availabilityFilter, setAvailabilityFilter] = useState<AvailabilityFilter>('all');
@@ -187,8 +186,8 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
     activeTrucksPage.setPage(1);
     archivedTrucksPage.setPage(1);
   };
-  const driverTableLayout = isViewOnly
-    ? { gridTemplateColumns: 'minmax(160px, 2fr) minmax(130px, 1.5fr) 120px 115px', minWidth: '610px' }
+  const driverTableLayout = !canManageFleetAccounts
+    ? { gridTemplateColumns: 'minmax(160px, 1.7fr) minmax(135px, 1.4fr) minmax(120px, 1fr) minmax(130px, 1fr)', minWidth: '600px' }
     : { gridTemplateColumns: 'minmax(160px, 2fr) minmax(130px, 1.5fr) 120px 115px 190px', minWidth: '810px' };
 
   /* Success message after an archive / PIN change — hides itself after 4 s */
@@ -221,6 +220,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
      strand the assignment: the database nulls its driver_id and the Monitor page then
      filters it out of sight permanently. */
   const activeTaskFor = (driverId: string) => assignments.find((a) => a.driverId === driverId) ?? null;
+  const currentTruckFor = (driverId: string) => activeTaskFor(driverId)?.truckPlate || 'Not assigned';
 
   /* Shown in the dialog (and the action disabled) while the driver still has an open task.
      archive_driver() refuses it on the server too. */
@@ -262,7 +262,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-semibold text-foreground">Drivers &amp; Trucks</h2>
-          <p className="text-sm text-muted-foreground mt-1">Manage driver accounts, availability, and truck records.</p>
+          <p className="text-sm text-muted-foreground mt-1">{canManageFleetAccounts ? 'Manage driver accounts, availability, and truck records.' : 'View driver and truck availability for dispatch.'}</p>
         </div>
         <div className="flex items-center flex-wrap gap-3">
           <div role="group" aria-label="Drivers or trucks" className="relative grid w-full grid-cols-2 items-center rounded-xl border border-border bg-muted/40 p-1 sm:w-auto">
@@ -299,7 +299,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
               <AvailabilityFilters value={availabilityFilter} label="Driver availability"
                 allCount={drivers.length} availableCount={availableCount} onDeliveryCount={onDeliveryCount}
                 onChange={(value) => { setAvailabilityFilter(value); activeDriversPage.setPage(1); }} />
-              {!isViewOnly && <button onClick={() => setShowAddDriver(true)}
+              {canManageFleetAccounts && <button onClick={() => setShowAddDriver(true)}
                 className="ml-auto flex min-h-10 w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors text-sm">
                 <Plus className="w-4 h-4" /> Register Driver
               </button>}
@@ -347,8 +347,8 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                 <Users className="w-8 h-8 text-muted-foreground/40" />
               </div>
               <p className="font-medium text-foreground mb-1">{availabilityFilter === 'available' ? (query ? 'No available drivers match your search.' : 'No available drivers found.') : availabilityFilter === 'onDelivery' ? (query ? 'No drivers on delivery match your search.' : 'No drivers are currently on delivery.') : query ? 'No accounts found' : 'No Drivers Registered Yet'}</p>
-              <p className="text-sm text-muted-foreground mb-5">{query ? 'Try a different search term.' : availabilityFilter === 'all' ? 'Register a driver to generate their login PIN.' : 'Choose All to see every active driver.'}</p>
-              {!query && availabilityFilter === 'all' && !isViewOnly && (
+              <p className="text-sm text-muted-foreground mb-5">{query ? 'Try a different search term.' : availabilityFilter === 'all' ? canManageFleetAccounts ? 'Register a driver to generate their login PIN.' : 'Drivers will appear here when registered by OPM.' : 'Choose All to see every active driver.'}</p>
+              {!query && availabilityFilter === 'all' && canManageFleetAccounts && (
                 <button onClick={() => setShowAddDriver(true)}
                   className="px-5 py-2.5 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 transition-colors">
                   + Register Driver
@@ -365,8 +365,10 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                 <span>Driver</span>
                 <span className="flex items-center gap-1"><Phone className="w-3.5 h-3.5" /> Contact</span>
                 <span>Availability</span>
-                <span className="flex items-center gap-1"><KeyRound className="w-3.5 h-3.5" /> PIN</span>
-                {!isViewOnly && <span className="text-right">Action</span>}
+                {canManageFleetAccounts
+                  ? <span className="flex items-center gap-1"><KeyRound className="w-3.5 h-3.5" /> PIN</span>
+                  : <span>Current Truck</span>}
+                {canManageFleetAccounts && <span className="text-right">Action</span>}
               </div>
               {/* Table rows */}
               <div className="divide-y divide-border">
@@ -411,11 +413,11 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                         {avail ? availabilityConfig.available.label : availabilityConfig.onDelivery.label}
                       </span>
 
-                      {/* PIN */}
-                      <PinCell pin={d.pin} />
+                      {canManageFleetAccounts ? <PinCell pin={d.pin} />
+                        : <span className="text-sm text-foreground break-words">{currentTruckFor(d.id)}</span>}
 
                       {/* Actions — hidden for view-only */}
-                      {!isViewOnly && (
+                      {canManageFleetAccounts && (
                         <div className="flex items-center justify-end gap-1.5">
                           <button
                             onClick={() => setPinTarget({ id: d.id, name: d.name })}
@@ -477,12 +479,13 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                           )}
                         </div>
                         <div>
-                          <p className="text-muted-foreground mb-1">PIN</p>
-                          <PinCell pin={d.pin} />
+                          <p className="text-muted-foreground mb-1">{canManageFleetAccounts ? 'PIN' : 'Current Truck'}</p>
+                          {canManageFleetAccounts ? <PinCell pin={d.pin} />
+                            : <span className="text-foreground font-medium break-words">{currentTruckFor(d.id)}</span>}
                         </div>
                       </div>
 
-                      {!isViewOnly && (
+                      {canManageFleetAccounts && (
                         <div className="flex gap-2 mt-2.5">
                           <button
                             onClick={() => setPinTarget({ id: d.id, name: d.name })}
@@ -512,7 +515,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
           {driverView === 'active' && (
           <p className="text-xs text-muted-foreground flex items-center gap-1.5">
             <Shield className="w-3.5 h-3.5" />
-            Status is <strong className="text-blue-600">On Delivery</strong> when the driver has an active task. Hold the eye icon to reveal a PIN.
+            Status is <strong className="text-blue-600">On Delivery</strong> when the driver has an active task.{canManageFleetAccounts && ' Hold the eye icon to reveal a PIN.'}
           </p>
           )}
         </div>
@@ -528,7 +531,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
               <AvailabilityFilters value={truckStatusFilter} label="Truck availability"
                 allCount={trucks.length} availableCount={availableTruckCount} onDeliveryCount={onDeliveryTruckCount}
                 onChange={(value) => { setTruckStatusFilter(value); activeTrucksPage.setPage(1); }} />
-              {!isViewOnly && <button onClick={() => setShowAddTruck(true)}
+              {canManageFleetAccounts && <button onClick={() => setShowAddTruck(true)}
                 className="ml-auto flex min-h-10 w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 bg-secondary text-white rounded-lg hover:bg-secondary/90 transition-colors text-sm">
                 <Plus className="w-4 h-4" /> Register Truck
               </button>}
@@ -575,8 +578,8 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                 <Truck className="w-8 h-8 text-muted-foreground/40" />
               </div>
               <p className="font-medium text-foreground mb-1">{truckStatusFilter === 'available' ? (query ? 'No available trucks match your search.' : 'No available trucks found.') : truckStatusFilter === 'onDelivery' ? (query ? 'No trucks on delivery match your search.' : 'No trucks are currently on delivery.') : query ? 'No accounts found' : 'No Trucks Registered Yet'}</p>
-              <p className="text-sm text-muted-foreground mb-5">{query ? 'Try a different search term.' : truckStatusFilter === 'all' ? 'Register trucks so they can be assigned to deliveries.' : 'Choose All to see every active truck.'}</p>
-              {!query && truckStatusFilter === 'all' && !isViewOnly && (
+              <p className="text-sm text-muted-foreground mb-5">{query ? 'Try a different search term.' : truckStatusFilter === 'all' ? canManageFleetAccounts ? 'Register trucks so they can be assigned to deliveries.' : 'Trucks will appear here when registered by OPM.' : 'Choose All to see every active truck.'}</p>
+              {!query && truckStatusFilter === 'all' && canManageFleetAccounts && (
                 <button onClick={() => setShowAddTruck(true)}
                   className="px-5 py-2.5 bg-secondary text-white rounded-lg text-sm hover:bg-secondary/90 transition-colors">
                   + Register Truck
@@ -588,17 +591,17 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
               <div ref={activeTrucksArea}>
               {/* Desktop/tablet table */}
               <div className="hidden sm:block overflow-x-auto">
-              <div className={`grid ${isViewOnly ? 'grid-cols-[minmax(140px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px] min-w-[560px]' : 'grid-cols-[minmax(140px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px_auto] min-w-[660px]'} gap-4 px-5 py-3 bg-muted/30 border-b border-border text-xs font-semibold text-muted-foreground uppercase tracking-wide`}>
+              <div className={`grid ${!canManageFleetAccounts ? 'grid-cols-[minmax(140px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px] min-w-[560px]' : 'grid-cols-[minmax(140px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px_auto] min-w-[660px]'} gap-4 px-5 py-3 bg-muted/30 border-b border-border text-xs font-semibold text-muted-foreground uppercase tracking-wide`}>
                 <span>Plate Number</span>
                 <span className="flex items-center gap-1"><Package className="w-3.5 h-3.5" /> Classification</span>
                 <span className="flex items-center gap-1"><Weight className="w-3.5 h-3.5" /> Payload Capacity</span>
                 <span>Status</span>
-                {!isViewOnly && <span>Action</span>}
+                {canManageFleetAccounts && <span>Action</span>}
               </div>
               <div className="divide-y divide-border">
                 {activeTrucksPage.pageItems.map((t) => (
                   <div key={t.id}
-                    className={`grid ${isViewOnly ? 'grid-cols-[minmax(140px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px] min-w-[560px]' : 'grid-cols-[minmax(140px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px_auto] min-w-[660px]'} gap-4 items-center px-5 py-4 hover:bg-muted/10 transition-colors`}>
+                    className={`grid ${!canManageFleetAccounts ? 'grid-cols-[minmax(140px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px] min-w-[560px]' : 'grid-cols-[minmax(140px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px_auto] min-w-[660px]'} gap-4 items-center px-5 py-4 hover:bg-muted/10 transition-colors`}>
                     {/* Plate */}
                     <div className="flex items-center gap-3">
                       <div className="w-9 h-9 bg-[#0d9488]/15 rounded-full flex items-center justify-center flex-shrink-0 border border-[#0d9488]/20 overflow-hidden">
@@ -632,7 +635,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                       <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${t.status === 'Available' ? availabilityConfig.available.dot : availabilityConfig.onDelivery.dot}`} />
                       {t.status === 'Available' ? availabilityConfig.available.label : availabilityConfig.onDelivery.label}
                     </span>
-                    {!isViewOnly && (
+                    {canManageFleetAccounts && (
                       <button
                         onClick={() => setTruckTarget({ id: t.id, plate: t.plateNumber })}
                         title="Move truck to archive"
@@ -683,7 +686,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                         )}
                       </div>
                     </div>
-                    {!isViewOnly && (
+                    {canManageFleetAccounts && (
                       <button
                         onClick={() => setTruckTarget({ id: t.id, plate: t.plateNumber })}
                         className="w-full flex items-center justify-center gap-1.5 mt-2.5 px-3 py-2 border border-red-200 rounded-lg text-xs text-red-500 hover:bg-red-50 hover:text-red-600 hover:border-red-300 transition-colors"
@@ -704,7 +707,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
       )}
 
       {/* ════ DIALOG: Archive driver (password required) ════ */}
-      {deleteTarget && !isViewOnly && (
+      {deleteTarget && canManageFleetAccounts && (
         <ConfirmPasswordDialog
           title="Move driver to archive?"
           message={<>
@@ -721,7 +724,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
       )}
 
       {/* ════ DIALOG: New PIN (password required) ════ */}
-      {pinTarget && !isViewOnly && (
+      {pinTarget && canManageFleetAccounts && (
         <ConfirmPasswordDialog
           tone="primary"
           title="Set a new PIN?"
@@ -738,7 +741,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
       )}
 
       {/* ════ DIALOG: Archive truck (no password) ════ */}
-      {truckTarget && !isViewOnly && (
+      {truckTarget && canManageFleetAccounts && (
         <ConfirmPasswordDialog
           requirePassword={false}
           title="Move truck to archive?"
@@ -766,7 +769,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
 
 
       {/* ════ MODAL: Register Driver ════ */}
-      {showAddDriver && !isViewOnly && (
+      {showAddDriver && canManageFleetAccounts && (
         <RegisterDriverModal
           drivers={drivers}
           setDrivers={setDrivers}
@@ -776,7 +779,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
       )}
 
       {/* ════ MODAL: Register Truck ════ */}
-      {showAddTruck && !isViewOnly && (
+      {showAddTruck && canManageFleetAccounts && (
         <RegisterTruckModal
           trucks={trucks}
           setTrucks={setTrucks}

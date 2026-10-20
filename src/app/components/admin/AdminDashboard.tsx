@@ -16,6 +16,7 @@ import DashboardHome from './dashboard/DashboardHome';
 import AdminContentSkeleton from './AdminContentSkeleton';
 import { Toaster } from '../ui/sonner';
 import { ADMIN_NAVIGATION_EVENT, adminPageFromUrl, pushAdminNavigation } from '../../lib/adminNavigation';
+import { canDispatchAssignments, canManageFleetAccounts as mayManageFleetAccounts } from '../../lib/staffPermissions';
 import type { Assignment, CompletedTask, LocalDriver, LocalTruck, AppNotification, AdminRole, AdminActivityEntry, AdminActivityInput } from '../../data/assignmentTypes';
 
 type NavItem = 'Dashboard' | 'Monitor' | 'Deliveries' | 'Documents' | 'Reports' | 'Accounts';
@@ -94,6 +95,9 @@ export default function AdminDashboard({
   const [notificationTarget, setNotificationTarget] = useState<NotificationTarget | null>(targetFromUrl);
   const currentSearchInput = searchInput.page === activeNav ? searchInput.value : '';
   const currentSearchQuery = searchQuery.page === activeNav ? searchQuery.value : '';
+  const canManageFleetAccounts = mayManageFleetAccounts(adminRole);
+  // OPM can inspect operational pages, while assignment and document writes remain CSR-only.
+  const operationalReadOnly = isViewOnly || !canDispatchAssignments(adminRole);
 
   useEffect(() => {
     setSearchInput({ page: activeNav, value: '' });
@@ -189,9 +193,9 @@ export default function AdminDashboard({
               assignments={assignments} completed={completed} cancelled={cancelled}
               notifications={notifications} activityLog={activityLog}
               adminName={adminName}
-              isViewOnly={isViewOnly}
+              isViewOnly={operationalReadOnly}
               onNavigate={navigateToModule}
-              onDispatch={() => { setDispatchOnOpen(true); navigateToModule('Monitor'); }}
+              onDispatch={() => { if (!operationalReadOnly) { setDispatchOnOpen(true); navigateToModule('Monitor'); } }}
             />
           );
         }
@@ -222,7 +226,7 @@ export default function AdminDashboard({
             activityLog={activityLog}
             completed={completed}     setCompleted={setCompleted}
             cancelled={cancelled}     setCancelled={setCancelled}
-            isViewOnly={isViewOnly}
+            isViewOnly={operationalReadOnly}
             onLogActivity={onLogActivity}
             onServerChange={onServerChange}
             adminEmail={adminEmail}
@@ -239,7 +243,7 @@ export default function AdminDashboard({
           <DeliveryTable fullView assignments={assignments} completed={completed} cancelled={cancelled} trucks={trucks} search={currentSearchQuery} />
         );
       case 'Documents':
-        return <DocumentArchive assignments={assignments} completed={completed} cancelled={cancelled} setAssignments={setAssignments} isViewOnly={isViewOnly} search={currentSearchQuery} onSearchChange={changeSearch} notificationTarget={notificationTarget?.page === 'Documents' ? notificationTarget : null} onNotificationTargetHandled={clearNotificationTarget} />;
+        return <DocumentArchive assignments={assignments} completed={completed} cancelled={cancelled} setAssignments={setAssignments} isViewOnly={operationalReadOnly} search={currentSearchQuery} onSearchChange={changeSearch} notificationTarget={notificationTarget?.page === 'Documents' ? notificationTarget : null} onNotificationTargetHandled={clearNotificationTarget} />;
       case 'Reports':
         return <Reports assignments={assignments} completed={completed} cancelled={cancelled} trucks={trucks} />;
       case 'Accounts':
@@ -248,9 +252,8 @@ export default function AdminDashboard({
             drivers={drivers}   setDrivers={setDrivers}
             trucks={trucks}     setTrucks={setTrucks}
             assignments={assignments}
-            isViewOnly={isViewOnly}
+            canManageFleetAccounts={canManageFleetAccounts}
             onResetAll={onResetAll}
-            adminRole={adminRole}
             savingToDb={savingToDb}
             onLogActivity={onLogActivity}
             onServerChange={onServerChange}
@@ -287,7 +290,7 @@ export default function AdminDashboard({
         <span role="status" className="sr-only">{initialLoading ? 'Loading page content…' : ''}</span>
         <main aria-busy={contentLoading} className={`min-w-0 flex-1 p-4 sm:p-6 ${mobileMenuOpen || settingsOpen ? 'overflow-hidden' : 'overflow-y-auto'}`}>
           <div className={`max-w-[1600px] mx-auto space-y-4 sm:space-y-6 ${initialLoading ? '' : 'animate-in fade-in duration-300 motion-reduce:animate-none'}`}>
-            {initialLoading ? <AdminContentSkeleton page={activeNav} isViewOnly={isViewOnly} /> : renderContent()}
+            {initialLoading ? <AdminContentSkeleton page={activeNav} isViewOnly={operationalReadOnly} canManageFleetAccounts={canManageFleetAccounts} /> : renderContent()}
           </div>
         </main>
       </div>

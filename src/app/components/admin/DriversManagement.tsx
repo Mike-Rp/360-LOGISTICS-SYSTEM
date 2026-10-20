@@ -1909,6 +1909,7 @@ export default function DriversManagement({
   const handleNextStep = () => { if (validateStep1()) { setTaskErrors({}); setTaskStep(2); } };
 
   const handleAssignTask = () => {
+    if (isViewOnly) return;
     /* Same rules as the live check, re-run on submit (typed dates skip the calendar's limits) */
     const e = scheduleErrors({
       pickup: taskPickedUpDate, delivery: taskDate, pickupTime: taskPickupTime, eta: taskEta,
@@ -2317,13 +2318,15 @@ export default function DriversManagement({
         <div className="bg-white rounded-2xl border border-dashed border-border p-16 text-center">
           <ClipboardList className="w-14 h-14 mx-auto mb-4 text-muted-foreground/30" />
           <p className="font-semibold text-foreground mb-1">No Active Assignments</p>
-          <p className="text-sm text-muted-foreground mb-5">
-            Click <strong>Dispatch Truck</strong> to dispatch a driver and truck.
-          </p>
-          <button onClick={() => setShowAssignTask(true)}
-            className="px-5 py-2.5 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 transition-colors">
-            + Dispatch Truck
-          </button>
+          {!isViewOnly && <>
+            <p className="text-sm text-muted-foreground mb-5">
+              Click <strong>Dispatch Truck</strong> to dispatch a driver and truck.
+            </p>
+            <button onClick={() => setShowAssignTask(true)}
+              className="px-5 py-2.5 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 transition-colors">
+              + Dispatch Truck
+            </button>
+          </>}
         </div>
       ) : visibleAssignments.length === 0 ? (
         <div className="bg-white rounded-2xl border border-dashed border-border p-16 text-center">
@@ -2487,7 +2490,7 @@ export default function DriversManagement({
 
       {/* ════ MODALS ════ */}
 
-      {showAssignTask && (
+      {showAssignTask && !isViewOnly && (
         <ModalShell title="Dispatch Truck" onClose={resetAssignTask}>
           <StepProgress step={taskStep} />
 

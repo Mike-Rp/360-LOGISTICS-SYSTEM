@@ -740,6 +740,74 @@ export async function removeTeamMember(id: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+export interface CsrPasswordResetRequest {
+  id: string;
+  userId: string;
+  email: string;
+  requestedAt: string;
+  expiresAt: string | null;
+  status: 'pending' | 'approved' | 'rejected' | 'completed' | 'expired';
+}
+
+export async function requestCsrPasswordReset(email: string): Promise<void> {
+  const { error } = await supabase.rpc('request_csr_password_reset', { p_email: email.trim().toLowerCase() });
+  if (error) throw new Error('Could not submit the request. Please try again later.');
+}
+
+export async function listCsrPasswordResetRequests(): Promise<CsrPasswordResetRequest[]> {
+  const { data, error } = await supabase.from('csr_password_reset_requests')
+    .select('id,user_id,requested_email,requested_at,status,expires_at')
+    .order('requested_at', { ascending: false }).limit(50);
+  if (error) {
+    if (error.code === '42P01' || error.code === 'PGRST205') {
+      throw new Error('Password reset requests are unavailable. Check the REQ-006 database setup.');
+    }
+    throw new Error(error.message);
+  }
+  return (data ?? []).map((row) => ({
+    id: row.id, userId: row.user_id, email: row.requested_email,
+    requestedAt: row.requested_at, expiresAt: row.expires_at,
+    status: row.status as CsrPasswordResetRequest['status'],
+  }));
+}
+
+export async function reviewCsrPasswordReset(id: string, approve: boolean): Promise<void> {
+  const { error } = await supabase.rpc('review_csr_password_reset', { p_id: id, p_approve: approve });
+  if (error) throw new Error(error.message);
+}
+
+export async function createCsrPasswordResetLink(id: string): Promise<string> {
+  const { data, error } = await supabase.rpc('create_csr_password_reset_link', { p_id: id });
+  if (error) {
+    const code = ['request_not_approved', 'request_expired', 'member_not_eligible', 'reset_in_progress', 'not_authorized']
+      .find((candidate) => error.message.includes(candidate));
+    throw new Error(code ?? 'reset_link_failed');
+  }
+  if (typeof data !== 'string' || !/^[0-9a-f]{64}$/.test(data)) throw new Error('reset_link_failed');
+  return data;
+}
+
+export type CsrPasswordResetErrorCode =
+  | 'reset_link_invalid_or_expired' | 'password_too_short' | 'password_too_long'
+  | 'weak_password' | 'invalid_request' | 'reset_failed';
+
+const resetErrorCodes: CsrPasswordResetErrorCode[] = [
+  'reset_link_invalid_or_expired', 'password_too_short', 'password_too_long',
+  'weak_password', 'invalid_request', 'reset_failed',
+];
+
+export async function completeCsrPasswordReset(token: string, newPassword: string): Promise<void> {
+  const { data, error } = await supabase.functions.invoke('complete-csr-password-reset', {
+    body: { token, newPassword },
+  });
+  if (!error && data?.ok === true) return;
+  let code = data?.error;
+  if (error && 'context' in error && error.context instanceof Response) {
+    try { code = (await error.context.json())?.error; } catch { /* keep generic feedback */ }
+  }
+  throw new Error(resetErrorCodes.includes(code) ? code : 'reset_failed');
+}
+
 /* ════════════════════════════════════════════════════════════════════════════
    DRIVER
    ════════════════════════════════════════════════════════════════════════════ */

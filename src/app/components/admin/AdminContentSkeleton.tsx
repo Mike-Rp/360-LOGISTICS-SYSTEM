@@ -173,7 +173,7 @@ function ReportsSkeleton() {
 }
 
 /** Presentation only: real pages mount after the first request, including empty/error results. */
-export default function AdminContentSkeleton({ page, isViewOnly }: { page: Page; isViewOnly: boolean }) {
+export default function AdminContentSkeleton({ page, isViewOnly, canManageFleetAccounts }: { page: Page; isViewOnly: boolean; canManageFleetAccounts: boolean }) {
   let content;
   switch (page) {
     case 'Dashboard': content = <DashboardSkeleton isViewOnly={isViewOnly} />; break;
@@ -205,13 +205,14 @@ export default function AdminContentSkeleton({ page, isViewOnly }: { page: Page;
     </div>; break;
     case 'Accounts': content = <div className="space-y-6">
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-        <Heading title="Accounts" description="Register drivers with PINs and manage truck fleet" /><Filters labels={['Drivers', 'Trucks']} />
+        <Heading title="Drivers & Trucks" description={canManageFleetAccounts ? 'Manage driver accounts, availability, and truck records.' : 'View driver and truck availability for dispatch.'} /><Filters labels={['Drivers', 'Trucks']} />
       </div>
-      <div className="flex flex-wrap justify-between gap-3"><Filters labels={['Active', 'Archived']} />{!isViewOnly && <Skeleton className="h-10 w-40" />}</div>
+      <div className="flex flex-wrap justify-between gap-3"><Filters labels={['Active', 'Archived']} />{canManageFleetAccounts && <Skeleton className="h-10 w-40" />}</div>
       <RecordList layout="accounts" columns={[
-        { label: 'Driver', width: isViewOnly ? '32%' : '25%', avatar: true }, { label: 'Contact', width: '22%' },
-        { label: 'Availability', width: '24%', badge: true, lines: 1 }, { label: 'PIN', width: '22%', lines: 1 },
-        ...(!isViewOnly ? [{ label: 'Action', width: '7%', lines: 1 }] : []),
+        { label: 'Driver', width: canManageFleetAccounts ? '25%' : '28%', avatar: true }, { label: 'Contact', width: '22%' },
+        { label: 'Availability', width: '24%', badge: true, lines: 1 },
+        { label: canManageFleetAccounts ? 'PIN' : 'Current Truck', width: canManageFleetAccounts ? '22%' : '26%', lines: 1 },
+        ...(canManageFleetAccounts ? [{ label: 'Action', width: '7%', lines: 1 }] : []),
       ]} />
     </div>; break;
   }

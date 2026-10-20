@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import imgLogo from 'figma:asset/5e73e3c08e898d68c86717993c6e7442d03e9ac4.png';
 import { Eye, EyeOff, AlertCircle, Phone, Loader2, X } from 'lucide-react';
-import { signInStaff, signInDriver, LoginError } from '../../lib/db';
+import { signInStaff, signInDriver, LoginError, requestCsrPasswordReset } from '../../lib/db';
 import type { StaffSession } from '../../lib/db';
 import { getLastDriverLanguage, translateDriver } from '../driver/driverI18n';
 
@@ -18,7 +18,12 @@ const DISPATCH_TEL     = '09384033610';
 const DISPATCH_DISPLAY = '0938 403 3610';
 
 export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
-  const [view, setView] = useState<'driver' | 'admin'>('driver');
+  const [view, setView] = useState<'driver' | 'admin'>(() =>
+    new URLSearchParams(window.location.search).get('account') === 'staff' ? 'admin' : 'driver');
+  const [passwordFlow, setPasswordFlow] = useState<'login' | 'request'>('login');
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetMessage, setResetMessage] = useState('');
+  const [resetBusy, setResetBusy] = useState(false);
   const driverLanguage = getLastDriverLanguage();
   const tr = (key: Parameters<typeof translateDriver>[1]) => translateDriver(driverLanguage, key);
 
@@ -45,6 +50,16 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
   const [adminError,   setAdminError]   = useState('');
   const [adminFieldError, setAdminFieldError] = useState<{ field: 'email' | 'password'; msg: string } | null>(null);
   const [adminLoading, setAdminLoading] = useState(false);
+
+  const submitResetRequest = async () => {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(resetEmail.trim())) { setResetMessage('Enter a valid email address.'); return; }
+    setResetBusy(true); setResetMessage('');
+    try {
+      await requestCsrPasswordReset(resetEmail);
+      setResetMessage('If this account is eligible, a password reset request has been submitted for approval.');
+    } catch (error) { setResetMessage(error instanceof Error ? error.message : 'Could not submit the request.'); }
+    finally { setResetBusy(false); }
+  };
 
   /* Escape closes the PIN-help dialog. The listener is only attached while the dialog is
      open, and the cleanup removes it — otherwise every render would stack another one. */
@@ -166,7 +181,7 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
                 Replaces the old blue "Admin Login" / "← Back" footer buttons. The click
                 handlers carry over the exact same state resets those buttons did, so
                 switching tabs still clears the other form's fields and errors. */}
-            <div className="flex p-1.5 bg-[#f3f4f6] rounded-2xl">
+            {passwordFlow === 'login' && <div className="flex p-1.5 bg-[#f3f4f6] rounded-2xl">
               <button
                 type="button"
                 onClick={() => { setView('driver'); setDriverError(null); }}
@@ -189,10 +204,10 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
               >
                 Admin
               </button>
-            </div>
+            </div>}
 
             {/* ══ DRIVER LOGIN ══ */}
-            {view === 'driver' && (
+            {view === 'driver' && passwordFlow === 'login' && (
               <div className="space-y-5">
 
                 <div className="space-y-2.5">
@@ -283,7 +298,7 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
             )}
 
             {/* ══ ADMIN LOGIN ══ */}
-            {view === 'admin' && (
+            {view === 'admin' && passwordFlow === 'login' && (
               <div className="space-y-5">
 
                 <div className="space-y-2">
@@ -335,8 +350,20 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
                 >
                   {adminLoading ? <><Loader2 className="w-5 h-5 animate-spin" /> Signing in…</> : 'Log In'}
                 </button>
+                <button type="button" onClick={() => { setResetEmail(email); setResetMessage(''); setPasswordFlow('request'); }} className="block mx-auto text-sm text-primary underline underline-offset-2">Forgot password?</button>
               </div>
             )}
+
+            {passwordFlow === 'request' && <div className="space-y-4">
+              <h1 className="text-xl font-semibold">Forgot Password</h1>
+              <p className="text-sm text-muted-foreground">Enter your registered 360 Logistics login identifier. This request is for CSR accounts.</p>
+              <label className="block text-sm font-medium" htmlFor="reset-email">Email</label>
+              <input id="reset-email" type="email" autoComplete="email" value={resetEmail} onChange={(event) => setResetEmail(event.target.value)} className="w-full rounded-xl border px-4 py-3 text-base" />
+              <button type="button" disabled={resetBusy} onClick={submitResetRequest} className="w-full min-h-12 rounded-xl bg-primary text-white font-semibold disabled:opacity-50">Submit Request</button>
+              {resetMessage && <p role="status" className="text-sm">{resetMessage}</p>}
+              <button type="button" onClick={() => { setPasswordFlow('login'); setView('admin'); setResetMessage(''); }} className="text-sm text-primary">Back to Login</button>
+            </div>}
+
           </div>
 
         </div>

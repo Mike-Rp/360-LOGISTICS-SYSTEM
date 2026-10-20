@@ -216,7 +216,12 @@ export type AdminActivityType =
   | 'driver_archived'
   | 'truck_archived'
   | 'member_added'
-  | 'member_removed';
+  | 'member_removed'
+  | 'password_reset_requested'
+  | 'password_reset_approved'
+  | 'password_reset_link_generated'
+  | 'password_reset_rejected'
+  | 'password_changed';
 
 export interface AdminActivityEntry {
   id: string;

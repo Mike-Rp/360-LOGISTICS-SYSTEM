@@ -7,6 +7,8 @@ import type { StaffSession } from './lib/db';
 import AdminDashboard from './components/admin/AdminDashboard';
 import DriverInterface from './components/driver/DriverInterface';
 import LoginScreen from './components/auth/LoginScreen';
+import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
+import { canDispatchAssignments } from './lib/staffPermissions';
 import { ADMIN_PATHS, ADMIN_NAVIGATION_EVENT, adminPageFromUrl, startAdminNavigation, redirectToAdminLogin } from './lib/adminNavigation';
 import { pendingLocalRecordIds, confirmLocalRecordCreated } from './lib/recordOrdering';
 import type { Assignment, CompletedTask, LocalDriver, LocalTruck, AppNotification, AdminRole, AdminActivityEntry, AdminActivityInput } from './data/assignmentTypes';
@@ -181,6 +183,8 @@ export default function App() {
     let cancelled = false;
     (async () => {
       try {
+        // The one-time reset link is available without an authenticated session.
+        if (window.location.pathname === '/reset-password') return;
         const s = await restoreSession();
         if (cancelled || !s) return;
         if (s.kind === 'staff') await applySession(s.staff);
@@ -195,7 +199,7 @@ export default function App() {
   }, [applySession]);
 
   useEffect(() => {
-    if (restoring || view === 'driver') return;
+    if (restoring || view === 'driver' || window.location.pathname === '/reset-password') return;
     const restoreLocation = () => {
       if (!signedInRef.current) {
         redirectToAdminLogin();
@@ -266,7 +270,7 @@ export default function App() {
   useEffect(() => {
     if (!isMounted.current) { isMounted.current = true; return; }
     if (isPollUpdate.current) return;                              // ← skip poll updates
-    if (!signedInRef.current || adminRole === 'viewer' || adminRole === null) return;
+    if (!signedInRef.current || adminRole === null) return;
 
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
@@ -318,7 +322,7 @@ export default function App() {
 
   /* ── Admin real-time poll — refresh data every 12 s ── */
   useEffect(() => {
-    if (!signedIn || adminRole === 'viewer') return;
+    if (!signedIn) return;
     const id = setInterval(async () => {
       /* A local edit is mid-flight (debounced save pending, or the save itself
          still running) — local state is already more current than whatever this
@@ -416,8 +420,10 @@ export default function App() {
     setTimeout(() => { isPollUpdate.current = false; }, 200);
   }, []);
 
-  const isViewOnly   = adminRole === 'viewer';
+  const isViewOnly   = !canDispatchAssignments(adminRole);
   const isOperationManager = adminIsOm;
+
+  if (window.location.pathname === '/reset-password') return <ResetPasswordScreen />;
 
   /* ── Loading screen ── */
   if ((restoring || dataLoading) && !signedIn) {

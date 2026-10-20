@@ -716,14 +716,12 @@ restored to `can_write() OR is_opm()` at the row level, and a new trigger
 changing only the `status` column — OPM remains unrestricted. Written, not
 yet applied.
 
-**Frontend impact (not started — assigned to the frontend developer):**
+**Frontend impact (partially implemented):**
 Verified 2026-10-18 that the backend correctly enforces both directions —
 confirmed by reproducing each failure live, not just inferred:
-- Logged in as CSR: Register Driver, Register Truck, New PIN, and Archive
-  buttons are all still visible in Drivers & Trucks, and each one fails with
-  a raw `"Auto-save failed: ... violates row-level security policy"` toast
-  when used. These need to be hidden/disabled for any non-OPM account, and
-  ideally replaced with a clearer message than the raw RLS error.
+- Logged in as CSR before the frontend follow-up: Register Driver, Register
+  Truck, New PIN, and Archive buttons were visible in Drivers & Trucks, and
+  each failed with a raw RLS error when used. Resolved by the page change below.
 - Logged in as OPM: Approve/Reject buttons are still visible on pending
   documents (Dispatch/View Shipment document review), and fail the same way
   — `assignment_documents` RLS correctly refuses the write, since document
@@ -732,12 +730,18 @@ confirmed by reproducing each failure live, not just inferred:
 - The "invite" flow's role picker already had its Viewer option removed
   (`WorkspaceSettingsPanel.tsx`) as part of this requirement; CSR is the
   only creatable role now.
-- Driver-PIN display in the Accounts/Drivers screen (`PinCell`-equivalent,
-  currently shows "No PIN"/PIN value to CSR in the Drivers & Trucks list)
-  still needs to stop rendering for non-OPM accounts — `driver_pins_select`
-  already refuses CSR's read at the database level, so this is cosmetic
-  cleanup (whatever currently renders there should show nothing or a
-  placeholder for non-OPM) rather than a security gap.
+- Driver-PIN display previously showed "No PIN"/PIN value to CSR in the
+  Drivers & Trucks list. Resolved by the page change below;
+  `driver_pins_select` already refused CSR's read at the database level.
+
+**Drivers & Trucks frontend follow-up (2026-10-20):** The page now uses the
+session role to expose a single `canManageFleetAccounts` capability. Only OPM
+sees registration, PIN, and archive controls or dialogs. CSR/admin instead
+see a driver table with the active assignment's truck in place of PIN and no
+Action column; truck archive actions are also hidden. The loading skeleton
+follows the same capability. The existing `is_opm()` RLS policies and RPC
+checks remain the server-side enforcement. The document-review visibility
+follow-up above remains separate and is not addressed by this page change.
 
 **CSR Dispatch synchronization discovered (2026-10-19; further backend work not approved):**
 - `DriversManagement.handleAssignTask()` appends the assignment locally and
@@ -794,5 +798,104 @@ applied to development. The separate CSR Dispatch transaction described
 above has no SQL yet.
 
 **Approval:** Approved — local development (2026-10-18).
+
+---
+
+## [REQ-006] CSR password-reset requests with OPM review
+
+**Status:** Backend applied; frontend wired. Live CSR reset test pending.
+
+**Area:** Supabase Auth / Profiles / Workspace Settings / Login
+
+**Approval:** The user reported on 2026-10-20 that both REQ-006 migrations were applied, the SQL suite passed 32/32 checks, and the `complete-csr-password-reset` Edge Function was deployed. The frontend is wired to those existing services.
+
+**Requested change:** CSR submits a reset request, OPM approves or rejects it,
+and only an approved CSR can set their own new password — through a one-time
+reset link that OPM copies and sends manually. CSR login identifiers look like
+email addresses but may have no real inbox, so **no email is involved**. Keep
+requests and audit events persistent. OPM never sees or sets the password.
+
+**Final architecture (revised 2026-10-20):**
+
+```text
+CSR Forgot Password → request 'pending'
+→ OPM approves (Workspace Settings) → 'approved', valid 45 min from approval
+→ OPM clicks Copy Reset Link → fresh one-time token; earlier link stops working
+→ OPM sends ${origin}/reset-password?token=… to the CSR
+→ CSR opens it and chooses a new password
+→ Edge Function complete-csr-password-reset → 'completed'; link unusable
+```
+
+*Database* — `20261020000002_csr_password_reset_requests.sql` (applied) created
+the table, the generic anonymous request RPC, OPM review, 45-minute approval,
+RLS and audit events. `20261020000003_csr_password_reset_link_flow.sql` (reported applied)
+revises it:
+- narrows the existing deferred trigger `enforce_csr_password_reset_at_commit`
+  on `auth.users`: its function no longer accepts approvals and instead always
+  refuses (`csr_password_reset_requires_opm_link`) an **active CSR's** password
+  change made from a Supabase recovery / magic-link / OTP session, so
+  Supabase's own reset email cannot bypass OPM. Allowed: the Copy Reset Link
+  Admin API path, OPM/admin/service-role Admin API sets, a CSR signed in with
+  their current password, other staff, drivers, sign-in. Nothing else on
+  `auth.users` is touched;
+- adds `reset_token_hash` (SHA-256 hex only — the raw token is never stored),
+  `reset_token_created_at`, `reset_token_claimed_at`; "used at" is
+  `completed_at` and link expiry is the request's `expires_at`;
+- the hash and claim columns are not readable through the API (column grants);
+- `create_csr_password_reset_link(request_id)` — OPM only; approved,
+  unexpired, eligible active CSR; returns the raw token once, stores its hash,
+  replaces any previous link, never extends the 45-minute window, refuses
+  (`reset_in_progress`) for 5 minutes while a link is being used;
+- `review_csr_password_reset` can now also reject an **approved** request,
+  which revokes its link; expiring a request wipes its token;
+- `claim_csr_password_reset` / `release_csr_password_reset_claim` /
+  `finish_csr_password_reset` — service_role only, used by the Edge Function.
+
+*Edge Function* — `supabase/functions/complete-csr-password-reset/`
+(`index.ts` wiring, `logic.ts` rules). Receives `{ token, newPassword }`,
+validates (6–72 bytes, matching `create_team_member` and Auth's minimum),
+hashes the token, claims it atomically (one caller wins; replays and
+parallel requests get `reset_link_invalid_or_expired`), changes the password
+with the Auth Admin API `updateUserById` (which also signs the CSR out
+everywhere), then completes the request and logs `password_changed`. If Auth
+refuses the password (4xx) the claim is released so the CSR can try another
+password; if the result is unknown (network/5xx) the link stays used and OPM
+copies a new one. The service-role key exists only inside the function.
+
+*Statuses for Workspace Settings:* Pending, Approved (show **Copy Reset Link**;
+`reset_token_created_at` tells whether a link was already copied), Rejected,
+Completed, Expired (an approved request past `expires_at` displays as
+Expired; it is stored as `expired` the next time that CSR submits a request).
+There is no Resend concept and no recovery email, `resetPasswordForEmail`,
+redirect allow-list entry or recovery session in this workflow — and a CSR
+password change from such a session is actively refused (see above).
+
+*Activity log:* `password_reset_requested`, `password_reset_approved`,
+`password_reset_link_generated` (one per Copy click — kept, since each click
+creates a new valid link), `password_reset_rejected`, `password_changed`.
+Never the token, hash, password or keys.
+
+*Tests:* `supabase/tests/req006_csr_password_reset.test.sql` (32 checks, rolls
+itself back) and `node --test supabase/functions/complete-csr-password-reset/logic.test.cjs`
+(11 tests).
+
+**Verification still required:** A live end-to-end reset with a designated test
+CSR account. The frontend now uses Copy Reset Link and `/reset-password`; the
+old recovery-email helpers were removed. The SQL suite and Edge Function health
+were reported as passed by the user, not rerun by Codex against the shared project.
+
+**Current local connection:** The user confirmed on 2026-10-20 that localhost
+connects to a production/shared Supabase project. Codex must not apply SQL or
+exercise the reset flow there. The user applies SQL manually in the SQL Editor.
+The frontend no longer has a development-only feature gate, because the user
+reported the backend as ready and requested the changes be pushed. Backend RLS
+and the Edge Function remain the security boundaries.
+
+**Existing onboarding limitation:** The separate Add Team Member flow still
+asks OPM to set an initial CSR password and displays it once. This reset work
+does not expose a reset password to OPM, but meeting the broader goal that OPM
+never sets any CSR password requires converting member creation to an Auth
+invitation where the CSR chooses the initial password. Keep that work in this
+entry rather than adding a duplicate requirement.
 
 ---

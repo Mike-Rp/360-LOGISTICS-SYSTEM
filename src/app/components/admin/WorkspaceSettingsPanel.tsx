@@ -4,7 +4,8 @@ import {
   LogIn, CheckCircle, XCircle, FileCheck, FileX, UserX, UserMinus,
   RefreshCw, Shield, Eye, EyeOff, AlertTriangle, Mail, Pencil, Archive,
 } from 'lucide-react';
-import { listTeamMembers, createTeamMember, removeTeamMember } from '../../lib/db';
+import { listTeamMembers, createTeamMember, removeTeamMember, listCsrPasswordResetRequests, reviewCsrPasswordReset, createCsrPasswordResetLink } from '../../lib/db';
+import type { CsrPasswordResetRequest } from '../../lib/db';
 import type { AdminActivityEntry, AdminActivityType, AdminActivityInput, TeamMember } from '../../data/assignmentTypes';
 
 /* ── Activity log helpers — moved here from SettingsPanel.tsx, extended for member events ── */
@@ -21,6 +22,11 @@ const ACT_CONFIG: Record<AdminActivityType, { label: string; icon: React.Element
   driver_deleted:      { label: 'Driver Removed', icon: UserX,        color: 'text-orange-500' },
   member_added:        { label: 'Member Added',   icon: UserPlus,     color: 'text-blue-500'   },
   member_removed:      { label: 'Member Removed', icon: UserMinus,    color: 'text-red-500'    },
+  password_reset_requested: { label: 'Password Reset Requested', icon: Mail, color: 'text-amber-600' },
+  password_reset_approved:  { label: 'Password Reset Approved', icon: CheckCircle, color: 'text-green-600' },
+  password_reset_link_generated: { label: 'Password Reset Link Generated', icon: ClipboardList, color: 'text-blue-600' },
+  password_reset_rejected:  { label: 'Password Reset Rejected', icon: XCircle, color: 'text-red-600' },
+  password_changed:         { label: 'Password Changed', icon: Shield, color: 'text-blue-600' },
 };
 
 function fmtTs(ts: string): string {
@@ -45,6 +51,11 @@ function getDesc(e: AdminActivityEntry): string {
     case 'truck_archived':       return `Moved truck ${e.truckPlate ?? '—'} to archive`;
     case 'member_added':         return `Added ${e.memberName ?? e.memberEmail ?? 'a member'} as ${e.adminRole ?? 'a team member'}`;
     case 'member_removed':       return `Removed ${e.memberName ?? e.memberEmail ?? 'a member'}`;
+    case 'password_reset_requested': return `Reset requested for ${e.memberName ?? e.memberEmail ?? 'a CSR member'}`;
+    case 'password_reset_approved': return `Approved reset request for ${e.memberName ?? e.memberEmail ?? 'a CSR member'}`;
+    case 'password_reset_link_generated': return `Generated reset link for ${e.memberName ?? e.memberEmail ?? 'a CSR member'}`;
+    case 'password_reset_rejected': return `Rejected reset request for ${e.memberName ?? e.memberEmail ?? 'a CSR member'}`;
+    case 'password_changed': return `Password changed by ${e.memberName ?? e.memberEmail ?? 'a CSR member'}`;
   }
 }
 
@@ -267,6 +278,13 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
   const [removeTarget, setRemoveTarget] = useState<TeamMember | null>(null);
   const [removing,    setRemoving]    = useState(false);
   const [logSearch,   setLogSearch]   = useState('');
+  const [resetRequests, setResetRequests] = useState<CsrPasswordResetRequest[]>([]);
+  const [resetBusyId, setResetBusyId] = useState<string | null>(null);
+  const [resetError, setResetError] = useState('');
+  const [resetNotice, setResetNotice] = useState('');
+  const [resetClock, setResetClock] = useState(Date.now());
+  const [logPage, setLogPage] = useState(1);
+  const logPageSize = 10;
 
   const fetchMembers = async () => {
     setLoading(true);
@@ -282,6 +300,74 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
   };
 
   useEffect(() => { if (open) fetchMembers(); }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    const refresh = () => {
+      setResetClock(Date.now());
+      listCsrPasswordResetRequests().then((requests) => {
+        if (!cancelled) { setResetRequests(requests); setResetError(''); }
+      }).catch((error: unknown) => { if (!cancelled) setResetError(error instanceof Error ? error.message : 'Could not load password reset requests.'); });
+    };
+    refresh();
+    window.addEventListener('focus', refresh);
+    const interval = window.setInterval(refresh, 30_000);
+    return () => { cancelled = true; window.removeEventListener('focus', refresh); window.clearInterval(interval); };
+  }, [open]);
+
+  const handleResetReview = async (request: CsrPasswordResetRequest, approve: boolean) => {
+    setResetBusyId(request.id);
+    setResetError('');
+    setResetNotice('');
+    try {
+      if (request.status !== 'pending') return;
+      await reviewCsrPasswordReset(request.id, approve);
+      setResetRequests(await listCsrPasswordResetRequests());
+      setResetNotice(approve ? 'Request approved. Copy the reset link to share it with the CSR.' : 'Request rejected.');
+    } catch (error) {
+      setResetError(error instanceof Error ? error.message : 'Could not review this request.');
+    } finally {
+      setResetBusyId(null);
+    }
+  };
+
+  const handleCopyResetLink = async (request: CsrPasswordResetRequest) => {
+    if (request.status !== 'approved' || !request.expiresAt || new Date(request.expiresAt).getTime() <= Date.now()) return;
+    setResetBusyId(request.id);
+    setResetError('');
+    setResetNotice('');
+    try {
+      const token = await createCsrPasswordResetLink(request.id);
+      const link = `${window.location.origin}/reset-password?token=${encodeURIComponent(token)}`;
+      // The RPC is asynchronous; some browsers may expire clipboard permission while it runs.
+      try {
+        await navigator.clipboard.writeText(link);
+      } catch {
+        const input = document.createElement('textarea');
+        input.value = link;
+        input.style.position = 'fixed';
+        input.style.opacity = '0';
+        document.body.appendChild(input);
+        input.select();
+        const copied = document.execCommand('copy');
+        input.remove();
+        if (!copied) throw new Error('clipboard_unavailable');
+      }
+      setResetNotice('Reset link copied to clipboard. Share this latest link with the CSR.');
+    } catch (reason) {
+      const code = reason instanceof Error ? reason.message : '';
+      const messages: Record<string, string> = {
+        request_not_approved: 'This request is not approved.',
+        request_expired: 'This reset approval has expired. The CSR must submit a new request.',
+        member_not_eligible: 'This CSR account is no longer eligible for password reset.',
+        reset_in_progress: 'A reset link is already being generated. Try again shortly.',
+        not_authorized: 'Only an OPM administrator can copy reset links.',
+      };
+      setResetError(messages[code] ?? 'Could not copy the reset link. Click again to generate a new link.');
+    } finally {
+      setResetBusyId(null);
+    }
+  };
 
   /* ── Close on Esc ── */
   useEffect(() => {
@@ -322,11 +408,17 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
 
   const filteredLog = logSearch.trim()
     ? activityLog.filter((e) =>
+        ACT_CONFIG[e.type].label.toLowerCase().includes(logSearch.toLowerCase()) ||
         getDesc(e).toLowerCase().includes(logSearch.toLowerCase()) ||
         (e.adminEmail ?? '').toLowerCase().includes(logSearch.toLowerCase()) ||
-        (e.memberEmail ?? '').toLowerCase().includes(logSearch.toLowerCase())
+        (e.memberEmail ?? '').toLowerCase().includes(logSearch.toLowerCase()) ||
+        (e.memberName ?? '').toLowerCase().includes(logSearch.toLowerCase())
       )
     : activityLog;
+  const logPageCount = Math.max(1, Math.ceil(filteredLog.length / logPageSize));
+  useEffect(() => { setLogPage((page) => Math.min(page, logPageCount)); }, [logPageCount]);
+  const currentLogPage = Math.min(logPage, logPageCount);
+  const visibleLog = filteredLog.slice((currentLogPage - 1) * logPageSize, currentLogPage * logPageSize);
 
   if (!open) return null;
 
@@ -334,18 +426,19 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
     <>
       <div className="fixed inset-0 z-40 bg-black/40 backdrop-blur-[2px]" onClick={onClose} />
 
-      <div className="fixed top-0 right-0 h-full z-50 w-full sm:w-[560px] bg-white shadow-2xl flex flex-col animate-in slide-in-from-right duration-250">
+      <div role="dialog" aria-modal="true" aria-labelledby="workspace-settings-title" className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 pointer-events-none">
+      <div className="pointer-events-auto flex h-[100dvh] w-full flex-col overflow-hidden bg-white shadow-2xl sm:h-auto sm:max-h-[88vh] sm:w-[min(940px,calc(100vw-32px))] sm:rounded-2xl">
         <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-gradient-to-r from-[#0d9488]/8 to-transparent flex-shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-[#0d9488]/15 flex items-center justify-center">
               <Users className="w-4 h-4 text-[#0d9488]" />
             </div>
             <div>
-              <h2 className="text-base font-semibold text-foreground leading-tight">Workspace Settings</h2>
+              <h2 id="workspace-settings-title" className="text-base font-semibold text-foreground leading-tight">Workspace Settings</h2>
               <p className="text-xs text-muted-foreground">Manage team members and activity</p>
             </div>
           </div>
-          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground transition-colors">
+          <button type="button" aria-label="Close Workspace Settings" onClick={onClose} className="w-10 h-10 flex items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground transition-colors">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -415,6 +508,34 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
             )}
           </section>
 
+          {/* ── Password Reset Requests ── */}
+          <section>
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+              <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Password Reset Requests</h3>
+              {!resetError && <span className="text-xs text-muted-foreground">{resetRequests.filter((request) => request.status === 'pending').length} pending</span>}
+            </div>
+            {resetError && <p role="status" className="text-sm text-muted-foreground mb-2">{resetError}</p>}
+            {resetNotice && <p role="status" className="text-sm text-green-700 mb-2">{resetNotice}</p>}
+            {!resetError && (resetRequests.length === 0 ? <p className="text-sm text-muted-foreground">No password reset requests.</p> :
+              <div className="space-y-2">
+                {resetRequests.map((request) => {
+                  const expired = request.status === 'approved' && (!request.expiresAt || new Date(request.expiresAt).getTime() <= resetClock);
+                  const effectiveStatus = expired ? 'expired' : request.status;
+                  return <div key={request.id} className="flex flex-col gap-3 rounded-xl border border-border p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold">{members.find((member) => member.id === request.userId)?.name ?? request.email}</p>
+                    <p className="text-xs text-muted-foreground break-all">{request.email}</p>
+                    <p className="text-xs text-muted-foreground">Requested {fmtTs(request.requestedAt)} · <span className="capitalize">{effectiveStatus}</span></p>
+                  </div>
+                  {(effectiveStatus === 'pending' || effectiveStatus === 'approved') && <div className="flex gap-2 sm:shrink-0">
+                    {request.status === 'pending' && <button type="button" disabled={resetBusyId === request.id} onClick={() => handleResetReview(request, false)} className="min-h-10 flex-1 rounded-lg border px-3 text-sm sm:flex-none">Reject</button>}
+                    {request.status === 'pending' && <button type="button" disabled={resetBusyId === request.id} onClick={() => handleResetReview(request, true)} className="min-h-10 flex-1 rounded-lg bg-primary px-3 text-sm font-medium text-white disabled:opacity-50 sm:flex-none">Approve</button>}
+                    {effectiveStatus === 'approved' && <button type="button" disabled={resetBusyId === request.id} onClick={() => handleCopyResetLink(request)} className="min-h-10 flex-1 rounded-lg border border-primary px-3 text-sm font-medium text-primary disabled:opacity-50 sm:flex-none">{resetBusyId === request.id ? 'Copying…' : 'Copy Reset Link'}</button>}
+                  </div>}
+                </div>; })}
+              </div>)}
+          </section>
+
           {/* ── Activity Log ── */}
           <section>
             <div className="flex items-center gap-3 mb-4">
@@ -427,12 +548,12 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
               <input
                 type="text"
                 value={logSearch}
-                onChange={(e) => setLogSearch(e.target.value)}
+                onChange={(e) => { setLogSearch(e.target.value); setLogPage(1); }}
                 placeholder="Search actions, members, emails…"
                 className="w-full pl-9 pr-8 py-2 bg-[#f9fafb] border border-border rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-primary/30"
               />
               {logSearch && (
-                <button onClick={() => setLogSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                <button onClick={() => { setLogSearch(''); setLogPage(1); }} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
                   <X className="w-3 h-3" />
                 </button>
               )}
@@ -447,7 +568,7 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
               </div>
             ) : (
               <div className="space-y-1">
-                {filteredLog.map((entry) => {
+                {visibleLog.map((entry) => {
                   const cfg  = ACT_CONFIG[entry.type];
                   const Icon = cfg.icon;
                   return (
@@ -469,9 +590,14 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
                 })}
               </div>
             )}
-            <p className="text-[12px] text-muted-foreground text-center pt-3 border-t border-border/60 mt-3">
-              {filteredLog.length} of {activityLog.length} entries
-            </p>
+            {filteredLog.length > 0 && <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-3 mt-3 text-xs text-muted-foreground">
+              <span>Showing {(currentLogPage - 1) * logPageSize + 1}–{Math.min(currentLogPage * logPageSize, filteredLog.length)} of {filteredLog.length} activities</span>
+              <div className="flex items-center gap-1">
+                <button type="button" disabled={currentLogPage === 1} onClick={() => setLogPage((page) => page - 1)} className="rounded-md border px-2 py-1 disabled:opacity-40">Previous</button>
+                <span className="px-2">{currentLogPage} / {logPageCount}</span>
+                <button type="button" disabled={currentLogPage === logPageCount} onClick={() => setLogPage((page) => page + 1)} className="rounded-md border px-2 py-1 disabled:opacity-40">Next</button>
+              </div>
+            </div>}
           </section>
         </div>
 
@@ -480,6 +606,7 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
             Team members get real individual logins. Removing one revokes access immediately.
           </p>
         </div>
+      </div>
       </div>
 
       {showAddMember && (
