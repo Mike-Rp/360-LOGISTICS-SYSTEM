@@ -229,6 +229,7 @@ export default function DeliveryTable({
   const [tab, setTab]       = useState<'active' | 'completed' | 'cancelled'>(() => new URLSearchParams(window.location.search).get('tab') === 'completed' ? 'completed' : 'active');
   const [period, setPeriod] = useState<FilterPeriod>('all');
   const [remarksAssignment, setRemarksAssignment] = useState<Assignment | null>(null);
+  const [cancelledDetails, setCancelledDetails] = useState<Assignment | null>(null);
   const [summaryId, setSummaryId] = useState<string | null>(null);
   const [linkedCompletedId, setLinkedCompletedId] = useState<string | null>(() => {
     const params = new URLSearchParams(window.location.search);
@@ -435,7 +436,11 @@ export default function DeliveryTable({
                           {a.remarks && <RemarksPreview remarks={a.remarks} onOpen={() => setRemarksAssignment(a)} />}
                         </td>
                         <td className="px-2 py-3 font-medium text-foreground break-words"><Highlight text={a.company} query={search} /></td>
-                        <td className="px-2 py-3"><AssignmentStatusBadge assignment={a} /></td>
+                        <td className="px-2 py-3">
+                          <AssignmentStatusBadge assignment={a} />
+                          {tab === 'cancelled' && <button type="button" onClick={() => setCancelledDetails(a)}
+                            className="mt-1 block text-xs font-medium text-slate-700 underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-500">Cancellation details</button>}
+                        </td>
                         <td className="px-2 py-3 min-w-0 break-words">
                           <p className="font-medium text-foreground">{a.deliveryDate}</p>
                           <DeliveryTimingBadge timing={getDeliveryTimingStatus(a, timingNow)} />
@@ -455,6 +460,8 @@ export default function DeliveryTable({
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <span className="min-w-0 font-semibold text-foreground break-words"><Highlight text={a.truckPlate} query={search} /></span>
                       <AssignmentStatusBadge assignment={a} />
+                      {tab === 'cancelled' && <button type="button" onClick={() => setCancelledDetails(a)}
+                        className="text-xs font-medium text-slate-700 underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-500">Cancellation details</button>}
                     </div>
                     <TruckMetadata assignment={a} truck={truckFor(a)} query={search} />
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-2 min-w-0 text-sm">
@@ -599,6 +606,20 @@ export default function DeliveryTable({
           <DialogFooter>
             <DialogClose className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/30">Close</DialogClose>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={cancelledDetails !== null} onOpenChange={(open) => { if (!open) setCancelledDetails(null); }}>
+        <DialogContent className="w-[calc(100%-2rem)] max-w-lg min-w-0 p-4 sm:p-6">
+          <DialogHeader className="pr-6 text-left">
+            <DialogTitle>Cancellation details</DialogTitle>
+            <DialogDescription>{cancelledDetails?.id}</DialogDescription>
+          </DialogHeader>
+          <dl className="space-y-3 text-sm">
+            <div><dt className="text-muted-foreground">Cancelled by</dt><dd className="font-medium">{cancelledDetails?.cancelledBy ?? 'Not recorded'}</dd></div>
+            <div><dt className="text-muted-foreground">Cancelled at</dt><dd className="font-medium">{cancelledDetails?.cancelledAt ? new Date(cancelledDetails.cancelledAt).toLocaleString() : 'Not recorded'}</dd></div>
+            <div><dt className="text-muted-foreground">Cancellation reason</dt><dd className="whitespace-pre-wrap break-words font-medium">{cancelledDetails?.cancelReason ?? 'Not recorded'}</dd></div>
+          </dl>
+          <DialogFooter><DialogClose className="min-h-10 rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-muted/30">Close</DialogClose></DialogFooter>
         </DialogContent>
       </Dialog>
       <CompletedDeliverySummary assignment={summaryAssignment} truck={summaryAssignment ? truckFor(summaryAssignment) : undefined}

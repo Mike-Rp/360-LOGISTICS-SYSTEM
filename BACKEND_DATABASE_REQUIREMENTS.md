@@ -397,6 +397,22 @@ five transitions were exercised later through the Driver UI as recorded below.
 
 **Status:** In Progress
 
+**2026-10-21 local follow-up, not applied to the connected shared/production
+Supabase project:** `supabase/migrations/20261021000000_csr_cancel_loading_cutoff.sql`
+is prepared for manual review. The existing one- and two-argument
+`cancel_assignment` overloads remain live until this migration is applied;
+both are insufficient for the new rule. The migration drops those overloads,
+adds `cancel_assignment(p_id, p_reason, p_password)`, verifies the current
+authenticated staff member's Supabase Auth password on every call, locks the
+assignment row, rejects it when Loading has finished or a later stage is
+recorded, and reuses `assignments.cancel_reason` plus the activity log for
+durable reason/actor/time. It also updates the cancellation guard so a direct
+table update cannot bypass the verified RPC and cannot erase completion
+evidence. Existing admin/CSR `can_write()` capability is retained; OPM remains
+excluded. The frontend calls only the new overload and therefore fails closed
+until the migration is reviewed and applied. Do not use the connected project
+for cancellation tests without a designated safe test assignment.
+
 **Area:** Dispatch / Driver App
 
 **Requested change:**
@@ -415,7 +431,8 @@ unreachable under the old policy.
 
 **Applied and verified (2026-10-18):**
 `supabase/migrations/20261018000002_cancel_reason_and_driver_notice.sql`.
-Applied in the Supabase SQL editor against the development project.
+Previously applied in the Supabase SQL editor against the connected project,
+which must now be treated as shared/production data.
 `assignments.cancel_reason` and `cancel_acknowledged_at` confirmed present
 (NULL on existing rows). Verified from the running app: the existing admin
 Cancel button (still calling the 1-argument path) cancelled a test assignment

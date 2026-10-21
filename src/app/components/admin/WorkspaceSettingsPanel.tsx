@@ -13,7 +13,7 @@ const ACT_CONFIG: Record<AdminActivityType, { label: string; icon: React.Element
   login:               { label: 'Admin Login',    icon: LogIn,        color: 'text-blue-500'   },
   task_assigned:       { label: 'Task Assigned',  icon: ClipboardList, color: 'text-purple-500' },
   task_completed:      { label: 'Task Completed', icon: CheckCircle,  color: 'text-green-500'  },
-  task_cancelled:      { label: 'Task Cancelled', icon: XCircle,      color: 'text-gray-500'   },
+  task_cancelled:      { label: 'Assignment Cancelled', icon: XCircle, color: 'text-gray-500' },
   task_edited:         { label: 'Task Edited',    icon: Pencil,       color: 'text-amber-500'  },
   driver_archived:     { label: 'Driver Archived', icon: Archive,     color: 'text-orange-500' },
   truck_archived:      { label: 'Truck Archived',  icon: Archive,     color: 'text-orange-500' },
@@ -42,7 +42,7 @@ function getDesc(e: AdminActivityEntry): string {
     case 'login':                return `${e.adminEmail ?? 'Admin'} signed in`;
     case 'task_assigned':        return `Assigned to ${e.driverName ?? '—'} · ${e.destination ?? ''}`;
     case 'task_completed':       return `Completed by ${e.driverName ?? '—'} · ${e.destination ?? ''}`;
-    case 'task_cancelled':       return `Cancelled — ${e.driverName ?? '—'}`;
+    case 'task_cancelled':       return `Assignment ${e.assignmentId ?? '—'} cancelled by ${e.memberName ?? e.adminEmail ?? 'staff'}${e.reason ? ` · Reason: ${e.reason}` : ''}`;
     case 'task_edited':          return `Edited ${e.assignmentId ?? 'delivery'} (${Object.keys(e.changes ?? {}).length} field${Object.keys(e.changes ?? {}).length === 1 ? '' : 's'}) — ${e.reason ?? 'no reason'}`;
     case 'doc_approved':         return `Approved "${e.docType ?? 'document'}" for ${e.driverName ?? '—'}`;
     case 'doc_rejected':         return `Rejected "${e.docType ?? 'document'}" for ${e.driverName ?? '—'}`;

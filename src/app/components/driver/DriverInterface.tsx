@@ -1,9 +1,9 @@
-import { lazy, Suspense, useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import {
   LogOut, Package, CheckCircle2, XCircle, Camera, WifiOff,
   Clock, Truck, AlertTriangle, FileText, Building2,
   ChevronRight, ChevronLeft, Lock, ArrowDown,
-  RefreshCw, RotateCcw, X, Phone, Bell, Menu, History, Languages, MapPin, Navigation,
+  RefreshCw, RotateCcw, X, Phone, Bell, Menu, History, Languages, MapPin,
 } from 'lucide-react';
 import type { Assignment, CompletedTask, TaskStatus, StatusPhoto, DocStatus } from '../../data/assignmentTypes';
 import { taskStatusConfig } from '../../data/assignmentTypes';
@@ -14,10 +14,7 @@ import { getDeliveryTimingStatus, getPickupTimingStatus, type DeliveryTimingStat
 import { assignmentDisplayStatusConfig, getAssignmentDisplayStatus, getAssignmentDocumentProgress, getDocumentAgingState } from '../../lib/assignmentWorkflow';
 import { DriverLanguageProvider, useDriverI18n, type DriverLanguage } from './driverI18n';
 import { destinationAreaEnabled, getAssignmentRoute, getDeliveryLocation } from '../../data/assignmentRoute';
-import { coordinatePair } from '../../lib/assignmentLocation';
-import type { RouteSnapshot } from '../shared/MapboxMapPanel';
-
-const MapboxMapPanel = lazy(() => import('../shared/MapboxMapPanel'));
+import { checkPhoto, loadVehicleDetector, type PhotoCheckFailure } from '../../lib/photoQuality';
 
 /* ── Types ── */
 interface CompletedHistoryItem {
@@ -422,41 +419,16 @@ function OperationalProgress({ phase }: { phase: DriverPhase }) {
   </section>;
 }
 
-type RouteStop = 'pickup' | 'delivery';
-type RouteSession = { assignmentId: string; stop: RouteStop; destinationKey: string; snapshot?: RouteSnapshot };
-
-function TaskRouteCard({ assignment, activeRoute, onStartRoute, onRouteSnapshot, onStopRoute }: {
-  assignment: Assignment;
-  activeRoute: RouteSession | null;
-  onStartRoute: (session: RouteSession) => void;
-  onRouteSnapshot: (session: RouteSession) => void;
-  onStopRoute: () => void;
-}) {
+function TaskLocationsCard({ assignment }: { assignment: Assignment }) {
   const { t } = useDriverI18n();
-  const [viewingStop, setViewingStop] = useState<number | null>(null);
-  const mapboxAvailable = !!(import.meta.env.VITE_MAPBOX_ACCESS_TOKEN ?? '').trim();
   const origin = assignment.destination.includes('→') ? assignment.destination.split('→')[0]?.trim() : '';
-  const pickupPoint = coordinatePair(assignment.pickupLatitude, assignment.pickupLongitude);
-  const deliveryPoint = coordinatePair(assignment.deliveryLatitude, assignment.deliveryLongitude);
   const stops = [
-    { title: t('home.pickupAt'), location: assignment.pickupLocation, mapLocation: assignment.pickupLocation,
-      point: pickupPoint, area: origin, action: t('task.navigatePickup') },
-    // A legacy destination without the route separator could be only a city.
+    { title: t('home.pickupAt'), location: assignment.pickupLocation, area: origin },
     { title: t('home.deliverTo'), location: assignment.deliveryLocation || getDeliveryLocation(assignment),
-      mapLocation: assignment.deliveryLocation || (assignment.destination.includes('→') ? getDeliveryLocation(assignment) : ''),
-      point: deliveryPoint, area: assignment.destinationArea, action: t('task.navigateDelivery') },
+      area: assignment.destinationArea },
   ];
-  const routeKeys = stops.map((stop) => `${stop.mapLocation}|${stop.point?.latitude ?? ''}|${stop.point?.longitude ?? ''}`);
-  const currentRoute = activeRoute?.assignmentId === assignment.id
-    && activeRoute.destinationKey === routeKeys[activeRoute.stop === 'pickup' ? 0 : 1] ? activeRoute : null;
-  const selectedStop = viewingStop === 0 ? 'pickup' : 'delivery';
-  const selectedSession: Omit<RouteSession, 'snapshot'> | null = viewingStop === null ? null : {
-    assignmentId: assignment.id, stop: selectedStop, destinationKey: routeKeys[viewingStop],
-  };
   return <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm sm:p-5" aria-label={t('task.route')}>
-    {stops.map((stop, index) => {
-      const canNavigate = mapboxAvailable && (!!stop.point || !!stop.mapLocation.trim());
-      return <div key={stop.title}>
+    {stops.map((stop, index) => <div key={stop.title}>
       {index > 0 && <div className="my-3 ml-5 flex h-7 items-center border-l-2 border-dashed border-gray-300 pl-3">
         <ArrowDown className="h-5 w-5 text-gray-500" aria-hidden="true" />
       </div>}
@@ -467,47 +439,9 @@ function TaskRouteCard({ assignment, activeRoute, onStartRoute, onRouteSnapshot,
           <p className="mt-1 break-words text-lg font-bold leading-snug text-gray-900">{stop.location || '—'}</p>
           {stop.area && !stop.location.toLowerCase().includes(stop.area.toLowerCase()) &&
             <p className="mt-0.5 break-words text-sm leading-snug text-gray-600">{stop.area}</p>}
-          <button type="button" disabled={!canNavigate}
-            onClick={() => setViewingStop(index)}
-            className="mt-2 inline-flex min-h-11 items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm font-bold text-green-800 hover:bg-green-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-green-700 disabled:cursor-not-allowed disabled:text-gray-500 disabled:opacity-60"
-            aria-label={stop.action}>
-            <Navigation className="h-4 w-4" aria-hidden="true" />{stop.action}
-          </button>
-          {!canNavigate && <p className="mt-1 text-sm text-amber-800">{t('task.exactLocationUnavailable')}</p>}
         </div>
       </div>
-    </div>;
-    })}
-    {viewingStop !== null && <Suspense fallback={null}><MapboxMapPanel
-      destination={{ address: stops[viewingStop].mapLocation,
-        latitude: stops[viewingStop].point?.latitude, longitude: stops[viewingStop].point?.longitude }}
-      title={stops[viewingStop].action}
-      focusedTitle={t(viewingStop === 0 ? 'task.routePickupTitle' : 'task.routeDeliveryTitle')}
-      enableRouteMode
-      routeActive={currentRoute?.stop === selectedStop}
-      initialRoute={currentRoute?.stop === selectedStop ? currentRoute.snapshot : undefined}
-      blockedByRoute={currentRoute && currentRoute.stop !== selectedStop
-        ? t(currentRoute.stop === 'pickup' ? 'task.mapStopPickupFirst' : 'task.mapStopDeliveryFirst') : undefined}
-      onStartRoute={(snapshot) => { if (selectedSession) onStartRoute({ ...selectedSession, snapshot }); }}
-      onRouteSnapshot={(snapshot) => {
-        if (selectedSession) onRouteSnapshot({ ...selectedSession, snapshot });
-      }}
-      onStopRoute={onStopRoute}
-      messages={{
-        loading: t('task.mapLoading'), unavailable: t('task.mapUnavailable'),
-        finding: t('task.mapFinding'), notVerified: t('task.mapNotVerified'),
-        selected: t('task.mapSelected'), gettingLocation: t('task.mapGettingLocation'),
-        noLocation: t('task.mapNoLocation'), routePreview: t('task.mapRoutePreview'),
-        locationDenied: t('task.mapLocationDenied'), noRoute: t('task.mapNoRoute'),
-        close: t('task.mapClose'), startRoute: t('task.mapStartRoute'),
-        routeActive: t('task.mapRouteActive'), resumeRoute: t('task.mapResumeRoute'),
-        stopRoute: t('task.mapStopRoute'), stopConfirm: t('task.mapStopConfirm'),
-        cancel: t('task.mapCancel'),
-        backToPreview: t('task.mapBackToPreview'), nextDirection: t('task.mapNextDirection'),
-        allDirections: t('task.mapAllDirections'),
-      }}
-      routeFromCurrentLocation={!currentRoute || currentRoute.stop === selectedStop}
-      onClose={() => setViewingStop(null)} /></Suspense>}
+    </div>)}
   </section>;
 }
 
@@ -564,8 +498,9 @@ function OperationalPhotos({ assignment, keys, title, help, required, onSelect }
 /* ════════════════════════════════════════════════════════════
    PHOTO CAPTURE SHEET (redesigned — receipt-style meta)
    ════════════════════════════════════════════════════════════ */
-function PhotoSheet({ status, title, instruction, onConfirm, onCancel }: {
+function PhotoSheet({ status, title, instruction, qualityCheck, onConfirm, onCancel }: {
   status: TaskStatus | null; title?: string; instruction?: string;
+  qualityCheck?: 'truck' | 'cargo';
   onConfirm: (photo: StatusPhoto) => Promise<void>; onCancel: () => void;
 }) {
   const { t, status: statusText } = useDriverI18n();
@@ -574,19 +509,50 @@ function PhotoSheet({ status, title, instruction, onConfirm, onCancel }: {
   const [locLoading, setLocLoading] = useState(false);
   const [saving,     setSaving]     = useState(false);
   const [saveError,  setSaveError]  = useState('');
+  const [checking,   setChecking]   = useState(false);
+  const [qualityError, setQualityError] = useState<PhotoCheckFailure | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const attemptRef = useRef(0);
+
+  useEffect(() => {
+    if (qualityCheck === 'truck') void loadVehicleDetector().catch(() => { /* The capture shows the retry error. */ });
+    return () => { attemptRef.current++; };
+  }, [qualityCheck]);
 
   const handleFile = (file: File) => {
+    const attempt = ++attemptRef.current;
+    const isCurrent = () => attempt === attemptRef.current;
     setSaveError('');
+    setQualityError(null);
+    setPhoto(null);
+    setMeta(null);
+    setLocLoading(false);
+    setChecking(!!qualityCheck);
     const reader = new FileReader();
     reader.onload = async () => {
       let compressed: string;
       try { compressed = await compressImage(reader.result as string); }
-      catch { setSaveError(t('photo.saveError')); return; }
+      catch {
+        if (isCurrent()) { setChecking(false); setSaveError(t('photo.saveError')); }
+        return;
+      }
+      if (!isCurrent()) return;
       setPhoto(compressed);
       const ts = new Date().toLocaleString('en-US', {
         month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit',
       });
+      if (qualityCheck) {
+        let result: Awaited<ReturnType<typeof checkPhoto>>;
+        try { result = await checkPhoto(compressed, { requireTruck: qualityCheck === 'truck' }); }
+        catch { result = { ok: false, reason: qualityCheck === 'truck' ? 'detector_unavailable' : 'unreadable' }; }
+        if (!isCurrent()) return;
+        if (!result.ok) {
+          setQualityError(result.reason);
+          setChecking(false);
+          return;
+        }
+        setChecking(false);
+      }
       setLocLoading(true);
       if ('geolocation' in navigator) {
         navigator.geolocation.getCurrentPosition(
@@ -612,22 +578,33 @@ function PhotoSheet({ status, title, instruction, onConfirm, onCancel }: {
                 else if (data.display_name) locationLabel = data.display_name.split(',').slice(0, 3).join(', ');
               }
             } catch { /* fallback to coords */ }
-            setMeta({ url: compressed, timestamp: ts, location: locationLabel, coords: { lat: latitude, lng: longitude } });
-            setLocLoading(false);
+            if (isCurrent()) {
+              setMeta({ url: compressed, timestamp: ts, location: locationLabel, coords: { lat: latitude, lng: longitude } });
+              setLocLoading(false);
+            }
           },
-          () => { setMeta({ url: compressed, timestamp: ts, location: 'Location unavailable' }); setLocLoading(false); },
+          () => {
+            if (isCurrent()) {
+              setMeta({ url: compressed, timestamp: ts, location: 'Location unavailable' });
+              setLocLoading(false);
+            }
+          },
           { timeout: 10000 }
         );
       } else {
-        setMeta({ url: compressed, timestamp: ts, location: 'Location not supported' });
-        setLocLoading(false);
+        if (isCurrent()) {
+          setMeta({ url: compressed, timestamp: ts, location: 'Location not supported' });
+          setLocLoading(false);
+        }
       }
     };
-    reader.onerror = () => setSaveError(t('photo.saveError'));
+    reader.onerror = () => {
+      if (isCurrent()) { setChecking(false); setSaveError(t('photo.saveError')); }
+    };
     reader.readAsDataURL(file);
   };
 
-  const canConfirm = !!photo && !!meta && meta.url === photo && !locLoading && !saving;
+  const canConfirm = !!photo && !!meta && meta.url === photo && !checking && !qualityError && !locLoading && !saving;
   const confirmPhoto = async () => {
     if (!canConfirm || !meta) return;
     setSaving(true);
@@ -638,7 +615,17 @@ function PhotoSheet({ status, title, instruction, onConfirm, onCancel }: {
       setSaveError(status === 'Delivered' ? t('photo.deliveryError') : t('photo.saveError'));
     } finally { setSaving(false); }
   };
-  const cancelPhoto = () => { if (!saving) onCancel(); };
+  const cancelPhoto = () => { if (!saving) { attemptRef.current++; onCancel(); } };
+  const retakePhoto = () => {
+    attemptRef.current++;
+    setPhoto(null);
+    setMeta(null);
+    setChecking(false);
+    setLocLoading(false);
+    setQualityError(null);
+    setSaveError('');
+  };
+  const qualityMessage = qualityError ? t(`photo.${qualityError}`) : null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-end">
@@ -660,21 +647,21 @@ function PhotoSheet({ status, title, instruction, onConfirm, onCancel }: {
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4">
           <input
-            ref={inputRef} type="file" accept="image/*" capture="environment" disabled={saving} className="hidden"
+            ref={inputRef} type="file" accept="image/*" capture="environment" disabled={saving || checking} className="hidden"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }}
           />
 
           {!photo ? (
             <button
-              onClick={() => inputRef.current?.click()}
+              onClick={() => inputRef.current?.click()} disabled={checking}
               className="w-full border-2 border-dashed border-gray-200 rounded-2xl py-16 flex flex-col items-center gap-4 bg-gray-50 active:bg-gray-100 transition-colors"
             >
               <div className="w-24 h-24 bg-green-100 rounded-full flex items-center justify-center">
                 <Camera className="w-12 h-12 text-green-600" />
               </div>
               <div className="text-center">
-                <p className="text-xl font-bold text-foreground">{t('photo.openCamera')}</p>
-                <p className="text-base text-gray-400 mt-1">{t('photo.gallery')}</p>
+                <p className="text-xl font-bold text-foreground">{checking ? t('photo.checking') : t('photo.openCamera')}</p>
+                {!checking && <p className="text-base text-gray-400 mt-1">{t('photo.gallery')}</p>}
               </div>
             </button>
           ) : (
@@ -686,14 +673,19 @@ function PhotoSheet({ status, title, instruction, onConfirm, onCancel }: {
 
               {/* Retake */}
               <button
-                onClick={() => { setPhoto(null); setMeta(null); setSaveError(''); }} disabled={saving}
+                onClick={retakePhoto} disabled={saving}
                 className="flex items-center gap-2 text-base text-gray-500 font-semibold py-1 disabled:opacity-50"
               >
                 <RotateCcw className="w-4 h-4" /> {t('photo.retake')}
               </button>
 
               {/* Receipt-style meta */}
-              {locLoading ? (
+              {checking ? (
+                <div role="status" className="bg-gray-50 border border-gray-200 rounded-2xl px-5 py-5 flex items-center gap-3">
+                  <div className="w-5 h-5 border-2 border-green-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                  <span className="text-base text-gray-600">{t('photo.checking')}</span>
+                </div>
+              ) : locLoading ? (
                 <div className="bg-gray-50 border border-gray-200 rounded-2xl px-5 py-5 flex items-center gap-3">
                   <div className="w-5 h-5 border-2 border-green-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
                   <span className="text-base text-gray-500">{t('photo.gettingLocationLong')}</span>
@@ -714,6 +706,7 @@ function PhotoSheet({ status, title, instruction, onConfirm, onCancel }: {
             </>
           )}
 
+          {qualityMessage && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{qualityMessage}</p>}
           {saveError && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{saveError}</p>}
 
           {/* Confirm button */}
@@ -726,7 +719,8 @@ function PhotoSheet({ status, title, instruction, onConfirm, onCancel }: {
                 : 'bg-gray-100 text-gray-400 cursor-not-allowed'
             }`}
           >
-            {!photo       ? t('photo.takeFirst')  :
+            {checking     ? t('photo.checking') :
+             !photo       ? t('photo.takeFirst')  :
              locLoading   ? t('photo.gettingLocation') :
              saving       ? t('photo.saving') :
              status === 'Delivered' ? t('photo.confirmDelivered') : t('photo.confirm')}
@@ -1204,8 +1198,6 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
   const [lastSync, setLastSync] = useState<Date | null>(null);
   const [syncing,  setSyncing]  = useState(false);
   const [updating, setUpdating] = useState(false);
-  // Route viewing is a Driver UI session, independent of persisted delivery stages.
-  const [activeRoute, setActiveRoute] = useState<RouteSession | null>(null);
   /* Shown when a write failed. Separate from `online`: the "Offline" banner says the
      connection dropped, this says a specific change of theirs did not save. */
   const [actionError, setActionError] = useState('');
@@ -1519,9 +1511,6 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
 
   /* ── Derived values ── */
   const a           = data?.assignment ?? null;
-  useEffect(() => {
-    setActiveRoute((current) => current && current.assignmentId !== a?.id ? null : current);
-  }, [a?.id]);
   const phase       = a && a.taskStatus !== 'Failed / Issue' && a.taskStatus !== 'Cancelled'
     ? getDriverPhase(a) : null;
   const isDelivered = a?.taskStatus === 'Delivered';
@@ -2032,12 +2021,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
           <>
             {!isFailed && !isCancelled && phase &&
               (phase !== 'delivered' || !!a.unloadingCompletedAt) && <OperationalProgress phase={phase} />}
-            <TaskRouteCard assignment={a} activeRoute={activeRoute}
-              onStartRoute={setActiveRoute}
-              onRouteSnapshot={(session) => setActiveRoute((current) => current
-                && current.assignmentId === session.assignmentId && current.stop === session.stop
-                && current.destinationKey === session.destinationKey ? session : current)}
-              onStopRoute={() => setActiveRoute(null)} />
+            <TaskLocationsCard assignment={a} />
 
             {isDelivered && (
               <div className={`rounded-2xl border px-4 py-4 space-y-3 ${statusColors.Delivered.badge}`}>
@@ -2270,6 +2254,8 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
       {/* ── Sheets / Modals ── */}
       {photoTarget  && <PhotoSheet    status={photoTarget}  onConfirm={handlePhotoConfirmed} onCancel={() => setPhotoTarget(null)} />}
       {operationalPhotoTarget && <PhotoSheet status={null}
+        qualityCheck={OPERATIONAL_PHOTOS.pickup.includes(operationalPhotoTarget as typeof OPERATIONAL_PHOTOS.pickup[number])
+          || OPERATIONAL_PHOTOS.pretrip.includes(operationalPhotoTarget as typeof OPERATIONAL_PHOTOS.pretrip[number]) ? 'truck' : 'cargo'}
         title={operationalPhotoName}
         instruction={t('workflow.photoSlot', {
           angle: operationalPhotoName,

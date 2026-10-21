@@ -8,7 +8,7 @@ import {
   Navigation, Timer, Camera, Search,
   Plus, ArrowLeft, ArrowRight, ChevronLeft, ChevronRight,
   Receipt, ClipboardCheck, ScrollText, FileCheck, PackageCheck,
-  Pencil, KeyRound,
+  Pencil, KeyRound, Eye, EyeOff,
 } from 'lucide-react';
 import { RegisterDriverModal, RegisterTruckModal } from './RegisterModals';
 import { Popover, PopoverAnchor, PopoverContent } from '../ui/popover';
@@ -16,11 +16,12 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle, Dia
 import TruckImage from '../TruckImage';
 import ASNWithCopy from './ASNWithCopy';
 import DocumentsSummaryCard from './DocumentsSummaryCard';
-import { ImagePreviewModal, OperationalEvidence } from './ShipmentPhotoEvidence';
+import { OperationalEvidence } from './ShipmentPhotoEvidence';
+import UploadedFilePreviewModal from './UploadedFilePreviewModal';
 import DeliveryTimingBadge from './DeliveryTimingBadge';
 import PickupTimingNotice from './PickupTimingNotice';
 import { getDispatchTimingNotices } from '../../lib/assignmentTiming';
-import { OPERATIONAL_STEPS, OPERATIONAL_PHOTO_GROUPS, getAdminOperationalProgress, formatOperationalStamp, formatOperationalDuration } from '../../lib/assignmentOperational';
+import { OPERATIONAL_STEPS, OPERATIONAL_PHOTO_GROUPS, getAdminOperationalProgress, canCancelBeforeLoadingCompletes, formatOperationalStamp, formatOperationalDuration } from '../../lib/assignmentOperational';
 import { statusColors } from '../../data/statusColors';
 import { assignmentDisplayStatusConfig, canCompleteAssignment, getAssignmentDisplayStatus, getAssignmentDocumentProgress, getDocumentAgingState, type AssignmentDisplayStatus } from '../../lib/assignmentWorkflow';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
@@ -28,11 +29,8 @@ import { sortNewestFirst, markLocalRecordAdded, useLocalAddedHighlight, newRecor
 import { ADMIN_NAVIGATION_EVENT, pushAdminNavigation } from '../../lib/adminNavigation';
 import { TRUCK_CLASSIFICATIONS, truckSideImageFor, capacityKgOnly } from '../../data/truckTypes';
 import { destinationAreaEnabled, getAssignmentRoute, getDeliveryLocation } from '../../data/assignmentRoute';
-import MapboxLocationInput from './MapboxLocationInput';
-import { mapboxRouteArea, type SelectedLocation } from '../../lib/mapboxLocations';
-import { coordinatePair } from '../../lib/assignmentLocation';
 import {
-  verifyOwnPassword, editAssignment, cancelAssignment, syncAdminData, AssignmentActionError,
+  verifyOwnPassword, editAssignment, cancelAssignment, loadAdminData, syncAdminData, AssignmentActionError,
   type AssignmentActionErrorCode, type AssignmentEdit, type AssignmentLocationEdit,
 } from '../../lib/db';
 
@@ -205,10 +203,11 @@ function scheduleErrors(s: {
 
 /* Plain-language text for the errors the edit/cancel database functions can return */
 const actionMessage = (code: AssignmentActionErrorCode): string => ({
-  wrong_password:    'Incorrect password.',
+  wrong_password:    'Incorrect password. Please try again.',
   reauth_required:   'Please confirm your password again.',
   not_editable:      'This delivery is no longer "Assigned" — the driver may have picked it up — so it can\'t be edited.',
-  not_cancellable:   'This delivery is no longer "Assigned" — the driver may have picked it up — so it can\'t be cancelled.',
+  not_cancellable:   'This assignment can no longer be cancelled. Refresh to see its current status.',
+  loading_completed: 'This assignment can no longer be cancelled because loading has already been completed.',
   driver_busy:       'That driver was just given another delivery. Pick a different driver.',
   truck_unavailable: 'That truck is no longer available. Pick a different truck.',
   no_changes:        'Nothing has changed.',
@@ -935,7 +934,7 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
   onApproveDoc:   (id: string, docType: string) => void;
   onRejectDoc:    (id: string, docType: string, reason: string) => void;
   onComplete:     (id: string) => Promise<void>;
-  onCancel:       (id: string) => Promise<void>;
+  onCancel:       (id: string, reason: string, password: string) => Promise<void>;
   onSimulateLate: (id: string) => void;
   isViewOnly?:    boolean;
   adminEmail?:    string | null;
@@ -946,7 +945,18 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [cancelBusy,    setCancelBusy]    = useState(false);
   const [cancelError,   setCancelError]   = useState('');
-  const [previewDoc,    setPreviewDoc]    = useState<{ url: string; type: string } | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelPassword, setCancelPassword] = useState('');
+  const [showCancelPassword, setShowCancelPassword] = useState(false);
+  const closeCancel = () => {
+    if (cancelBusy) return;
+    setConfirmCancel(false);
+    setCancelReason('');
+    setCancelPassword('');
+    setShowCancelPassword(false);
+    setCancelError('');
+  };
+  const [previewDoc,    setPreviewDoc]    = useState<{ url: string; type: string; kind: 'image' | 'document'; timestamp?: string } | null>(null);
   const [rejectingDoc,  setRejectingDoc]  = useState<string | null>(null);
   const [rejectReason,  setRejectReason]  = useState('');
   const reviewSectionRef = useRef<HTMLDivElement>(null);
@@ -1175,7 +1185,7 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
 
         {activeTab === 'photos' && <OperationalEvidence assignment={assignment}
           expandedGroup={expandedPhotoGroup} onExpand={setExpandedPhotoGroup}
-          onPreview={(url, type) => setPreviewDoc({ url, type })} />}
+          onPreview={(url, type, timestamp) => setPreviewDoc({ url, type, kind: 'image', timestamp })} />}
 
         {activeTab === 'documents' && <div className="space-y-4">
           {/* Documents */}
@@ -1215,7 +1225,8 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
                     {doc.uploaded && (
                       <div className="flex items-center justify-end gap-1.5 mt-2">
                         {doc.fileUrl && (
-                          <button onClick={() => setPreviewDoc({ url: doc.fileUrl!, type: doc.type })}
+                          <button onClick={() => setPreviewDoc({ url: doc.fileUrl!, type: doc.type, kind: 'document',
+                            timestamp: 'uploadedAt' in doc && typeof doc.uploadedAt === 'string' ? doc.uploadedAt : undefined })}
                             className="flex items-center gap-1 px-2 py-1 bg-muted/50 border border-border rounded-lg text-xs hover:bg-accent transition-colors text-muted-foreground">
                             <ZoomIn className="w-3 h-3" /> View
                           </button>
@@ -1317,8 +1328,8 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
               <Pencil className="w-4 h-4" /> Edit
             </button>
           )}
-          {/* Hidden once the driver has picked it up; cancel_assignment() refuses it too */}
-          {assignment && !isViewOnly && assignment.taskStatus === 'Assigned' && (
+          {/* The RPC rechecks the persisted stage while holding the assignment row lock. */}
+          {assignment && !isViewOnly && canCancelBeforeLoadingCompletes(assignment) && (
             <button onClick={() => setConfirmCancel(true)}
               className="min-h-10 flex-1 rounded-xl border border-red-200 px-4 py-2.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 flex items-center justify-center gap-2">
               <Trash2 className="w-4 h-4" /> Cancel Assignment
@@ -1329,40 +1340,63 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
 
         {/* ── Cancel confirmation ── */}
         {confirmCancel && assignment && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-black/30 backdrop-blur-[2px] p-5">
-            <div className="bg-white rounded-xl border border-border shadow-xl p-5 w-full max-w-[340px]">
-              <div className="w-10 h-10 rounded-full bg-red-50 border border-red-100 flex items-center justify-center mx-auto mb-3">
-                <AlertTriangle className="w-5 h-5 text-red-600" />
+          <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-black/30 backdrop-blur-[2px] p-4">
+            <form role="dialog" aria-modal="true" aria-labelledby="cancel-title"
+              onSubmit={async (event) => {
+                event.preventDefault();
+                const reason = cancelReason.trim();
+                if (reason.length < 10) { setCancelError(reason ? 'Enter at least 10 characters.' : 'Cancellation reason is required.'); return; }
+                if (reason.length > 150) { setCancelError('Use 150 characters or fewer.'); return; }
+                if (!cancelPassword) { setCancelError('Enter your current password.'); return; }
+                const password = cancelPassword;
+                setCancelPassword('');
+                setCancelBusy(true);
+                setCancelError('');
+                try { await onCancel(assignment.id, reason, password); onClose(); }
+                catch (err) { setCancelError(actionMessage(errorCode(err))); }
+                finally { setCancelBusy(false); }
+              }}
+              className="w-full max-w-md max-h-full overflow-y-auto rounded-xl border border-border bg-white p-5 shadow-xl">
+              <div className="mb-3 flex items-center gap-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-red-100 bg-red-50"><AlertTriangle className="h-5 w-5 text-red-600" /></span>
+                <h2 id="cancel-title" className="text-base font-semibold text-foreground">Cancel this assignment?</h2>
               </div>
-              <p className="text-sm font-semibold text-foreground text-center">Cancel this assignment?</p>
-              <p className="text-xs text-muted-foreground text-center mt-1">
-                This releases {driver.name} and the assigned truck. It can't be undone.
-              </p>
-              {cancelError && (
-                <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mt-3 break-words">{cancelError}</p>
-              )}
-              <div className="flex gap-2 mt-4">
-                <button onClick={() => { setConfirmCancel(false); setCancelError(''); }}
-                  className="flex-1 py-2 border border-border rounded-lg text-sm hover:bg-accent transition-colors">Keep It</button>
-                <button disabled={cancelBusy}
-                  onClick={async () => {
-                    setCancelBusy(true); setCancelError('');
-                    try { await onCancel(assignment.id); onClose(); }
-                    catch (err) { setCancelError(actionMessage(errorCode(err))); }
-                    finally { setCancelBusy(false); }
-                  }}
-                  className="flex-1 py-2 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                  {cancelBusy ? 'Cancelling…' : 'Yes, Cancel'}
+              <p className="mb-4 text-sm text-muted-foreground">This will cancel the assignment and release the assigned Driver and Truck. This action cannot be undone.</p>
+              <label htmlFor="cancel-reason" className="mb-1 block text-sm font-medium">Cancellation Reason *</label>
+              <textarea id="cancel-reason" value={cancelReason} maxLength={150} rows={3}
+                onChange={(event) => { setCancelReason(event.target.value); setCancelError(''); }}
+                placeholder="Enter the reason for cancelling this assignment"
+                className="mb-3 w-full resize-y rounded-lg border border-border px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-300" />
+              <label htmlFor="cancel-password" className="mb-1 block text-sm font-medium">Password *</label>
+              <div className="relative">
+                <input id="cancel-password" type={showCancelPassword ? 'text' : 'password'} autoComplete="current-password"
+                  value={cancelPassword} onChange={(event) => { setCancelPassword(event.target.value); setCancelError(''); }}
+                  placeholder="Enter your current password"
+                  className="min-h-11 w-full rounded-lg border border-border px-3 py-2.5 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-red-300" />
+                <button type="button" onClick={() => setShowCancelPassword((value) => !value)}
+                  aria-label={showCancelPassword ? 'Hide password' : 'Show password'}
+                  className="absolute inset-y-0 right-0 flex w-11 items-center justify-center rounded-r-lg text-muted-foreground hover:text-foreground focus:outline-none focus:ring-2 focus:ring-inset focus:ring-red-300">
+                  {showCancelPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
-            </div>
+              {cancelError && <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{cancelError}</p>}
+              <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row">
+                <button type="button" onClick={closeCancel} disabled={cancelBusy}
+                  className="min-h-11 flex-1 rounded-lg border border-border px-3 text-sm font-medium hover:bg-accent disabled:opacity-50">Keep Assignment</button>
+                <button type="submit" disabled={cancelBusy}
+                  className="min-h-11 flex-1 rounded-lg bg-red-600 px-3 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50">
+                  {cancelBusy ? 'Cancelling…' : 'Cancel Assignment'}
+                </button>
+              </div>
+            </form>
           </div>
         )}
       </div>
 
       {/* Image Preview */}
       {previewDoc && (
-        <ImagePreviewModal url={previewDoc.url} docType={previewDoc.type} onClose={() => setPreviewDoc(null)} />
+        <UploadedFilePreviewModal url={previewDoc.url} title={previewDoc.type} kind={previewDoc.kind} timestamp={previewDoc.timestamp}
+          assignmentId={assignment?.id} onClose={() => setPreviewDoc(null)} />
       )}
     </div>
   );
@@ -1375,14 +1409,6 @@ const REAUTH_MAX_FAILS   = 3;
 const REAUTH_COOLDOWN_MS = 30_000;
 let reauthFails       = 0;
 let reauthLockedUntil = 0;
-
-function savedMapboxStop(address: string | null | undefined, latitude: number | null | undefined,
-  longitude: number | null | undefined, city: string | null): SelectedLocation | null {
-  const point = coordinatePair(latitude, longitude);
-  if (!address?.trim() || !point) return null;
-  return { formatted: address, name: address, city, region: null,
-    latitude: point.latitude, longitude: point.longitude, featureId: null };
-}
 
 function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose, onSaved, onServerChange }: {
   /* Live copy from props — null once it leaves the active list (completed/cancelled elsewhere) */
@@ -1404,11 +1430,6 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose
     pickupTime: displayToTime24(original?.pickupTime ?? ''), eta: displayToTime24(original?.eta ?? ''),
     remarks: original?.remarks ?? '', reason: '',
   });
-  const [pickupSelected, setPickupSelected] = useState<SelectedLocation | null>(() =>
-    savedMapboxStop(original?.pickupLocation, original?.pickupLatitude, original?.pickupLongitude, routeFrom ?? null));
-  const [deliverySelected, setDeliverySelected] = useState<SelectedLocation | null>(() =>
-    savedMapboxStop(original?.deliveryLocation, original?.deliveryLatitude, original?.deliveryLongitude,
-      original?.destinationArea ?? null));
   const [badDates,  setBadDates]  = useState<BadDates>({ pickup: false, delivery: false });
   const [errors,    setErrors]    = useState<Record<string, string>>({});
   const [formError, setFormError] = useState('');
@@ -1459,12 +1480,10 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose
     const e: Record<string, string> = {};
     if (!f.driverId)              e.driver         = 'Select a driver.';
     if (!f.truckId)               e.truck          = 'Select a truck.';
-    if (!pickupSelected || pickupSelected.formatted !== f.pickupLocation ||
-      !mapboxRouteArea(pickupSelected) || f.from.trim() !== mapboxRouteArea(pickupSelected))
-      e.pickupLocation = 'Select a pickup location with a city or area from Mapbox.';
-    if (!deliverySelected || deliverySelected.formatted !== f.to ||
-      !mapboxRouteArea(deliverySelected) || f.destinationArea.trim() !== mapboxRouteArea(deliverySelected))
-      e.to = 'Select a delivery location with a city or area from Mapbox.';
+    if (!f.pickupLocation.trim()) e.pickupLocation = 'Enter a pickup location.';
+    if (!f.from.trim()) e.from = 'Enter an origin area.';
+    if (!f.to.trim()) e.to = 'Enter a delivery location.';
+    if (destinationAreaEnabled && !f.destinationArea.trim()) e.destinationArea = 'Enter a destination area.';
     if (!f.company.trim())        e.company        = 'Enter a client name.';
     Object.assign(e, scheduleErrors({
       pickup: f.pickup, delivery: f.delivery, pickupTime: f.pickupTime, eta: f.eta, remarks: f.remarks, bad: badDates,
@@ -1497,28 +1516,9 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose
     const changes: AssignmentEdit & AssignmentLocationEdit = Object.fromEntries(
       (Object.keys(next) as (keyof AssignmentEdit)[]).filter((k) => next[k] !== before[k]).map((k) => [k, next[k]]),
     );
-    const pickupPoint = pickupSelected?.formatted === f.pickupLocation ? pickupSelected : null;
-    if (pickupPoint && (changes.pickupLocation !== undefined ||
-      pickupPoint.latitude !== base.pickupLatitude || pickupPoint.longitude !== base.pickupLongitude)) {
-      changes.pickupLatitude = pickupPoint.latitude;
-      changes.pickupLongitude = pickupPoint.longitude;
-    } else if (changes.pickupLocation !== undefined && base.pickupLatitude != null) {
-      changes.pickupLatitude = null;
-      changes.pickupLongitude = null;
-    }
     const deliveryAddress = f.to.trim();
-    const deliveryPoint = deliverySelected?.formatted === f.to ? deliverySelected : null;
-    if (deliveryAddress !== (base.deliveryLocation ?? '') &&
-      (deliveryPoint || deliveryAddress !== getDeliveryLocation(base))) {
+    if (deliveryAddress !== (base.deliveryLocation ?? '') && deliveryAddress !== getDeliveryLocation(base)) {
       changes.deliveryLocation = deliveryAddress;
-    }
-    if (deliveryPoint && (changes.deliveryLocation !== undefined ||
-      deliveryPoint.latitude !== base.deliveryLatitude || deliveryPoint.longitude !== base.deliveryLongitude)) {
-      changes.deliveryLatitude = deliveryPoint.latitude;
-      changes.deliveryLongitude = deliveryPoint.longitude;
-    } else if (changes.deliveryLocation !== undefined && base.deliveryLatitude != null) {
-      changes.deliveryLatitude = null;
-      changes.deliveryLongitude = null;
     }
     return changes;
   };
@@ -1600,31 +1600,37 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose
             </div>
           )}
 
-          <div>
-            <FieldLabel required>Pickup Location</FieldLabel>
-            <MapboxLocationInput value={f.pickupLocation} selected={pickupSelected}
-              onChange={(v) => { if (pickupSelected) set('from', ''); setPickupSelected(null); set('pickupLocation', v); }}
-              onSelect={(place) => { setPickupSelected(place); set('pickupLocation', place.formatted); set('from', mapboxRouteArea(place)); }}
-              placeholder="Search exact pickup address or location" hasError={!!errors.pickupLocation} />
-            {errText('pickupLocation')}
+          <div className="space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Pickup</p>
+            <div>
+              <FieldLabel required>Origin Area</FieldLabel>
+              <input type="text" value={f.from} onChange={(event) => set('from', event.target.value)}
+                placeholder="Enter origin city or area" className={`${fieldBase} ${fieldTone(!!errors.from)}`} />
+              {errText('from')}
+            </div>
+            <div>
+              <FieldLabel required>Pickup Location</FieldLabel>
+              <input type="text" value={f.pickupLocation} onChange={(event) => set('pickupLocation', event.target.value)}
+                placeholder="Enter pickup address or location" className={`${fieldBase} ${fieldTone(!!errors.pickupLocation)}`} />
+              {errText('pickupLocation')}
+            </div>
           </div>
 
-          <div>
-            <FieldLabel required>Delivery Location</FieldLabel>
-            <MapboxLocationInput value={f.to} selected={deliverySelected}
-              onChange={(v) => { if (deliverySelected) set('destinationArea', ''); setDeliverySelected(null); set('to', v); }}
-              onSelect={(place) => { setDeliverySelected(place); set('to', place.formatted); set('destinationArea', mapboxRouteArea(place)); }}
-              placeholder="Search exact delivery address or location" hasError={!!errors.to} />
-            {errText('to')}
-          </div>
-
-          {pickupSelected?.formatted === f.pickupLocation && deliverySelected?.formatted === f.to
-            && mapboxRouteArea(pickupSelected) && mapboxRouteArea(deliverySelected) &&
-            <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm">
-              <span className="block font-medium text-foreground">Route</span>
-              <span className="block break-words text-foreground">{mapboxRouteArea(pickupSelected)} → {mapboxRouteArea(deliverySelected)}</span>
-              <span className="block text-xs text-muted-foreground">Automatically detected</span>
+          <div className="space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Delivery</p>
+            {destinationAreaEnabled && <div>
+              <FieldLabel required>Destination Area</FieldLabel>
+              <input type="text" value={f.destinationArea} onChange={(event) => set('destinationArea', event.target.value)}
+                placeholder="Enter destination city or area" className={`${fieldBase} ${fieldTone(!!errors.destinationArea)}`} />
+              {errText('destinationArea')}
             </div>}
+            <div>
+              <FieldLabel required>Delivery Location</FieldLabel>
+              <input type="text" value={f.to} onChange={(event) => set('to', event.target.value)}
+                placeholder="Enter delivery address or location" className={`${fieldBase} ${fieldTone(!!errors.to)}`} />
+              {errText('to')}
+            </div>
+          </div>
 
           <div>
             <FieldLabel required>Client</FieldLabel>
@@ -1855,8 +1861,6 @@ export default function DriversManagement({
   const [taskPickedUpDate, setTaskPickedUpDate] = useState('');
   const [taskRemarks,     setTaskRemarks]     = useState('');
   const [taskPickupLocation, setTaskPickupLocation] = useState('');
-  const [taskPickupSelected, setTaskPickupSelected] = useState<SelectedLocation | null>(null);
-  const [taskDeliverySelected, setTaskDeliverySelected] = useState<SelectedLocation | null>(null);
   /* Native time inputs → 24-hour "HH:MM" strings */
   const [taskPickupTime,  setTaskPickupTime]  = useState('');
   const [taskEta,         setTaskEta]         = useState('');
@@ -1875,7 +1879,7 @@ export default function DriversManagement({
     setShowAssignTask(false); setTaskStep(1); setTaskDriverId(''); setTaskTruckId('');
     setTaskFrom(''); setTaskTo(''); setTaskDestinationArea('');
     setTaskCompany(''); setTaskDate(''); setTaskPickedUpDate(''); setTaskRemarks('');
-    setTaskPickupLocation(''); setTaskPickupSelected(null); setTaskDeliverySelected(null);
+    setTaskPickupLocation('');
     setTaskPickupTime(''); setTaskEta('');
     setTaskErrors({}); setTaskBadDates({ pickup: false, delivery: false });
   };
@@ -1895,12 +1899,10 @@ export default function DriversManagement({
     const e: Record<string, string> = {};
     if (!taskDriverId)              e.driver         = 'Select a driver.';
     if (!taskTruckId)               e.truck          = 'Select a truck.';
-    if (!taskPickupSelected || taskPickupSelected.formatted !== taskPickupLocation ||
-      !mapboxRouteArea(taskPickupSelected) || taskFrom.trim() !== mapboxRouteArea(taskPickupSelected))
-      e.pickupLocation = 'Select a pickup location with a city or area from Mapbox.';
-    if (!taskDeliverySelected || taskDeliverySelected.formatted !== taskTo ||
-      !mapboxRouteArea(taskDeliverySelected) || taskDestinationArea.trim() !== mapboxRouteArea(taskDeliverySelected))
-      e.to = 'Select a delivery location with a city or area from Mapbox.';
+    if (!taskPickupLocation.trim()) e.pickupLocation = 'Enter a pickup location.';
+    if (!taskFrom.trim()) e.from = 'Enter an origin area.';
+    if (!taskTo.trim()) e.to = 'Enter a delivery location.';
+    if (destinationAreaEnabled && !taskDestinationArea.trim()) e.destinationArea = 'Enter a destination area.';
     if (!taskCompany.trim())        e.company        = 'Enter a client name.';
     setTaskErrors(e);
     return Object.keys(e).length === 0;
@@ -1933,13 +1935,7 @@ export default function DriversManagement({
       ...(destinationAreaEnabled ? { destinationArea: taskDestinationArea.trim() } : {}),
       company:         taskCompany.trim(),
       pickupLocation:  taskPickupLocation.trim(),
-      ...(taskPickupSelected?.formatted === taskPickupLocation ? {
-        pickupLatitude: taskPickupSelected.latitude, pickupLongitude: taskPickupSelected.longitude,
-      } : {}),
       deliveryLocation: taskTo.trim(),
-      ...(taskDeliverySelected?.formatted === taskTo ? {
-        deliveryLatitude: taskDeliverySelected.latitude, deliveryLongitude: taskDeliverySelected.longitude,
-      } : {}),
       pickupTime:      time24ToDisplay(taskPickupTime),
       pickedUpDate:    isoToDisplay(taskPickedUpDate),
       eta:             time24ToDisplay(taskEta),
@@ -2059,17 +2055,16 @@ export default function DriversManagement({
     );
   };
 
-  /* Goes through the cancel_assignment() database function, not the auto-save: it refuses
-     unless the delivery is still 'Assigned', frees the driver + truck, and writes the
-     audit-log entry itself. The screen reloads afterwards (onServerChange). */
-  const handleCancel = async (id: string) => {
+  /* The three-argument RPC verifies this attempt's password, row-locks and checks
+     the Loading cutoff, then persists cancellation, release and audit atomically. */
+  const handleCancel = async (id: string, reason: string, password: string) => {
     const assignment = assignments.find((item) => item.id === id);
     try {
-      await onServerChange(() => cancelAssignment(id), () => {
+      await onServerChange(() => cancelAssignment(id, reason, password), () => {
         if (!assignment) return;
         setAssignments((current) => current.filter((item) => item.id !== id));
         setCancelled((current) => current.some((item) => item.id === id)
-          ? current : [{ ...assignment, taskStatus: 'Cancelled' }, ...current]);
+          ? current : [{ ...assignment, taskStatus: 'Cancelled', cancelReason: reason }, ...current]);
         if (!assignments.some((item) => item.id !== id && item.driverId === assignment.driverId)) {
           setDrivers((current) => current.map((driver) => driver.id === assignment.driverId
             ? { ...driver, status: 'Pending' } : driver));
@@ -2081,7 +2076,17 @@ export default function DriversManagement({
       });
       toast.success('Assignment cancelled successfully.', { duration: 3000 });
     } catch (error) {
-      toast.error('Unable to cancel this assignment. Please try again.', { duration: 3000 });
+      if (errorCode(error) === 'loading_completed' || errorCode(error) === 'not_cancellable') {
+        // The driver's transition may have won the row lock while this modal was open.
+        // Refresh before showing the persisted stage in the still-open detail view.
+        try {
+          const latest = await loadAdminData();
+          setAssignments(latest.assignments);
+          setCancelled(latest.cancelled);
+          setDrivers(latest.drivers);
+          setTrucks(latest.trucks);
+        } catch { /* the regular poll will retry */ }
+      }
       throw error;
     }
   };
@@ -2540,39 +2545,45 @@ export default function DriversManagement({
                   ) : null;
                 })()}
 
-                {/* Exact locations set the existing route fields through structured Mapbox geography. */}
+                {/* Dispatch enters route areas and exact addresses manually. */}
                 <div className="space-y-4">
-                  <div>
-                    <FieldLabel required>Pickup Location</FieldLabel>
-                    <MapboxLocationInput
-                      value={taskPickupLocation}
-                      selected={taskPickupSelected}
-                      onChange={(v) => { setTaskPickupLocation(v); if (taskPickupSelected) { setTaskPickupSelected(null); setTaskFrom(''); } setTaskErrors((p) => ({ ...p, pickupLocation: '' })); }}
-                      onSelect={(place) => { setTaskPickupSelected(place); setTaskPickupLocation(place.formatted); setTaskFrom(mapboxRouteArea(place)); setTaskErrors((p) => ({ ...p, pickupLocation: '' })); }}
-                      placeholder="Search exact pickup address or location"
-                      hasError={!!taskErrors.pickupLocation}
-                    />
-                    {taskErrors.pickupLocation && <p className="text-xs text-red-500 mt-1">{taskErrors.pickupLocation}</p>}
+                  <div className="space-y-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Pickup</p>
+                    <div>
+                      <FieldLabel required>Origin Area</FieldLabel>
+                      <input type="text" value={taskFrom}
+                        onChange={(event) => { setTaskFrom(event.target.value); setTaskErrors((p) => ({ ...p, from: '' })); }}
+                        placeholder="Enter origin city or area" className={`${fieldBase} ${fieldTone(!!taskErrors.from)}`} />
+                      {taskErrors.from && <p className="text-xs text-red-500 mt-1">{taskErrors.from}</p>}
+                    </div>
+                    <div>
+                      <FieldLabel required>Pickup Location</FieldLabel>
+                      <input type="text" value={taskPickupLocation}
+                        onChange={(event) => { setTaskPickupLocation(event.target.value); setTaskErrors((p) => ({ ...p, pickupLocation: '' })); }}
+                        placeholder="Enter pickup address or location"
+                        className={`${fieldBase} ${fieldTone(!!taskErrors.pickupLocation)}`} />
+                      {taskErrors.pickupLocation && <p className="text-xs text-red-500 mt-1">{taskErrors.pickupLocation}</p>}
+                    </div>
                   </div>
-                  <div>
-                    <FieldLabel required>Delivery Location</FieldLabel>
-                    <MapboxLocationInput
-                      value={taskTo}
-                      selected={taskDeliverySelected}
-                      onChange={(v) => { setTaskTo(v); if (taskDeliverySelected) { setTaskDeliverySelected(null); setTaskDestinationArea(''); } setTaskErrors((p) => ({ ...p, to: '' })); }}
-                      onSelect={(place) => { setTaskDeliverySelected(place); setTaskTo(place.formatted); setTaskDestinationArea(mapboxRouteArea(place)); setTaskErrors((p) => ({ ...p, to: '' })); }}
-                      placeholder="Search exact delivery address or location"
-                      hasError={!!taskErrors.to}
-                    />
-                    {taskErrors.to && <p className="text-xs text-red-500 mt-1">{taskErrors.to}</p>}
-                  </div>
-                  {taskPickupSelected?.formatted === taskPickupLocation && taskDeliverySelected?.formatted === taskTo
-                    && mapboxRouteArea(taskPickupSelected) && mapboxRouteArea(taskDeliverySelected) &&
-                    <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm">
-                      <span className="block font-medium text-foreground">Route</span>
-                      <span className="block break-words text-foreground">{mapboxRouteArea(taskPickupSelected)} → {mapboxRouteArea(taskDeliverySelected)}</span>
-                      <span className="block text-xs text-muted-foreground">Automatically detected</span>
+                  <div className="space-y-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Delivery</p>
+                    {destinationAreaEnabled && <div>
+                      <FieldLabel required>Destination Area</FieldLabel>
+                      <input type="text" value={taskDestinationArea}
+                        onChange={(event) => { setTaskDestinationArea(event.target.value); setTaskErrors((p) => ({ ...p, destinationArea: '' })); }}
+                        placeholder="Enter destination city or area"
+                        className={`${fieldBase} ${fieldTone(!!taskErrors.destinationArea)}`} />
+                      {taskErrors.destinationArea && <p className="text-xs text-red-500 mt-1">{taskErrors.destinationArea}</p>}
                     </div>}
+                    <div>
+                      <FieldLabel required>Delivery Location</FieldLabel>
+                      <input type="text" value={taskTo}
+                        onChange={(event) => { setTaskTo(event.target.value); setTaskErrors((p) => ({ ...p, to: '' })); }}
+                        placeholder="Enter delivery address or location"
+                        className={`${fieldBase} ${fieldTone(!!taskErrors.to)}`} />
+                      {taskErrors.to && <p className="text-xs text-red-500 mt-1">{taskErrors.to}</p>}
+                    </div>
+                  </div>
                 </div>
 
                 {/* Client */}

@@ -222,6 +222,7 @@ function assignmentFromRow(r: Row, docs: Row[], photos: Row[], delays: Row[]): A
     pickupArrivedAt: r.pickup_arrived_at ?? null,
     loadingStartedAt: r.loading_started_at ?? null,
     loadingCompletedAt: r.loading_completed_at ?? null,
+    cancelReason: r.cancel_reason ?? null,
     departedAt: r.departed_at ?? null,
     destinationArrivedAt: r.destination_arrived_at ?? null,
     unloadingStartedAt: r.unloading_started_at ?? null,
@@ -306,7 +307,20 @@ export async function loadAdminData(): Promise<AdminData & ArchivedData> {
   const assignments = asnRows.filter((r) => r.state === 'active').map(build);
   const completed: CompletedTask[] = asnRows.filter((r) => r.state === 'completed')
     .map((r) => ({ ...build(r), completedAt: r.completed_at ?? '' }));
-  const cancelled = asnRows.filter((r) => r.state === 'cancelled').map(build);
+  const cancelActivityByAssignment = new Map<string, Row>();
+  for (const entry of actRows) {
+    if (entry.type === 'task_cancelled' && entry.assignment_id && !cancelActivityByAssignment.has(entry.assignment_id)) {
+      cancelActivityByAssignment.set(entry.assignment_id, entry);
+    }
+  }
+  const cancelled = asnRows.filter((r) => r.state === 'cancelled').map((r) => {
+    const audit = cancelActivityByAssignment.get(r.id);
+    return {
+      ...build(r),
+      cancelledBy: audit?.member_name ?? audit?.admin_email ?? null,
+      cancelledAt: audit?.ts ?? null,
+    };
+  });
 
   const notifications: AppNotification[] = notifRows.map((r) => ({
     id: r.id, type: r.type, message: r.message ?? '', assignmentId: r.assignment_id,
@@ -601,7 +615,7 @@ export function syncAdminData(data: AdminData): Promise<void> {
    ════════════════════════════════════════════════════════════════════════════ */
 
 export type AssignmentActionErrorCode =
-  | 'wrong_password' | 'reauth_required' | 'not_editable' | 'not_cancellable'
+  | 'wrong_password' | 'reauth_required' | 'not_editable' | 'not_cancellable' | 'loading_completed'
   | 'driver_busy' | 'truck_unavailable' | 'no_changes' | 'not_authorized' | 'not_deployed' | 'invalid' | 'network'
   | 'already_archived' | 'truck_busy';
 export class AssignmentActionError extends Error {
@@ -649,7 +663,7 @@ const EDIT_COLUMNS: Record<keyof (AssignmentEdit & AssignmentLocationEdit), stri
 function actionFailure(error: { message?: string; code?: string }): AssignmentActionError {
   const m = error.message ?? '';
   const known: AssignmentActionErrorCode[] = [
-    'reauth_required', 'not_editable', 'not_cancellable', 'driver_busy', 'truck_unavailable', 'no_changes', 'not_authorized',
+    'wrong_password', 'loading_completed', 'reauth_required', 'not_editable', 'not_cancellable', 'driver_busy', 'truck_unavailable', 'no_changes', 'not_authorized',
     'already_archived', 'truck_busy',
   ];
   for (const c of known) if (m.includes(c)) return new AssignmentActionError(c, m);
@@ -669,13 +683,12 @@ export async function editAssignment(id: string, changes: AssignmentEdit & Assig
   if (error) throw actionFailure(error);
 }
 
-/* Omit `reason` to use the original no-reason/no-reauth path (what the current
-   admin Cancel button still calls); pass it once that UI asks for a reason +
-   password, which resolves to the newer cancel_assignment(p_id, p_reason). */
-export async function cancelAssignment(id: string, reason?: string): Promise<void> {
-  const { error } = reason === undefined
-    ? await supabase.rpc('cancel_assignment', { p_id: id })
-    : await supabase.rpc('cancel_assignment', { p_id: id, p_reason: reason });
+/* Fresh password verification, stage check, cancellation and audit happen in one
+   database transaction. Never use the legacy one/two-argument overloads. */
+export async function cancelAssignment(id: string, reason: string, password: string): Promise<void> {
+  const { error } = await supabase.rpc('cancel_assignment', {
+    p_id: id, p_reason: reason.trim(), p_password: password,
+  });
   if (error) throw actionFailure(error);
 }
 

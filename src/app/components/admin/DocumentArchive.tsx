@@ -1,6 +1,6 @@
 import { useState, useMemo, useLayoutEffect, useEffect, useRef } from 'react';
 import {
-  FileText, X, CheckCircle2, Clock, XCircle,
+  FileText, CheckCircle2, Clock, XCircle,
   Truck, User, Eye, Search, Calendar, Package,
   AlertCircle, ChevronDown, ChevronRight, Filter,
 } from 'lucide-react';
@@ -12,6 +12,7 @@ import { statusColors } from '../../data/statusColors';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
 import { sortNewestFirst, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
 import { matchesAssignmentDate } from '../../lib/assignmentDateFilter';
+import UploadedFilePreviewModal from './UploadedFilePreviewModal';
 
 interface Props {
   assignments:     Assignment[];
@@ -53,43 +54,6 @@ const STATUS_CFG: Record<DocStatus, { label: string; badge: string; icon: React.
   rejected: { label: 'Rejected', badge: statusColors['Needs Correction'].badge, icon: <XCircle className="w-3 h-3" /> },
 };
 
-/* ── Image Preview Modal ── */
-function ImagePreviewModal({ url, docType, onClose }: { url: string; docType: string; onClose: () => void }) {
-  /* Real uploads are signed Storage URLs, not data: URIs, so there's no reliable
-     way to tell a PDF from an image just by looking at the URL string. Try it as
-     an image first; if the browser can't decode it (because it's actually a PDF),
-     fall back to an iframe, which both PDFs and images render fine in. */
-  const [imgFailed, setImgFailed] = useState(false);
-  const isPdf = url.startsWith('data:application/pdf') || imgFailed;
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-xl flex flex-col max-h-[85vh] overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-3 border-b border-border flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <FileText className="w-4 h-4 text-muted-foreground" />
-            <span className="text-sm font-semibold text-foreground">{docType}</span>
-          </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-accent text-muted-foreground">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-        <div className="flex-1 overflow-auto p-4 flex items-center justify-center bg-muted/10">
-          {isPdf
-            ? <iframe src={url} className="w-full h-[500px] rounded-lg border border-border" title={docType} />
-            : <img src={url} alt={docType} onError={() => setImgFailed(true)} className="max-w-full max-h-[500px] object-contain rounded-xl shadow-md" />
-          }
-        </div>
-        <div className="px-5 py-3 border-t border-border flex-shrink-0">
-          <a href={url} download={`${docType}.${isPdf ? 'pdf' : 'jpg'}`} className="text-xs text-primary underline hover:text-primary/80">
-            Download file
-          </a>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 /* ── Highlight helper ── */
 function Hi({ text, q }: { text: string; q: string }) {
   if (!q) return <>{text}</>;
@@ -118,6 +82,7 @@ interface DocGroup {
     type:          string;
     docStatus:     DocStatus;
     fileUrl?:      string;
+    uploadedAt?:   string;
     rejectReason?: string;
   }>;
 }
@@ -153,7 +118,7 @@ function GroupRow({
   search:    string;
   open:      boolean;
   onToggle:  () => void;
-  onPreview: (url: string, type: string) => void;
+  onPreview: (url: string, type: string, assignmentId: string, timestamp?: string) => void;
   highlightDoc?: string | null;
   highlightAssignment?: string | null;
   newAssignmentId?: string | null;
@@ -290,7 +255,7 @@ function GroupRow({
                     <div className="w-16 flex-shrink-0 text-right">
                       {doc.fileUrl && doc.fileUrl !== '[image-data-stripped]' ? (
                         <button
-                          onClick={(e) => { e.stopPropagation(); onPreview(doc.fileUrl!, doc.type); }}
+                          onClick={(e) => { e.stopPropagation(); onPreview(doc.fileUrl!, doc.type, group.assignmentId, doc.uploadedAt); }}
                           className="inline-flex items-center gap-1 px-2.5 py-1 bg-primary/8 hover:bg-primary/15 border border-primary/20 text-primary rounded-lg text-xs font-medium transition-colors"
                         >
                           <Eye className="w-3 h-3" /> View
@@ -319,7 +284,7 @@ function GroupCard({
   search:    string;
   open:      boolean;
   onToggle:  () => void;
-  onPreview: (url: string, type: string) => void;
+  onPreview: (url: string, type: string, assignmentId: string, timestamp?: string) => void;
   highlightDoc?: string | null;
   highlightAssignment?: string | null;
   newAssignmentId?: string | null;
@@ -377,7 +342,7 @@ function GroupCard({
                 </span>
                 {doc.fileUrl && doc.fileUrl !== '[image-data-stripped]' && (
                   <button
-                    onClick={(e) => { e.stopPropagation(); onPreview(doc.fileUrl!, doc.type); }}
+                    onClick={(e) => { e.stopPropagation(); onPreview(doc.fileUrl!, doc.type, group.assignmentId, doc.uploadedAt); }}
                     className="flex-shrink-0 inline-flex items-center gap-1 px-2.5 py-1 bg-primary/8 hover:bg-primary/15 border border-primary/20 text-primary rounded-lg text-xs font-medium transition-colors"
                   >
                     <Eye className="w-3 h-3" /> View
@@ -396,7 +361,7 @@ function GroupCard({
 export default function DocumentArchive({ assignments, completed, cancelled = [], search, onSearchChange, notificationTarget, onNotificationTargetHandled }: Props) {
   const [filter,  setFilter]  = useState<DocFilter>(() => savedFilters().status);
   const [period, setPeriod] = useState<ArchiveDatePeriod>(() => savedFilters().date);
-  const [preview, setPreview] = useState<{ url: string; type: string } | null>(null);
+  const [preview, setPreview] = useState<{ url: string; type: string; assignmentId: string; timestamp?: string } | null>(null);
   const [openIds, setOpenIds] = useState<Set<string>>(new Set());
   const [highlightDoc, setHighlightDoc] = useState<string | null>(null);
   const [highlightAssignment, setHighlightAssignment] = useState<string | null>(null);
@@ -441,6 +406,7 @@ export default function DocumentArchive({ assignments, completed, cancelled = []
         assignmentId: id, createdAt, driverName, truckPlate, deliveryDate, deliveryStatus, documentSummary,
         docs: uploaded.map(d => ({
           type: d.type, docStatus: d.docStatus, fileUrl: d.fileUrl, rejectReason: d.rejectReason,
+          uploadedAt: 'uploadedAt' in d && typeof d.uploadedAt === 'string' ? d.uploadedAt : undefined,
         })),
       };
       all.push(group);
@@ -514,7 +480,8 @@ export default function DocumentArchive({ assignments, completed, cancelled = []
     item.focus({ preventScroll: true });
     if (doc) {
       setHighlightDoc(`${notificationTarget.assignmentId}|${doc.type}`);
-      if (doc.fileUrl && doc.fileUrl !== '[image-data-stripped]') setPreview({ url: doc.fileUrl, type: doc.type });
+      if (doc.fileUrl && doc.fileUrl !== '[image-data-stripped]') setPreview({ url: doc.fileUrl, type: doc.type,
+        assignmentId: assignment.id, timestamp: 'uploadedAt' in doc && typeof doc.uploadedAt === 'string' ? doc.uploadedAt : undefined });
     } else {
       setHighlightAssignment(notificationTarget.assignmentId);
     }
@@ -658,7 +625,7 @@ export default function DocumentArchive({ assignments, completed, cancelled = []
                     search={focusedId === group.assignmentId ? '' : search}
                     open={openIds.has(group.assignmentId)}
                     onToggle={() => toggle(group.assignmentId)}
-                    onPreview={(url, type) => setPreview({ url, type })}
+                    onPreview={(url, type, assignmentId, timestamp) => setPreview({ url, type, assignmentId, timestamp })}
                     highlightDoc={highlightDoc}
                     highlightAssignment={highlightAssignment}
                     newAssignmentId={newAssignmentId}
@@ -678,7 +645,7 @@ export default function DocumentArchive({ assignments, completed, cancelled = []
                 search={focusedId === group.assignmentId ? '' : search}
                 open={openIds.has(group.assignmentId)}
                 onToggle={() => toggle(group.assignmentId)}
-                onPreview={(url, type) => setPreview({ url, type })}
+                onPreview={(url, type, assignmentId, timestamp) => setPreview({ url, type, assignmentId, timestamp })}
                 highlightDoc={highlightDoc}
                 highlightAssignment={highlightAssignment}
                 newAssignmentId={newAssignmentId}
@@ -703,7 +670,8 @@ export default function DocumentArchive({ assignments, completed, cancelled = []
       )}
 
       {preview && (
-        <ImagePreviewModal url={preview.url} docType={preview.type} onClose={() => setPreview(null)} />
+        <UploadedFilePreviewModal url={preview.url} title={preview.type} kind="document"
+          timestamp={preview.timestamp} assignmentId={preview.assignmentId} onClose={() => setPreview(null)} />
       )}
     </div>
   );

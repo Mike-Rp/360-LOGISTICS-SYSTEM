@@ -94,6 +94,11 @@ export interface Assignment {
   pickupArrivedAt?: string | null;
   loadingStartedAt?: string | null;
   loadingCompletedAt?: string | null;
+  /** Persisted reason for historical cancelled assignments (REQ-003). */
+  cancelReason?: string | null;
+  /** Read from the existing cancellation audit record for historical detail. */
+  cancelledBy?: string | null;
+  cancelledAt?: string | null;
   departedAt?: string | null;
   destinationArrivedAt?: string | null;
   unloadingStartedAt?: string | null;
@@ -238,7 +243,7 @@ export interface AdminActivityEntry {
   company?: string;
   memberName?: string;
   memberEmail?: string;
-  /* task_edited only — written by the edit_assignment() database function */
+  /* task_edited and task_cancelled — written by their database functions */
   reason?: string;
   changes?: Record<string, { old: string | null; new: string | null }>;
 }

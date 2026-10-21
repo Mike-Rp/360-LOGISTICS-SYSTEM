@@ -1,5 +1,5 @@
-import { Check, ChevronDown, ChevronUp, Eye, FileText, X } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { Check, ChevronDown, ChevronUp, Eye } from 'lucide-react';
+import { useEffect, useRef } from 'react';
 import type { Assignment, StatusPhoto } from '../../data/assignmentTypes';
 import { OPERATIONAL_PHOTO_GROUPS } from '../../lib/assignmentOperational';
 import { splitDisplayDateTime } from '../../lib/displayDateTime';
@@ -9,7 +9,7 @@ export function OperationalPhotoItem({ groupTitle, label, photo, required = true
   label: string;
   photo?: StatusPhoto;
   required?: boolean;
-  onPreview: (url: string, type: string) => void;
+  onPreview: (url: string, type: string, timestamp?: string) => void;
 }) {
   const labelRow = <div className="mt-2">
     <span className="break-words text-sm font-medium text-foreground">{label}</span>
@@ -24,7 +24,7 @@ export function OperationalPhotoItem({ groupTitle, label, photo, required = true
 
   const timestamp = splitDisplayDateTime(photo.timestamp);
   return <div className="min-w-0">
-    <button type="button" onClick={() => onPreview(photo.url, `${groupTitle} · ${label}`)}
+    <button type="button" onClick={() => onPreview(photo.url, `${groupTitle} · ${label}`, photo.timestamp)}
       className="group relative block w-full overflow-hidden rounded-md bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
       aria-label={`View ${groupTitle} ${label} photo`}>
       <span className="flex h-28 w-full items-center justify-center sm:h-32">
@@ -45,7 +45,7 @@ export function OperationalPhotoItem({ groupTitle, label, photo, required = true
 /** Shared read-only evidence accordion for active shipments and completed summaries. */
 export function OperationalEvidence({ assignment, onPreview, expandedGroup, onExpand }: {
   assignment: Assignment;
-  onPreview: (url: string, type: string) => void;
+  onPreview: (url: string, type: string, timestamp?: string) => void;
   expandedGroup: string | null;
   onExpand: (group: string | null) => void;
 }) {
@@ -105,32 +105,4 @@ export function OperationalEvidence({ assignment, onPreview, expandedGroup, onEx
       </div>;
     })}
   </section>;
-}
-
-/** Shared viewer for operational photos and the existing shipment document preview. */
-export function ImagePreviewModal({ url, docType, onClose }: { url: string; docType: string; onClose: () => void }) {
-  const [imgFailed, setImgFailed] = useState(false);
-  const isPdf = url.startsWith('data:application/pdf') || imgFailed;
-  return <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-    <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
-    <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-xl flex flex-col max-h-[85vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-      <div className="flex items-center justify-between px-5 py-3 border-b border-border flex-shrink-0">
-        <div className="flex items-center gap-2">
-          <FileText className="w-4 h-4 text-muted-foreground" />
-          <span className="text-sm font-semibold text-foreground">{docType}</span>
-        </div>
-        <button type="button" onClick={onClose} aria-label="Close image preview" className="p-1.5 rounded-lg hover:bg-accent transition-colors text-muted-foreground">
-          <X className="w-5 h-5" />
-        </button>
-      </div>
-      <div className="flex-1 overflow-auto p-4 flex items-center justify-center bg-muted/10">
-        {isPdf ? <iframe src={url} className="w-full h-[500px] rounded-lg border border-border" title={docType} />
-          : <img src={url} alt={docType} onError={() => setImgFailed(true)} className="max-w-full max-h-[500px] object-contain rounded-xl shadow-md" />}
-      </div>
-      <div className="px-5 py-3 border-t border-border flex-shrink-0">
-        <a href={url} download={`${docType}.${isPdf ? 'pdf' : 'jpg'}`}
-          className="text-xs text-primary underline hover:text-primary/80">Download file</a>
-      </div>
-    </div>
-  </div>;
 }

@@ -37,6 +37,19 @@ export function getAdminOperationalProgress(assignment: Assignment) {
   };
 }
 
+/** Presentation hint only. The cancellation RPC locks and checks the row again. */
+export function canCancelBeforeLoadingCompletes(assignment: Assignment): boolean {
+  return assignment.taskStatus === 'Assigned'
+    && !assignment.loadingCompletedAt
+    && !assignment.departedAt
+    && !assignment.destinationArrivedAt
+    && !assignment.unloadingStartedAt
+    && !assignment.unloadingCompletedAt
+    && (assignment.operationalStage == null
+      || assignment.operationalStage === 'pickup_arrived'
+      || assignment.operationalStage === 'loading');
+}
+
 export function formatOperationalStamp(value?: string | null): string | null {
   if (!value) return null;
   // Older display stamps have no year or timezone; show them as stored.
