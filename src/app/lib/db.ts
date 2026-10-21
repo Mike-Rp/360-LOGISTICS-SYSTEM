@@ -709,7 +709,8 @@ export function syncAdminData(data: AdminData): Promise<void> {
 export type AssignmentActionErrorCode =
   | 'wrong_password' | 'reauth_required' | 'not_editable' | 'not_cancellable' | 'loading_completed'
   | 'driver_busy' | 'truck_unavailable' | 'no_changes' | 'not_authorized' | 'not_deployed' | 'invalid' | 'network'
-  | 'already_archived' | 'truck_busy';
+  | 'already_archived' | 'truck_busy'
+  | 'already_completed' | 'not_completable' | 'documents_not_approved' | 'driver_archived' | 'truck_archived';
 export class AssignmentActionError extends Error {
   code: AssignmentActionErrorCode;
   constructor(code: AssignmentActionErrorCode, detail?: string) { super(detail ?? code); this.code = code; }
@@ -757,6 +758,7 @@ function actionFailure(error: { message?: string; code?: string }): AssignmentAc
   const known: AssignmentActionErrorCode[] = [
     'wrong_password', 'loading_completed', 'reauth_required', 'not_editable', 'not_cancellable', 'driver_busy', 'truck_unavailable', 'no_changes', 'not_authorized',
     'already_archived', 'truck_busy',
+    'already_completed', 'not_completable', 'documents_not_approved', 'driver_archived', 'truck_archived',
   ];
   for (const c of known) if (m.includes(c)) return new AssignmentActionError(c, m);
   if (error.code === 'PGRST202') return new AssignmentActionError('not_deployed', m);   // function missing: migration not applied
@@ -782,6 +784,40 @@ export async function cancelAssignment(id: string, reason: string, password: str
     p_id: id, p_reason: reason.trim(), p_password: password,
   });
   if (error) throw actionFailure(error);
+}
+
+/* ── Dispatch / complete (Monitor → Assign Task, View Details → Mark Complete) ──
+   One database call each: dispatch_assignment() locks the driver and truck, re-checks both
+   are free, then creates the assignment + its 6 document slots, marks driver/truck Assigned
+   and logs task_assigned. complete_assignment() checks Delivered + all 6 documents approved,
+   then archives it, frees driver/truck and logs task_completed. All or nothing.
+   Like edit/cancel, these do NOT go through syncAdminData — the caller reloads afterwards.
+   The database makes the assignment id (ASN + 5 digits) and returns it. */
+export interface NewAssignment {
+  driverId: string; truckId: string; destination: string; destinationArea: string; company: string;
+  pickupLocation: string; deliveryLocation?: string; pickupTime?: string; pickedUpDate?: string;
+  eta?: string; deliveryDate?: string; remarks?: string;
+}
+const DISPATCH_COLUMNS: Record<keyof NewAssignment, string> = {
+  driverId: 'driver_id', truckId: 'truck_id', destination: 'destination', destinationArea: 'destination_area',
+  company: 'company', pickupLocation: 'pickup_location', deliveryLocation: 'delivery_location',
+  pickupTime: 'pickup_time', pickedUpDate: 'picked_up_date', eta: 'eta', deliveryDate: 'delivery_date', remarks: 'remarks',
+};
+
+export async function dispatchAssignment(input: NewAssignment): Promise<string> {
+  const payload = Object.fromEntries(Object.entries(input)
+    .filter(([, v]) => typeof v === 'string')
+    .map(([k, v]) => [DISPATCH_COLUMNS[k as keyof NewAssignment], v]));
+  const { data, error } = await supabase.rpc('dispatch_assignment', { p_fields: payload });
+  if (error) throw actionFailure(error);
+  return data as string;
+}
+
+/** Returns the completedAt label the database saved. */
+export async function completeAssignment(id: string): Promise<string> {
+  const { data, error } = await supabase.rpc('complete_assignment', { p_id: id });
+  if (error) throw actionFailure(error);
+  return data as string;
 }
 
 /* ── Accounts: archive instead of delete, and new PIN ──

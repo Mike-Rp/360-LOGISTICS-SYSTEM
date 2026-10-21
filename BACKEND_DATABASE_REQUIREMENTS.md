@@ -32,6 +32,55 @@ After implementation and verification, set **Status** to `Implemented` and
 record the migration, affected backend/API/frontend files, and verification.
 Do not infer approval from a request for a UI change.
 
+## Current status (as of 2026-10-21)
+
+All migrations below were applied by hand in the SQL Editor on 360Logistics DB
+and their SQL test files passed (each test rolls itself back).
+
+| Item | Migration | Tests | Status |
+|---|---|---|---|
+| REQ-001 Destination / delivery location | `20261017000000`–`000003` | — | Implemented |
+| REQ-002 Driver stages + photo/status gates | `20261018000000`, `000001`, `20261021000002` | `req002_driver_gates` 11/11 | In Progress (gates live; see entry) |
+| REQ-003 Cancel: reason + password + Loading cutoff | `20261021000000` | `req003_cancel_cutoff` 16/16 | Implemented |
+| REQ-004 OPM role | `20261018000003`, `000004`, `20261019000000` | — | In Progress (follow-ups below) |
+| REQ-005 Exact pickup/delivery coordinates | `20261020000000`, `000001` | 20/20 | Completed |
+| REQ-006 CSR password reset via OPM link | `20261020000002`, `000003` + Edge Function | `req006` 32/32 | Backend live; live CSR reset test pending |
+| REQ-009 Single active session (newest login wins) | `20261021000001` | `single_active_session` 15/15 | Implemented |
+| REQ-010 Store file paths, 1-hour links | `20261021000003` | `store_file_paths` 4/4 | Implemented |
+| REQ-011 Dispatch / complete as one database action | `20261021000004` | `dispatch_complete` 12/12 | Implemented |
+
+### Still needed (backend / database)
+
+1. **REQ-011 hardening** — once that frontend is live, block direct inserts of
+   new assignments and direct `state = 'completed'` updates outside the two
+   functions (same pattern as the cancel guard).
+2. **Activity-log gaps** (REQ-004 follow-up) — server-side log rows for
+   driver/truck add and edit, PIN reset, and document approve/reject. These
+   still log through the screen's auto-save, or not at all. Never log PINs,
+   passwords or tokens.
+3. **Team member archive / restore** (REQ-004 follow-up) — an OPM-only RPC that
+   sets `profiles.status` to `removed` / `active` and writes one log row,
+   instead of deleting the Auth user.
+4. **REQ-008** Delay / incident data — server-stamped report and resolution
+   times, measured delay, Failed / Issue history.
+5. **REQ-007** Report ID + QR verification — issued-report table, issuing
+   function and a safe lookup.
+6. **Stage remarks** — persist driver remarks per workflow stage (design to be
+   confirmed).
+7. **CSR setup link** — first password for a new CSR through a one-time link
+   (like the REQ-006 reset link) instead of showing it once on screen.
+8. **Clean-up:**
+   - Remove leftover Mapbox coordinate code in `db.ts` and update the REQ-005 notes.
+   - Drop the obsolete `csr_password_reset_approved()` helper.
+   - Correct the `app.bypass_driver_guard` comment in `advance_driver_stage`:
+     the flag lasts for the whole transaction, not just the call.
+9. **REQ-006** live test — one real CSR reset end-to-end on the live site.
+10. **Optional:** move files copied before REQ-010 so that old 10-year links
+    stop working (skipped for now by decision).
+11. **Data review** (no change made) — one active assignment is Delivered with
+    no `departed_at`, and one was cancelled after loading (before the REQ-003
+    cutoff existed).
+
 ## [REQ-001] Separate Destination and Delivery Location
 
 **Status:** Implemented
@@ -135,6 +184,15 @@ superseded by the two-part version — do not run both.
 ## [REQ-002] Persisted Driver Pickup, Loading, Arrival, and Unloading Workflow
 
 **Status:** In Progress
+
+**2026-10-21 — photo and status gates applied:** `20261021000002_driver_workflow_gates.sql`
+(tests `supabase/tests/req002_driver_gates.test.sql`, 11/11 passed).
+`advance_driver_stage` now requires `loading_before` to start Loading,
+`unloading_before` to start Unloading and `unloading_after` to finish it.
+`guard_assignment_update` lets a driver change status only Picked Up → In
+Transit, In Transit → Delivered (after unloading is finished), or to Failed /
+Issue; anything else raises `invalid_status_transition`. Remaining: stage
+remarks (see Current status).
 
 **Area:** Driver App / Dispatch / Deliveries / Dashboard / Photos / Reports
 
@@ -395,10 +453,15 @@ five transitions were exercised later through the Driver UI as recorded below.
 
 ## [REQ-003] Cancel Assignment: Required Reason, Password Re-auth, Driver Notice
 
-**Status:** In Progress
+**Status:** Implemented
 
-**2026-10-21 local follow-up, not applied to the connected shared/production
-Supabase project:** `supabase/migrations/20261021000000_csr_cancel_loading_cutoff.sql`
+**2026-10-21 — applied and verified:** the user applied
+`20261021000000_csr_cancel_loading_cutoff.sql` on 360Logistics DB;
+`supabase/tests/req003_cancel_cutoff.test.sql` passed 16/16 and the cancel flow
+was tested on localhost. The note below describes the migration as it was
+prepared before it was applied.
+
+**2026-10-21 local follow-up (prepared before applying):** `supabase/migrations/20261021000000_csr_cancel_loading_cutoff.sql`
 is prepared for manual review. The existing one- and two-argument
 `cancel_assignment` overloads remain live until this migration is applied;
 both are insufficient for the new rule. The migration drops those overloads,
@@ -996,5 +1059,90 @@ are approved. No schema or backend changes are included in the current local
 report UI task.
 
 **Approval:** Pending. Do not infer backend approval from the UI request.
+
+---
+
+## [REQ-009] Single active session for Driver, CSR and OPM
+
+**Status:** Implemented
+
+**Area:** Auth / Login / all screens
+
+**Requested change:** One account may be signed in on one device at a time.
+The newest login wins; the older device is signed out automatically (an upload
+interrupted on the old device is acceptable).
+
+**Implementation (2026-10-21):** `20261021000001_single_active_session.sql`.
+`session_is_current()` checks that the request's JWT `session_id` is the
+user's newest row in `auth.sessions`; `is_staff()`, `can_write()`, `is_opm()`,
+`my_driver_id()` and the `profiles_select` / `drivers_select` /
+`csr_password_reset_owner_read` policies require it. `my_session_status()`
+returns current / replaced / signed_out and removes older sessions.
+`sync_driver_login` ends a driver's sessions when the PIN or phone changes.
+Frontend: `db.ts` (`endOlderSessions`, `checkSessionStatus`, sign-out of this
+device only), `App.tsx`, `LoginScreen.tsx`, `DriverInterface.tsx`.
+
+**Verification:** `supabase/tests/single_active_session.test.sql` 15/15 passed;
+tested on localhost; live since commit `5278468`.
+
+---
+
+## [REQ-010] Store file paths instead of 10-year signed links
+
+**Status:** Implemented
+
+**Area:** Storage / Photos / Documents / Notifications
+
+**Requested change:** Photos and documents must not be stored as signed links
+valid for 10 years. Store only the path inside the private bucket and create a
+short-lived link when the data is loaded.
+
+**Implementation (2026-10-21):** `20261021000003_store_file_paths.sql` rewrote
+155 stored links to paths in `status_photos.url`,
+`assignment_documents.file_url` and `notifications.photo_url` (document upload
+times preserved) and added CHECK constraints so a link can never be stored
+again. Frontend: `src/app/lib/storageRefs.ts` and `db.ts` sign paths in batches
+for 1 hour, cache them and renew 10 minutes before expiry.
+
+**Verification:** before/after fingerprints matched (paths, document times,
+statuses, row counts); `supabase/tests/store_file_paths.test.sql` 4/4 passed;
+`storageRefs.test.cjs` 6/6. Links copied before the change keep working until
+they expire (moving the files was skipped by decision).
+
+---
+
+## [REQ-011] Dispatch and completion as one database action
+
+**Status:** Implemented
+
+**Area:** Dispatch / Deliveries / Activity log
+
+**Requested change:** Assigning and completing a delivery must save fully or
+not at all, must not double-book a driver or truck, and must always write its
+activity-log row.
+
+**Why backend/database support is required:** the screens saved each step
+(assignment, 6 document slots, driver status, truck status, log row) as
+separate requests through `syncAdminData`. A dropped connection could leave
+half a delivery, and nothing re-checked that the driver/truck were still free
+at the moment of saving.
+
+**Implementation (2026-10-21):** `20261021000004_dispatch_complete_rpcs.sql`
+(additive, nothing dropped):
+- `dispatch_assignment(p_fields jsonb) → id` — admin/CSR only; locks driver then
+  truck, refuses `driver_busy` / `truck_unavailable` / archived, creates the
+  assignment (database-generated `ASN#####` id) and its 6 document slots, marks
+  driver/truck Assigned, logs `task_assigned`.
+- `complete_assignment(p_id) → completed_at` — admin/CSR only; locks the
+  assignment, requires Delivered and all 6 documents approved, archives it,
+  frees driver/truck, logs `task_completed`.
+Frontend: `db.ts` (`dispatchAssignment`, `completeAssignment`, new error codes),
+`DriversManagement.tsx` (Assign Task and Mark Complete call these through
+`onServerChange`; no local copy or client log row).
+
+**Verification:** `supabase/tests/dispatch_complete.test.sql` 12/12 passed,
+including the all-or-nothing check; TypeScript and 74 Node tests pass.
+Tested on localhost by the user (2026-10-21): no problems found. Later: block
+direct inserts/completions outside these functions.
 
 ---

@@ -33,7 +33,8 @@ import type { ActivityKey } from '../../lib/notificationEvents';
 import { TRUCK_CLASSIFICATIONS, truckSideImageFor, capacityKgOnly } from '../../data/truckTypes';
 import { destinationAreaEnabled, getAssignmentRoute, getDeliveryLocation } from '../../data/assignmentRoute';
 import {
-  verifyOwnPassword, editAssignment, cancelAssignment, notifyAssignmentCancelled, loadAdminData, syncAdminData, AssignmentActionError,
+  verifyOwnPassword, editAssignment, cancelAssignment, notifyAssignmentCancelled, loadAdminData,
+  dispatchAssignment, completeAssignment, AssignmentActionError,
   type AssignmentActionErrorCode, type AssignmentEdit, type AssignmentLocationEdit,
 } from '../../lib/db';
 
@@ -53,7 +54,7 @@ function Highlight({ text, query }: { text: string; query: string }) {
   );
 }
 import {
-  DOCUMENT_TYPES, DEMO_ADMIN_EMAIL, parseStoredTimestamp,
+  DEMO_ADMIN_EMAIL, parseStoredTimestamp,
   type Assignment, type CompletedTask, type LocalDriver, type LocalTruck,
   type DocStatus, type AdminActivityEntry, type AdminActivityInput, type AssignmentDoc, type AppNotification,
 } from '../../data/assignmentTypes';
@@ -218,7 +219,12 @@ const actionMessage = (code: AssignmentActionErrorCode): string => ({
   not_deployed:      'This feature isn\'t set up on the database yet (the migration hasn\'t been applied).',
   already_archived:  'That record has been archived. Refresh the page.',
   truck_busy:        'That truck is on another delivery. Pick a different truck.',
-  invalid:           'The server rejected one of the values. Check the form and try again.',
+  already_completed: 'This delivery is already completed. Refresh the page.',
+  not_completable:   'This delivery can\'t be completed yet — it must be marked Delivered first.',
+  documents_not_approved: 'All required documents must be approved before marking this delivery complete.',
+  driver_archived:   'That driver has been archived. Pick a different driver.',
+  truck_archived:    'That truck has been archived. Pick a different truck.',
+  invalid:          'The server rejected one of the values. Check the form and try again.',
   network:           'Couldn\'t reach the server. Check your connection and try again.',
 }[code]);
 
@@ -1832,7 +1838,7 @@ function reviewQueueRequested() {
 /* ─── Main Component ───────────────────────────────── */
 export default function DriversManagement({
   drivers, setDrivers, trucks, setTrucks,
-  assignments, setAssignments, notifications, activityLog, completed, setCompleted, cancelled, setCancelled,
+  assignments, setAssignments, notifications, completed, setCompleted, cancelled, setCancelled,
   isViewOnly = false, onLogActivity, onServerChange, adminEmail,
   openDispatchOnMount = false, onDispatchOpened, search, onSearchChange, notificationTarget, onNotificationTargetHandled,
 }: Props) {
@@ -1897,6 +1903,8 @@ export default function DriversManagement({
   const [taskEta,         setTaskEta]         = useState('');
   const [taskErrors,      setTaskErrors]      = useState<Record<string, string>>({});
   const [taskBadDates,    setTaskBadDates]    = useState<BadDates>({ pickup: false, delivery: false });
+  const [taskSaving, setTaskSaving] = useState(false);
+  const taskSavingRef = useRef(false);
 
   /* Quick-add layered over the Assign Task modal — the wizard stays mounted
      underneath, so anything already typed survives the round trip. */
@@ -1941,8 +1949,8 @@ export default function DriversManagement({
 
   const handleNextStep = () => { if (validateStep1()) { setTaskErrors({}); setTaskStep(2); } };
 
-  const handleAssignTask = () => {
-    if (isViewOnly) return;
+  const handleAssignTask = async () => {
+    if (isViewOnly || taskSavingRef.current) return;
     /* Same rules as the live check, re-run on submit (typed dates skip the calendar's limits) */
     const e = scheduleErrors({
       pickup: taskPickedUpDate, delivery: taskDate, pickupTime: taskPickupTime, eta: taskEta,
@@ -1954,43 +1962,42 @@ export default function DriversManagement({
     /* Step 1 is already validated, but re-check in case state changed behind us */
     if (!validateStep1()) { setTaskStep(1); return; }
 
-    const driver      = drivers.find((d) => d.id === taskDriverId)!;
-    const truck       = trucks.find((t)  => t.id  === taskTruckId)!;
-    const newAssignId = `ASN${String(Date.now()).slice(-5)}`;
-
-    setAssignments((p) => [...p, {
-      id: newAssignId,
-      driverName: driver.name, driverId: driver.id,
-      truckPlate: truck.plateNumber, truckId: truck.id,
-      destination:     `${taskFrom.trim()} → ${taskTo.trim()}`,
-      ...(destinationAreaEnabled ? { destinationArea: taskDestinationArea.trim() } : {}),
-      company:         taskCompany.trim(),
-      pickupLocation:  taskPickupLocation.trim(),
-      deliveryLocation: taskTo.trim(),
-      pickupTime:      time24ToDisplay(taskPickupTime),
-      pickedUpDate:    isoToDisplay(taskPickedUpDate),
-      eta:             time24ToDisplay(taskEta),
-      /* ATA is captured later, when the task is marked as delivered */
-      ata:             '',
-      deliveryDate:    isoToDisplay(taskDate),
-      remarks:         taskRemarks.trim(),
-      taskStatus: 'Assigned',
-      documents: DOCUMENT_TYPES.map((type) => ({ type, uploaded: false, docStatus: 'pending' as DocStatus })),
-      assignedAt: new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
-    }]);
-    markLocalRecordAdded('assignment', newAssignId);
-    activePage.setPage(1);
-    setDrivers((p) => p.map((d) => d.id === taskDriverId ? { ...d, status: 'Assigned' as const } : d));
-    setTrucks((p)  => p.map((t) => t.id === taskTruckId  ? { ...t, status: 'Assigned' }   : t));
-    onLogActivity?.({
-      type: 'task_assigned',
-      driverName: driver.name,
-      truckPlate: truck.plateNumber,
-      assignmentId: newAssignId,
-      destination: `${taskFrom.trim()} → ${destinationAreaEnabled ? taskDestinationArea.trim() : taskTo.trim()}`,
-      company: taskCompany.trim(),
-    });
-    resetAssignTask();
+    taskSavingRef.current = true;
+    setTaskSaving(true);
+    setTaskErrors({});
+    try {
+      let newId = '';
+      await onServerChange(async () => {
+        newId = await dispatchAssignment({
+          driverId: taskDriverId,
+          truckId: taskTruckId,
+          destination: `${taskFrom.trim()} → ${taskTo.trim()}`,
+          destinationArea: taskDestinationArea.trim(),
+          company: taskCompany.trim(),
+          pickupLocation: taskPickupLocation.trim(),
+          deliveryLocation: taskTo.trim(),
+          pickupTime: time24ToDisplay(taskPickupTime),
+          pickedUpDate: isoToDisplay(taskPickedUpDate),
+          eta: time24ToDisplay(taskEta),
+          deliveryDate: isoToDisplay(taskDate),
+          remarks: taskRemarks.trim(),
+        });
+      });
+      markLocalRecordAdded('assignment', newId);
+      activePage.setPage(1);
+      resetAssignTask();
+    } catch (err) {
+      const code = errorCode(err);
+      setTaskErrors({ submit: actionMessage(code) });
+      if (code === 'driver_busy' || code === 'driver_archived' || code === 'truck_unavailable' || code === 'truck_archived') {
+        if (code === 'driver_busy' || code === 'driver_archived') setTaskDriverId('');
+        else setTaskTruckId('');
+        setTaskStep(1);
+      }
+    } finally {
+      taskSavingRef.current = false;
+      setTaskSaving(false);
+    }
   };
 
   /* A document can be (re-)uploaded after the delivery is already archived to
@@ -2058,32 +2065,11 @@ export default function DriversManagement({
     if (!a || !canCompleteAssignment(a)) {
       throw new Error('All required documents must be approved before marking this delivery complete.');
     }
-    const nextCompleted = [...completed, { ...a, completedAt: new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }];
-    const nextAssignments = assignments.filter((x) => x.id !== id);
-    const nextDrivers = drivers.map((d) => d.id === a.driverId ? { ...d, status: 'Complete' as const } : d);
-    const nextTrucks = trucks.map((t) => t.plateNumber === a.truckPlate ? { ...t, status: 'Available' as const } : t);
-    const completionActivity: AdminActivityEntry = {
-      id: `act-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      timestamp: new Date().toISOString(),
-      type: 'task_completed',
-      driverName: a.driverName,
-      truckPlate: a.truckPlate,
-      assignmentId: id,
-      destination: a.destination,
-      company: a.company,
-      adminEmail: adminEmail ?? undefined,
-    };
-    // Use the existing save path, but show success only after it has persisted.
-    await onServerChange(
-      () => syncAdminData({ drivers: nextDrivers, trucks: nextTrucks, assignments: nextAssignments,
-        completed: nextCompleted, cancelled, notifications, activityLog: [completionActivity, ...activityLog] }),
-      () => {
-        setAssignments(nextAssignments);
-        setCompleted(nextCompleted);
-        setDrivers(nextDrivers);
-        setTrucks(nextTrucks);
-      },
-    );
+    try {
+      await onServerChange(() => completeAssignment(id).then(() => undefined));
+    } catch (err) {
+      throw new Error(actionMessage(errorCode(err)));
+    }
   };
 
   /* The three-argument RPC verifies this attempt's password, row-locks and checks
@@ -2538,6 +2524,7 @@ export default function DriversManagement({
       {showAssignTask && !isViewOnly && (
         <ModalShell title="Dispatch Truck" onClose={resetAssignTask}>
           <StepProgress step={taskStep} />
+          {taskErrors.submit && <p role="alert" className="text-xs text-red-700 mb-4">{taskErrors.submit}</p>}
 
           {/* ══════════ STEP 1 — Assignment ══════════ */}
           {taskStep === 1 && (
@@ -2736,9 +2723,9 @@ export default function DriversManagement({
                   <ArrowLeft className="w-4 h-4" /> Back
                 </button>
                 {/* Blocked while a date is invalid — the error is shown under the field */}
-                <button onClick={handleAssignTask} disabled={!!(taskErrors.pickedUpDate || taskErrors.date)}
+                <button onClick={handleAssignTask} disabled={taskSaving || !!(taskErrors.pickedUpDate || taskErrors.date)}
                   className="flex-1 px-5 py-2.5 bg-[#1DBF73] text-white rounded-[10px] hover:bg-[#19a865] transition-all shadow-sm hover:shadow active:scale-[0.99] text-sm font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
-                  <CheckCircle2 className="w-4 h-4" /> Dispatch Truck
+                  <CheckCircle2 className="w-4 h-4" /> {taskSaving ? 'Saving…' : 'Dispatch Truck'}
                 </button>
               </div>
             </div>
