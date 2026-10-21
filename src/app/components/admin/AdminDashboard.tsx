@@ -332,6 +332,7 @@ export default function AdminDashboard({
           activityLog={activityLog}
           onLogActivity={onLogActivity}
           adminEmail={adminEmail}
+          adminName={adminName}
         />
       )}
     </div>

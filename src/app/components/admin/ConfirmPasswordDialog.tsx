@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { KeyRound, AlertTriangle } from 'lucide-react';
 import { verifyOwnPassword, AssignmentActionError } from '../../lib/db';
+import PasswordVisibilityInput from './PasswordVisibilityInput';
 
 /* Failed password attempts are counted per browser tab and survive closing/reopening
    the dialog. Supabase Auth also rate-limits sign-ins on its own servers. */
@@ -104,8 +105,8 @@ export default function ConfirmPasswordDialog({
 
         {requirePassword && !blockedReason && (
           <>
-            <label className="block text-xs font-medium text-foreground mt-4 mb-1.5">Your account password</label>
-            <input type="password" autoFocus autoComplete="current-password" value={password}
+            <label htmlFor="account-confirm-password" className="block text-xs font-medium text-foreground mt-4 mb-1.5">Your account password</label>
+            <PasswordVisibilityInput id="account-confirm-password" autoFocus autoComplete="current-password" value={password}
               onChange={(e) => { setPassword(e.target.value); setError(''); }}
               disabled={busy || lockedFor > 0}
               placeholder="Password"

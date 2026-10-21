@@ -12,6 +12,7 @@ import DeliveryTimingBadge from './DeliveryTimingBadge';
 import { getDeliveryTimingStatus } from '../../lib/assignmentTiming';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
 import { sortNewestFirst, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
+import { sortCompletedNewestFirst } from '../../lib/completedOrdering';
 import { capacityKgOnly } from '../../data/truckTypes';
 import { getAssignmentRoute } from '../../data/assignmentRoute';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
@@ -253,9 +254,9 @@ export default function DeliveryTable({
     .filter((a) => matchesPeriod(a, period))
     .filter((a) => matchesSearch([a.truckPlate, a.id, a.driverName, a.destination, a.destinationArea ?? '', a.company, a.taskStatus])), (assignment) => assignment.id);
 
-  const filteredDone = sortNewestFirst(completed
+  const filteredDone = sortCompletedNewestFirst(completed
     .filter((c) => c.id === linkedCompletedId || (matchesPeriod(c, period) &&
-      matchesSearch([c.truckPlate, c.id, c.driverName, c.destination, c.destinationArea ?? '', c.company]))), (assignment) => assignment.id);
+      matchesSearch([c.truckPlate, c.id, c.driverName, c.destination, c.destinationArea ?? '', c.company]))));
 
   const filteredCancelled = sortNewestFirst(cancelled
     .filter((a) => matchesPeriod(a, period))
@@ -278,6 +279,7 @@ export default function DeliveryTable({
       }
       setTab('completed');
       setLinkedCompletedId(params.get('assignment'));
+      setSummaryId(params.get('summary') === 'true' ? params.get('assignment') : null);
       resetPages();
     };
     openCompleted();
@@ -291,12 +293,14 @@ export default function DeliveryTable({
   const selectTab = (next: 'active' | 'completed' | 'cancelled') => {
     setTab(next);
     setLinkedCompletedId(null);
+    setSummaryId(null);
     setHighlightCompletedId(null);
     resetPages();
     const url = new URL(window.location.href);
-    if (url.searchParams.has('tab') || url.searchParams.has('assignment')) {
+    if (url.searchParams.has('tab') || url.searchParams.has('assignment') || url.searchParams.has('summary')) {
       url.searchParams.delete('tab');
       url.searchParams.delete('assignment');
+      url.searchParams.delete('summary');
       window.history.replaceState(window.history.state, '', url);
     }
   };
@@ -623,7 +627,14 @@ export default function DeliveryTable({
         </DialogContent>
       </Dialog>
       <CompletedDeliverySummary assignment={summaryAssignment} truck={summaryAssignment ? truckFor(summaryAssignment) : undefined}
-        onClose={() => setSummaryId(null)} />
+        onClose={() => {
+          setSummaryId(null);
+          const url = new URL(window.location.href);
+          if (url.searchParams.has('summary')) {
+            url.searchParams.delete('summary');
+            window.history.replaceState(window.history.state, '', url);
+          }
+        }} />
     </div>
   );
 }

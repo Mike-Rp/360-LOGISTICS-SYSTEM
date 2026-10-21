@@ -380,9 +380,10 @@ export default function SettingsPanel({ open, onClose, notifEnabled, setNotifEna
                     value={curPass}
                     onChange={(e) => { setCurPass(e.target.value); setPassError(''); }}
                     placeholder="••••••••"
-                    className={`${inputCls(!!passError && !curPass)} pr-10`}
+                    className={`${inputCls(!!passError && !curPass)} pr-12`}
                   />
-                  <button type="button" onClick={() => setShowCur((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                  <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => setShowCur((v) => !v)} aria-label={showCur ? 'Hide password' : 'Show password'}
+                    className="absolute right-1 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary">
                     {showCur ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
@@ -394,9 +395,10 @@ export default function SettingsPanel({ open, onClose, notifEnabled, setNotifEna
                     value={newPass}
                     onChange={(e) => { setNewPass(e.target.value); setPassError(''); }}
                     placeholder="Min. 8 characters"
-                    className={`${inputCls(!!passError)} pr-10`}
+                    className={`${inputCls(!!passError)} pr-12`}
                   />
-                  <button type="button" onClick={() => setShowNew((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                  <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => setShowNew((v) => !v)} aria-label={showNew ? 'Hide password' : 'Show password'}
+                    className="absolute right-1 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary">
                     {showNew ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
@@ -408,9 +410,10 @@ export default function SettingsPanel({ open, onClose, notifEnabled, setNotifEna
                     value={confPass}
                     onChange={(e) => { setConfPass(e.target.value); setPassError(''); }}
                     placeholder="Repeat new password"
-                    className={`${inputCls(!!passError && confPass !== newPass)} pr-10`}
+                    className={`${inputCls(!!passError && confPass !== newPass)} pr-12`}
                   />
-                  <button type="button" onClick={() => setShowConf((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                  <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => setShowConf((v) => !v)} aria-label={showConf ? 'Hide password' : 'Show password'}
+                    className="absolute right-1 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary">
                     {showConf ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>

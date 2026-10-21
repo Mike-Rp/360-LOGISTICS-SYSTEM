@@ -80,3 +80,32 @@ export const OPERATIONAL_PHOTO_GROUPS = [
   { title: 'Pre-trip', slots: [['pretrip_front', 'Front'], ['pretrip_left', 'Left Side'], ['pretrip_right', 'Right Side'], ['pretrip_rear', 'Rear']] },
   { title: 'Unloading', slots: [['unloading_before', 'Before Unloading'], ['unloading_after', 'After Unloading']] },
 ] as const;
+
+export type ActivityStageState = 'completed' | 'in_progress' | 'not_reached';
+
+/** Display state only; the driver workflow remains the authority for transitions. */
+export function getDeliveryActivityStates(assignment: Assignment): ActivityStageState[] {
+  const photos = assignment.statusPhotos ?? {};
+  const evidenceComplete = (groupIndex: number) => OPERATIONAL_PHOTO_GROUPS[groupIndex].slots
+    .every(([key]) => !!photos[key]?.url);
+  const progress = getAdminOperationalProgress(assignment);
+  const completed = [
+    true,
+    !!assignment.pickupArrivedAt && evidenceComplete(0),
+    !!assignment.loadingCompletedAt && evidenceComplete(1),
+    !!assignment.departedAt && !!assignment.destinationArrivedAt && evidenceComplete(2),
+    !!assignment.destinationArrivedAt,
+    !!assignment.unloadingCompletedAt && evidenceComplete(3),
+    assignment.taskStatus === 'Delivered',
+  ];
+  const reached = [
+    true,
+    !!assignment.pickupArrivedAt || progress.index >= 1,
+    !!assignment.loadingStartedAt || progress.index >= 2,
+    !!assignment.departedAt || progress.index >= 3,
+    !!assignment.destinationArrivedAt || progress.index >= 4,
+    !!assignment.unloadingStartedAt || progress.index >= 5,
+    assignment.taskStatus === 'Delivered',
+  ];
+  return completed.map((done, index) => done ? 'completed' : reached[index] ? 'in_progress' : 'not_reached');
+}

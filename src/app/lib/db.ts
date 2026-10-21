@@ -731,9 +731,15 @@ const memberFromRow = (r: Row): TeamMember => ({
 });
 
 export async function listTeamMembers(): Promise<TeamMember[]> {
-  const { data, error } = await supabase.from('profiles').select('*').eq('role', 'csr').order('invited_at');
-  if (error) throw new Error(error.message);
-  return (data ?? []).map(memberFromRow);
+  const rows: Row[] = [];
+  for (let from = 0; ; from += 500) {
+    const { data, error } = await supabase.from('profiles').select('*').eq('role', 'csr')
+      .order('invited_at').order('id').range(from, from + 499);
+    if (error) throw new Error(error.message);
+    rows.push(...(data ?? []));
+    if (!data || data.length < 500) break;
+  }
+  return rows.map(memberFromRow);
 }
 
 export async function createTeamMember(input: { name: string; email: string; password: string; role: 'csr' }): Promise<TeamMember> {
@@ -768,16 +774,21 @@ export async function requestCsrPasswordReset(email: string): Promise<void> {
 }
 
 export async function listCsrPasswordResetRequests(): Promise<CsrPasswordResetRequest[]> {
-  const { data, error } = await supabase.from('csr_password_reset_requests')
-    .select('id,user_id,requested_email,requested_at,status,expires_at')
-    .order('requested_at', { ascending: false }).limit(50);
-  if (error) {
-    if (error.code === '42P01' || error.code === 'PGRST205') {
-      throw new Error('Password reset requests are unavailable. Check the REQ-006 database setup.');
+  const rows: Row[] = [];
+  for (let from = 0; ; from += 500) {
+    const { data, error } = await supabase.from('csr_password_reset_requests')
+      .select('id,user_id,requested_email,requested_at,status,expires_at')
+      .order('requested_at', { ascending: false }).order('id').range(from, from + 499);
+    if (error) {
+      if (error.code === '42P01' || error.code === 'PGRST205') {
+        throw new Error('Password reset requests are unavailable. Check the REQ-006 database setup.');
+      }
+      throw new Error(error.message);
     }
-    throw new Error(error.message);
+    rows.push(...(data ?? []));
+    if (!data || data.length < 500) break;
   }
-  return (data ?? []).map((row) => ({
+  return rows.map((row) => ({
     id: row.id, userId: row.user_id, email: row.requested_email,
     requestedAt: row.requested_at, expiresAt: row.expires_at,
     status: row.status as CsrPasswordResetRequest['status'],

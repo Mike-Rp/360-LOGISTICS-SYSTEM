@@ -18,10 +18,12 @@ import ASNWithCopy from './ASNWithCopy';
 import DocumentsSummaryCard from './DocumentsSummaryCard';
 import { OperationalEvidence } from './ShipmentPhotoEvidence';
 import UploadedFilePreviewModal from './UploadedFilePreviewModal';
+import PasswordVisibilityInput from './PasswordVisibilityInput';
 import DeliveryTimingBadge from './DeliveryTimingBadge';
 import PickupTimingNotice from './PickupTimingNotice';
 import { getDispatchTimingNotices } from '../../lib/assignmentTiming';
-import { OPERATIONAL_STEPS, OPERATIONAL_PHOTO_GROUPS, getAdminOperationalProgress, canCancelBeforeLoadingCompletes, formatOperationalStamp, formatOperationalDuration } from '../../lib/assignmentOperational';
+import { OPERATIONAL_STEPS, OPERATIONAL_PHOTO_GROUPS, getAdminOperationalProgress, getDeliveryActivityStates, canCancelBeforeLoadingCompletes, formatOperationalStamp, formatOperationalDuration } from '../../lib/assignmentOperational';
+import { sortCompletedNewestFirst } from '../../lib/completedOrdering';
 import { statusColors } from '../../data/statusColors';
 import { assignmentDisplayStatusConfig, canCompleteAssignment, getAssignmentDisplayStatus, getAssignmentDocumentProgress, getDocumentAgingState, type AssignmentDisplayStatus } from '../../lib/assignmentWorkflow';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
@@ -783,35 +785,36 @@ function DeliveryActivity({ assignment, now, onViewPhotos, highlightedEvent }: {
   };
   const loadingDuration = formatOperationalDuration(assignment.loadingStartedAt, assignment.loadingCompletedAt ?? now);
   const unloadingDuration = formatOperationalDuration(assignment.unloadingStartedAt, assignment.unloadingCompletedAt ?? now);
+  const stageStates = getDeliveryActivityStates(assignment);
   const rows: Array<{
-    label: string; done: boolean; main: string | null; prefix?: string; activityKey?: ActivityKey;
+    label: string; main: string | null; prefix?: string; activityKey?: ActivityKey;
     details?: Array<string | null>; photoStage?: ReturnType<typeof photoStage>;
   }> = [
-    { label: 'Assigned', done: true, main: formatOperationalStamp(assignment.createdAt || assignment.assignedAt) },
-    { label: 'At Pickup', activityKey: 'at_pickup', done: !!assignment.pickupArrivedAt,
+    { label: 'Assigned', main: formatOperationalStamp(assignment.createdAt || assignment.assignedAt) },
+    { label: 'At Pickup', activityKey: 'at_pickup',
       main: formatOperationalStamp(assignment.pickupArrivedAt),
       photoStage: photoStage(0, 'pickup') },
-    { label: 'Loading', activityKey: 'loading_completed', done: !!assignment.loadingStartedAt,
+    { label: 'Loading', activityKey: 'loading_completed',
       main: formatOperationalStamp(assignment.loadingStartedAt), prefix: 'Started',
       details: [assignment.loadingCompletedAt ? `Finished · ${formatOperationalStamp(assignment.loadingCompletedAt)}` : null,
         loadingDuration ? `${assignment.loadingCompletedAt ? 'Duration' : 'Elapsed'} · ${loadingDuration}` : null],
       photoStage: photoStage(1, 'loading') },
-    { label: 'In Transit', activityKey: 'in_transit', done: !!assignment.departedAt || assignment.taskStatus === 'In Transit',
+    { label: 'In Transit', activityKey: 'in_transit',
       main: formatOperationalStamp(assignment.departedAt), prefix: 'Departed',
       photoStage: photoStage(2, 'pre-trip') },
-    { label: 'Arrived', activityKey: 'arrived', done: !!assignment.destinationArrivedAt,
+    { label: 'Arrived', activityKey: 'arrived',
       main: formatOperationalStamp(assignment.destinationArrivedAt) },
-    { label: 'Unloading', activityKey: 'unloading_completed', done: !!assignment.unloadingStartedAt,
+    { label: 'Unloading', activityKey: 'unloading_completed',
       main: formatOperationalStamp(assignment.unloadingStartedAt), prefix: 'Started',
       details: [assignment.unloadingCompletedAt ? `Finished · ${formatOperationalStamp(assignment.unloadingCompletedAt)}` : null,
         unloadingDuration ? `${assignment.unloadingCompletedAt ? 'Duration' : 'Elapsed'} · ${unloadingDuration}` : null],
       photoStage: photoStage(3, 'unloading') },
-    { label: 'Delivered', activityKey: 'delivered', done: assignment.taskStatus === 'Delivered',
+    { label: 'Delivered', activityKey: 'delivered',
       main: assignment.taskStatus === 'Delivered'
         ? formatOperationalStamp(assignment.unloadingCompletedAt) ?? assignment.statusPhotos?.Delivered?.timestamp ?? null : null },
   ];
   if (assignment.taskStatus === 'Cancelled') rows.push({
-    label: 'Cancelled', activityKey: 'cancelled', done: true,
+    label: 'Cancelled', activityKey: 'cancelled',
     main: formatOperationalStamp(assignment.cancelledAt),
     details: [assignment.cancelledBy ? `By ${assignment.cancelledBy}` : null,
       assignment.cancelReason ? `Reason: ${assignment.cancelReason}` : null],
@@ -820,19 +823,23 @@ function DeliveryActivity({ assignment, now, onViewPhotos, highlightedEvent }: {
     <section aria-label="Delivery Activity" className="rounded-xl border border-border/70 bg-white p-3 sm:p-4">
       <p className="mb-2 text-[13px] font-semibold uppercase tracking-wider text-muted-foreground">Delivery Activity</p>
       <ol>
-        {rows.map((row, index) => <li key={row.label} data-activity-key={row.activityKey} tabIndex={row.activityKey ? -1 : undefined}
+        {rows.map((row, index) => {
+          const state = index === 7 ? 'completed' : stageStates[index];
+          const evidenceDone = row.photoStage?.complete && state === 'completed';
+          return <li key={row.label} data-activity-key={row.activityKey} tabIndex={row.activityKey ? -1 : undefined}
           className={`relative grid grid-cols-[1.5rem_minmax(0,1fr)] gap-2 rounded-lg pb-1 last:pb-0 transition-colors motion-reduce:transition-none ${highlightedEvent === row.activityKey ? 'bg-sky-50 ring-1 ring-sky-200' : ''}`}>
           {index < rows.length - 1 && <span aria-hidden="true"
-            className={`absolute bottom-0 left-[11px] top-6 w-px ${row.done ? 'bg-green-300' : 'bg-border'}`} />}
-          <span aria-hidden="true" className={`relative z-10 flex h-6 w-6 items-center justify-center rounded-full border ${row.done
-            ? 'border-green-200 bg-green-50 text-green-700' : 'border-border bg-white text-muted-foreground'}`}>
-            {row.done ? <Check className="h-4 w-4" /> : <span className="h-1.5 w-1.5 rounded-full bg-current" />}
+            className={`absolute bottom-0 left-[11px] top-6 w-px ${state === 'completed' ? 'bg-green-300' : state === 'in_progress' ? 'bg-amber-300' : 'bg-border'}`} />}
+          <span aria-hidden="true" className={`relative z-10 flex h-6 w-6 items-center justify-center rounded-full border ${state === 'completed'
+            ? 'border-green-200 bg-green-50 text-green-700' : state === 'in_progress'
+              ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-border bg-white text-muted-foreground'}`}>
+            {state === 'completed' ? <Check className="h-4 w-4" /> : <span className="h-1.5 w-1.5 rounded-full bg-current" />}
           </span>
           <div className={`grid min-w-0 grid-cols-1 gap-y-1 pb-1.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-x-4 ${index < rows.length - 1 ? 'border-b border-border/50' : ''}`}>
             <div className="min-w-0">
-              <p className={`text-sm font-semibold leading-5 ${row.done ? 'text-foreground' : 'text-muted-foreground'}`}>{row.label}</p>
+              <p className={`text-sm font-semibold leading-5 ${state === 'not_reached' ? 'text-muted-foreground' : 'text-foreground'}`}>{row.label}{state === 'in_progress' && <span className="ml-2 text-xs font-medium text-amber-700">In progress</span>}</p>
               <p className="mt-0.5 break-words text-[13px] leading-snug text-muted-foreground">
-                {row.main ? `${row.prefix ? `${row.prefix} · ` : ''}${row.main}` : row.done ? 'Time not recorded' : 'Not yet reached'}
+                {row.main ? `${row.prefix ? `${row.prefix} · ` : ''}${row.main}` : state === 'completed' ? 'Time not recorded' : state === 'in_progress' ? 'Time not recorded' : 'Not yet reached'}
               </p>
               {row.details?.some(Boolean) && <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[13px] leading-snug text-muted-foreground">
                 {row.details.filter(Boolean).map((detail, detailIndex) => <span key={detailIndex} className="break-words">
@@ -842,18 +849,18 @@ function DeliveryActivity({ assignment, now, onViewPhotos, highlightedEvent }: {
             </div>
             {row.photoStage && <button type="button" onClick={() => onViewPhotos(row.photoStage!.group)}
                 aria-label={`View ${row.photoStage.count} of ${row.photoStage.total} ${row.photoStage.name} photos`}
-                className={`inline-flex min-h-8 shrink-0 items-center justify-self-start gap-1.5 rounded-lg border px-2 py-1 text-[13px] font-medium text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:justify-self-end ${row.photoStage.complete
-                  ? 'border-green-200 bg-green-50/40 hover:bg-green-50' : 'border-amber-200 bg-amber-50/40 hover:bg-amber-50'}`}>
+                className={`inline-flex min-h-8 shrink-0 items-center justify-self-start gap-1.5 rounded-lg border px-2 py-1 text-[13px] font-medium text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:justify-self-end ${evidenceDone
+                  ? 'border-green-200 bg-green-50/40 hover:bg-green-50' : state === 'not_reached' ? 'border-border bg-white hover:bg-muted/30' : 'border-amber-200 bg-amber-50/40 hover:bg-amber-50'}`}>
                 <Camera aria-hidden="true" className="h-3.5 w-3.5 text-muted-foreground" />
                 <span>Photos</span>
-                <span className={`rounded-full px-1.5 py-0.5 tabular-nums ${row.photoStage.complete
-                  ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
+                <span className={`rounded-full px-1.5 py-0.5 tabular-nums ${evidenceDone
+                  ? 'bg-green-50 text-green-700' : state === 'not_reached' ? 'bg-muted/40 text-muted-foreground' : 'bg-amber-50 text-amber-700'}`}>
                   {row.photoStage.count}/{row.photoStage.total}
                 </span>
                 <ChevronRight aria-hidden="true" className="h-3.5 w-3.5" />
             </button>}
           </div>
-        </li>)}
+        </li>})}
       </ol>
       <p className="mt-1 border-t border-border/50 pt-2 text-[13px] leading-snug text-muted-foreground">
         ⓘ Physical delivery progress is updated by the driver.
@@ -1758,7 +1765,7 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose
             <p className="text-xs text-muted-foreground text-center mt-1">
               Enter your account password to save {Object.keys(pending).length} change{Object.keys(pending).length === 1 ? '' : 's'}.
             </p>
-            <input type="password" autoFocus autoComplete="current-password" value={password}
+            <PasswordVisibilityInput aria-label="Your account password" autoFocus autoComplete="current-password" value={password}
               onChange={(e) => { setPassword(e.target.value); setPwError(''); }}
               disabled={busy || lockedFor > 0}
               placeholder="Password"
@@ -2169,11 +2176,11 @@ export default function DriversManagement({
   yesterday.setDate(yesterday.getDate() - 1);
   const todayKey = dateToIso(today);
   const yesterdayKey = dateToIso(yesterday);
-  const recentCompleted = completed.flatMap((assignment) => {
+  const recentCompleted = sortCompletedNewestFirst(completed).flatMap((assignment) => {
     const date = parseStoredTimestamp(assignment.completedAt);
     if (!date || (dateToIso(date) !== todayKey && dateToIso(date) !== yesterdayKey)) return [];
     return [{ assignment, date }];
-  }).sort((left, right) => right.date.getTime() - left.date.getTime() || right.assignment.id.localeCompare(left.assignment.id));
+  });
   const visibleCompleted = recentCompleted.slice(0, RECENT_COMPLETED_LIMIT);
   const openCompletedDelivery = (assignmentId: string) => {
     setCompletedOpen(false);

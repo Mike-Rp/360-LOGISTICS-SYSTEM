@@ -2,7 +2,7 @@ import { useState, useMemo, useLayoutEffect, useEffect, useRef } from 'react';
 import {
   FileText, CheckCircle2, Clock, XCircle,
   Truck, User, Eye, Search, Calendar, Package,
-  AlertCircle, ChevronDown, ChevronRight, Filter,
+  AlertCircle, ChevronDown, ChevronRight, Filter, X,
 } from 'lucide-react';
 import ASNWithCopy from './ASNWithCopy';
 import type { Assignment, CompletedTask, DocStatus } from '../../data/assignmentTypes';
@@ -393,7 +393,7 @@ export default function DocumentArchive({ assignments, completed, cancelled = []
       id: string, driverName: string, truckPlate: string,
       deliveryDate: string, deliveryStatus: AssignmentDisplayStatus,
       documentSummary: DocGroup['documentSummary'],
-      docs: Assignment['documents'], createdAt?: string
+      docs: Assignment['documents'], createdAt?: string, includeInArchive = true
     ) => {
       const uploaded = docs.filter(d => d.uploaded);
       if (!uploaded.length && id !== focusedId) return;
@@ -410,14 +410,14 @@ export default function DocumentArchive({ assignments, completed, cancelled = []
         })),
       };
       all.push(group);
-      if (matchesFilters) normalGroups.push(group);
+      if (matchesFilters && includeInArchive) normalGroups.push(group);
     };
 
     for (const a of assignments) push(a.id, a.driverName, a.truckPlate, a.deliveryDate, getAssignmentDisplayStatus(a), getAssignmentDocumentSummary(a), a.documents, a.createdAt);
     for (const c of completed)   push(c.id, c.driverName, c.truckPlate, c.deliveryDate, getAssignmentDisplayStatus(c), getAssignmentDocumentSummary(c), c.documents, c.createdAt);
     // Cancelled assignments are included only when opened through an exact link.
     for (const c of cancelled) if (c.id === focusedId) {
-      push(c.id, c.driverName, c.truckPlate, c.deliveryDate, getAssignmentDisplayStatus(c), getAssignmentDocumentSummary(c), c.documents, c.createdAt);
+      push(c.id, c.driverName, c.truckPlate, c.deliveryDate, getAssignmentDisplayStatus(c), getAssignmentDocumentSummary(c), c.documents, c.createdAt, false);
     }
 
     const flatDocs = normalGroups.flatMap(g => g.docs);
@@ -500,12 +500,37 @@ export default function DocumentArchive({ assignments, completed, cancelled = []
     return () => window.clearTimeout(timer);
   }, [highlightAssignment]);
 
-  const clearFocus = () => {
+  const exitFocus = () => {
+    if (!focusedId) return;
     setLinkedAssignmentId(null);
     setHighlightAssignment(null);
     setHighlightDoc(null);
-    if (notificationTarget) onNotificationTargetHandled?.();
+    setOpenIds(previous => {
+      if (!previous.has(focusedId)) return previous;
+      const next = new Set(previous);
+      next.delete(focusedId);
+      return next;
+    });
+    onNotificationTargetHandled?.();
+  };
+
+  const clearFocus = () => {
+    exitFocus();
     setPage(normalPage.current);
+  };
+
+  const selectStatusFilter = (next: DocFilter) => {
+    exitFocus();
+    setFilter(next);
+    normalPage.current = 1;
+    setPage(1);
+  };
+
+  const selectDateFilter = (next: ArchiveDatePeriod) => {
+    exitFocus();
+    setPeriod(next);
+    normalPage.current = 1;
+    setPage(1);
   };
 
   const emptyAll    = groups.length === 0 && !q && filter === 'all' && period === 'all';
@@ -535,7 +560,7 @@ export default function DocumentArchive({ assignments, completed, cancelled = []
           { key: 'approved', label: 'All approved', badge: 'bg-green-100 text-green-700', badgeOn: 'bg-white text-green-700' },
           { key: 'rejected', label: 'Rejected', badge: 'bg-red-100 text-red-700',     badgeOn: 'bg-white text-red-700'   },
         ] as { key: DocFilter; label: string; badge: string; badgeOn: string }[]).map(({ key, label, badge, badgeOn }) => (
-          <button key={key} onClick={() => { setFilter(key); normalPage.current = 1; setPage(1); }}
+          <button key={key} onClick={() => selectStatusFilter(key)}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium border transition-all ${
               filter === key
                 ? 'bg-primary text-white border-primary'
@@ -554,7 +579,7 @@ export default function DocumentArchive({ assignments, completed, cancelled = []
         <div className="flex min-w-0 items-center gap-1.5 rounded-lg border border-border bg-white px-2 py-1.5 sm:ml-auto">
           <Filter aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           <select aria-label="Document Archive date filter" value={period}
-            onChange={event => { setPeriod(event.target.value as ArchiveDatePeriod); normalPage.current = 1; setPage(1); }}
+            onChange={event => selectDateFilter(event.target.value as ArchiveDatePeriod)}
             className="min-h-8 min-w-0 flex-1 cursor-pointer bg-transparent pr-1 text-sm text-foreground focus-visible:outline-2 focus-visible:outline-primary">
             {DATE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
           </select>
@@ -562,9 +587,12 @@ export default function DocumentArchive({ assignments, completed, cancelled = []
       </div>
 
       {focusedId && (
-        <div role="status" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-          <span>Showing <span className="font-semibold text-foreground break-all"><ASNWithCopy value={focusedId} /></span></span>
-          <button type="button" onClick={clearFocus} className="min-h-10 px-2 font-medium text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary">Clear focus</button>
+        <div role="status" className="flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 py-0.5 text-xs text-muted-foreground">
+          <span className="min-w-0">Showing <span className="font-semibold text-foreground break-all"><ASNWithCopy value={focusedId} /></span></span>
+          <button type="button" onClick={clearFocus}
+            className="inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-white px-2.5 text-xs font-medium text-foreground hover:bg-muted/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:min-h-8">
+            <X className="h-3.5 w-3.5" aria-hidden="true" /> Clear focus
+          </button>
         </div>
       )}
 
@@ -660,7 +688,7 @@ export default function DocumentArchive({ assignments, completed, cancelled = []
             {filter !== 'all' && (
               <>
                 <span className="text-xs text-muted-foreground"><span className="capitalize">{filter}</span> filter active</span>
-                <button onClick={() => { setFilter('all'); normalPage.current = 1; setPage(1); }} className="text-xs text-primary hover:underline font-medium">
+                <button onClick={() => selectStatusFilter('all')} className="text-xs text-primary hover:underline font-medium">
                   Show all
                 </button>
               </>

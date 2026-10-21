@@ -9,7 +9,7 @@ const source = ts.transpileModule(readFileSync(join(__dirname, 'assignmentOperat
 }).outputText;
 const loaded = { exports: {} };
 new Function('require', 'module', 'exports', source)(require, loaded, loaded.exports);
-const { getAdminOperationalProgress, formatOperationalDuration, formatOperationalStamp, OPERATIONAL_PHOTO_GROUPS } = loaded.exports;
+const { getAdminOperationalProgress, getDeliveryActivityStates, formatOperationalDuration, formatOperationalStamp, OPERATIONAL_PHOTO_GROUPS } = loaded.exports;
 
 const item = (taskStatus, operationalStage = null, extra = {}) => ({ taskStatus, operationalStage, ...extra });
 
@@ -44,4 +44,28 @@ test('photo categories remain distinct from formal documents', () => {
   assert.equal(new Set(keys).size, 12);
   assert.ok(keys.includes('loading_after'));
   assert.ok(keys.includes('pretrip_rear'));
+});
+
+test('activity stages require completion timestamps and their own evidence', () => {
+  const photos = (keys) => Object.fromEntries(keys.map(key => [key, { url: `${key}.jpg` }]));
+  const pickup = ['pickup_front', 'pickup_left', 'pickup_right', 'pickup_rear'];
+  const base = item('Assigned', 'loading', {
+    pickupArrivedAt: '2026-10-20T09:00:00Z',
+    loadingStartedAt: '2026-10-20T09:10:00Z',
+    statusPhotos: photos([...pickup, 'loading_before']),
+  });
+  assert.deepEqual(getDeliveryActivityStates(base).slice(0, 4),
+    ['completed', 'completed', 'in_progress', 'not_reached']);
+  assert.equal(getDeliveryActivityStates({ ...base, loadingCompletedAt: '2026-10-20T09:20:00Z' })[2], 'in_progress');
+  assert.equal(getDeliveryActivityStates({ ...base, loadingCompletedAt: '2026-10-20T09:20:00Z',
+    statusPhotos: photos([...pickup, 'loading_before', 'loading_after']) })[2], 'completed');
+  assert.equal(getDeliveryActivityStates({ ...base, statusPhotos: photos(['loading_before']) })[1], 'in_progress');
+  const unloading = item('In Transit', 'unloading', {
+    unloadingStartedAt: '2026-10-20T10:00:00Z',
+    unloadingCompletedAt: '2026-10-20T10:10:00Z',
+    statusPhotos: photos(['unloading_before']),
+  });
+  assert.equal(getDeliveryActivityStates(unloading)[5], 'in_progress');
+  assert.equal(getDeliveryActivityStates({ ...unloading,
+    statusPhotos: photos(['unloading_before', 'unloading_after']) })[5], 'completed');
 });

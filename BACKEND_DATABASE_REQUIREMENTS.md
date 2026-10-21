@@ -652,6 +652,22 @@ applied to 360Logistics DB and verified (20/20 database checks) on 2026-10-20.
 
 **Status:** In Progress
 
+**Pending Workspace Settings follow-up (2026-10-21; not approved for database changes):**
+The current `remove_team_member(p_id)` deletes `auth.users`, which also removes
+the member profile. It cannot serve as Archive Member because the account
+cannot be restored and its historical identity is lost. `profiles.status`
+already permits `active`/`removed`, and sign-in/RLS check `active`, but there
+is no dedicated OPM-only archive/restore RPC that atomically changes access,
+records the acting OPM and timestamp, and appends one audit row. Implement
+that server-side path before enabling Archive/Restore buttons. Existing
+member deletion is hidden in the local Workspace UI; no frontend-only archive
+flag is used. The audit trail also lacks guaranteed, transactional records
+for some OPM actions (notably driver/truck registration and PIN reset) and
+document review still logs through the client state sync path. Add safe
+server-side audit writes on successful mutations; never include PINs,
+passwords, or reset tokens. No migration or RPC has been applied for this
+follow-up.
+
 **Area:** Accounts / Drivers / Trucks / Auth & Roles
 
 **Requested change:**

@@ -37,13 +37,14 @@ export function adminPageFromUrl(url = new URL(window.location.href)): AdminPage
   return 'Dashboard';
 }
 
-export function adminHref(page: AdminPage, target?: { assignmentId?: string; docType?: string; review?: boolean; activityKey?: string }, tab?: 'completed'): string {
+export function adminHref(page: AdminPage, target?: { assignmentId?: string; docType?: string; review?: boolean; activityKey?: string; summary?: boolean }, tab?: 'completed'): string {
   const params = new URLSearchParams();
   if (target) {
     if (target.assignmentId !== undefined) params.set('assignment', target.assignmentId);
     if (target.docType) params.set('document', target.docType);
     if (target.review) params.set('review', 'true');
     if (target.activityKey) params.set('activity', target.activityKey);
+    if (target.summary) params.set('summary', 'true');
   }
   if (page === 'Deliveries' && tab) params.set('tab', tab);
   const query = params.toString();
@@ -56,7 +57,7 @@ export function followAdminLink(event: MouseEvent<HTMLAnchorElement>, navigate: 
   navigate();
 }
 
-export function pushAdminNavigation(page: AdminPage, target?: { assignmentId?: string; docType?: string; review?: boolean; activityKey?: string }, tab?: 'completed'): void {
+export function pushAdminNavigation(page: AdminPage, target?: { assignmentId?: string; docType?: string; review?: boolean; activityKey?: string; summary?: boolean }, tab?: 'completed'): void {
   const href = adminHref(page, target, tab);
   if (!target && window.location.pathname + window.location.search === href) return;
   window.history.pushState({ ...window.history.state, adminNavigation: true }, '', href);
