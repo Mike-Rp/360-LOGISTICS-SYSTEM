@@ -1029,36 +1029,166 @@ change is included in the local print-layout task.
 
 ---
 
-## [REQ-008] Incident resolution and measured delay data for reports
+## [REQ-008] Recoverable delivery issues and incident history
 
-**Status:** Pending
+**Status:** Pending backend design/implementation. This entry is a handoff,
+not an applied migration. No production issue records were changed.
 
-**Area:** Delay & Issues Report / Driver incident records
+### Existing data path and failure
 
-**Requested change:** Show a trustworthy incident resolution time, measured
-delay duration, and complete issue history in the operational report.
+The current relational schema is in `supabase/migrations/20260919000000_init.sql`
+with later workflow migrations. `public.assignments.id` and
+`public.drivers.id` are `text`; `public.profiles.id` is the authenticated
+`uuid`. `assignments.task_status` allows `Failed / Issue` and
+`assignments.issue_reason` is one nullable `text` field. Later migrations add
+`operational_stage` and event timestamps, but no issue lifecycle or saved
+stage-at-report. `public.delay_reports` has `bigint` identity IDs, `pickup`/
+`delivery` type, reason, and a Driver-formatted *text* `reported_at`; it is
+not the Report a Problem lifecycle. `public.notifications` has `text` IDs,
+`issue_report` type, and `timestamptz created_at`. `public.activity_log` has
+`text` IDs, `timestamptz ts`, `admin_user_id uuid`, `admin_email`,
+`admin_role`, `assignment_id text`, and `reason`, but no issue ID.
 
-**Current limitation:** `public.delay_reports` stores only `assignment_id`,
-`type` (`pickup` or `delivery`), `reason`, and a text `reported_at` supplied by
-the Driver. The current Driver value omits the year and timezone. There is no
-incident-level `resolved_at`, measured delay duration, or explicit resolution
-state. The report's existing Resolved/Ongoing labels use whether the containing
-assignment is completed, which is not proof of when the incident was resolved.
-The separate `Failed / Issue` assignment reason is not a `delay_reports` row
-and has no incident timestamp in this model.
+`DriverInterface.handleIssueSubmit` currently calls `driverUpdate` with only
+`issueReason`; `db.ts` updates `assignments.issue_reason` and then separately
+inserts a notification. A previous bundle/record can have raw
+`task_status='Failed / Issue'`. `assignmentFromRow` maps those two columns
+directly. `getAdminOperationalProgress` treats that status as terminal, while
+`hasOpenBlockingIssue` deliberately excludes it because its prior stage is
+unknown. Hence View Shipment says `Progress ended` and hides Open Issue.
+An earlier local Resolve prototype cleared `issue_reason` via a client update.
+That was removed: it was not an atomic resolution, erased the only open marker,
+and stored no resolver or resolution time. The current frontend can show the
+legacy recorded reason and a matching notification timestamp if present, but
+cannot truthfully call it recoverable. Existing stage timestamps may hint at
+progress; they do not prove the exact stage at report time.
 
-**Required backend/data support:** Define incident-level resolution semantics
-and persist a server-trusted report timestamp and resolution timestamp. Record
-the actual measured delay duration or define the persisted timestamps/events
-from which it can be calculated. If `Failed / Issue` events belong in this
-report, define how they are persisted and identified alongside delay reports.
-Preserve historical text timestamps without inventing missing year or duration.
+### Recommended data model (proposed names, not SQL)
 
-**Migration required:** Yes, if these fields and the unified incident history
-are approved. No schema or backend changes are included in the current local
-report UI task.
+Add `public.assignment_issues`, distinct from `delay_reports` unless a deliberate
+unification/migration of both reporting workflows is designed. Keep one row per
+incident; never overwrite an earlier resolved issue. Proposed columns:
 
-**Approval:** Pending. Do not infer backend approval from the UI request.
+| Column | Type / nullability / default | Purpose |
+|---|---|---|
+| `id` | `bigint generated always as identity`, primary key | Stable issue identity, matching `delay_reports` ID convention |
+| `assignment_id` | `text not null` | FK to `public.assignments(id)`; preserve assignment and issue history; no cascade deletion |
+| `issue_type` | `text not null` | Exact selected Report a Problem choice; for Other, store `Other` separately from details |
+| `reason` | `text not null` | Driver-entered details/selected reason; do not rewrite with AI |
+| `is_blocking` | `boolean not null` | Server-derived classification, never trust a client boolean |
+| `status` | `text not null default 'open'` | Constrained to `open`, `resolved` |
+| `reported_by_driver_id` | `text not null` | FK to `public.drivers(id)`; owning Driver at report time |
+| `reported_at` | `timestamptz not null default now()` | Server time, not the Driver's display string |
+| `task_status_at_report` | `text not null` | Exact `assignments.task_status` while row is locked |
+| `operational_stage_at_report` | `text null` | Exact nullable `assignments.operational_stage` while locked |
+| `resolved_by_user_id` | `uuid null` | FK to `public.profiles(id)` / `auth.uid()` for staff resolver |
+| `resolved_at` | `timestamptz null` | Server time, only when resolved |
+| `resolution_note` | `text null` | Optional real staff note |
+| `created_at` | `timestamptz not null default now()` | Conventional creation metadata |
+| `updated_at` | `timestamptz not null default now()` | Maintain server-side on lifecycle update |
+
+Prefer `ON DELETE RESTRICT`/`NO ACTION` for assignment and actor relationships,
+or a deliberate archival strategy that never erases incident history. If
+accounts/drivers may be removed, retain immutable actor display snapshots in
+addition to nullable FKs; never substitute current names for historical ones.
+Check `status` values and enforce that resolved rows have resolver/time and
+open rows do not. Add indexes on `(assignment_id, reported_at desc)`,
+`(status, reported_at desc)`, and issue type for the Delay & Issues Report.
+Add a partial unique index on `assignment_id` where `status='open' and
+is_blocking=true` to prevent contradictory simultaneous blocking issues;
+allow multiple historical resolved issues and nonblocking issues. Define an
+idempotency key or equivalent request deduplication for double submit.
+
+The current Report a Problem choices are Cargo damaged in transit, Wrong
+delivery address, Customer refused delivery, Vehicle breakdown, Cargo lost or
+missing, Accident / road incident, and Other. The local prototype classifies
+all six named choices as blocking and treats Other conservatively as blocking.
+Pickup/delivery delay reports are a separate nonblocking workflow. Review the
+classification with operations before enforcing it; keep one versioned,
+server-owned mapping shared with the frontend.
+
+### Required server operations, authorization, and concurrency
+
+1. `report_assignment_issue(assignment_id, issue_type, reason, idempotency_key)`:
+   authenticated owning Driver only (`driver_owns_assignment`), current active
+   assignment only. Lock assignment row, validate type and text, derive blocking
+   on server, capture both stage columns, insert issue, audit/activity and one
+   persisted staff `issue_report` notification in one transaction. Do **not**
+   set `task_status='Failed / Issue'`. Return issue plus unchanged assignment.
+2. `resolve_assignment_issue(issue_id, resolution_note?)`: authorized CSR
+   initially, matching current `can_write()`/View Shipment permission. OPM is
+   currently view-only in shipment screens; granting OPM resolve requires an
+   explicit product decision and dedicated backend permission, not general
+   assignment write rights. Lock assignment then issue in a consistent order;
+   require active assignment and an open blocking issue; set resolved state,
+   `resolved_at=now()`, `resolved_by_user_id=auth.uid()`, audit/activity; leave
+   `task_status` and `operational_stage` untouched. Reject a concurrent second
+   resolve with an explicit already-resolved result. Return refreshed state.
+3. Update `public.advance_driver_stage` and the `guard_assignment_update`
+   direct-status path: after locking the assignment, reject every Driver
+   progression transition while an open blocking issue exists. The current
+   trigger explicitly allows a Driver to set `Failed / Issue`; remove that
+   automatic report path only with a coordinated client rollout. Gate
+   completion/other stage-changing RPCs consistently. Nonblocking issues do
+   not block. Do not rely on a disabled slider.
+4. Provide authorized read paths for one open issue and full issue history:
+   staff sees operational details; owning Driver sees their assignment's issue
+   state in the existing poll. RLS and RPCs must use the current authenticated
+   session checks; no anonymous direct writes. Do not expose other drivers'
+   incidents. Return persisted timestamps in ISO form.
+5. Keep `cancel_assignment(p_id,p_reason,p_password)` as the only cancellation
+   action, with its current password, reason, loading cutoff, lock, release and
+   audit rules. Preserve linked issues after cancellation and mark their
+   lifecycle consistently (e.g. resolve with explicit cancellation outcome),
+   without deleting them. Current rules disallow cancellation after Loading;
+   that policy may need a separately approved safe terminal path for a later
+   blocking incident. Never bypass it from Resolve & Continue.
+
+The existing `activity_log` and the shipment Activity timeline are separate.
+Store issue ID (proposed nullable `activity_log.issue_id bigint` FK), actor ID,
+role, assignment/ASN, type, reason where appropriate, and server timestamp for
+`issue_reported`, `delivery_paused`, `issue_resolved`, and `delivery_resumed`.
+Use distinct rows only if those are distinct operational events; avoid duplicate
+poll-generated activity. Cancellation already writes `task_cancelled`; link
+the issue if cancellation is issue-related. Never log password/PIN/secrets.
+The existing `notifications` feed is staff-facing. Create exactly one
+`issue_report` staff notification transactionally; for resolution, expose the
+updated issue to Driver polling and add a Driver notification only through an
+existing or explicitly designed Driver-visible persisted channel. Never
+notify on polling itself.
+
+### Frontend contract and migration
+
+Both `loadAdminData()` and `loadDriverData()` need the same canonical issue
+shape, e.g. assignment `openIssue` and `issueHistory` with `id`, `type`,
+`reason`, `blocking`, `status`, `reportedAt`, `reportedByDriverId/name`,
+`taskStatusAtReport`, `operationalStageAtReport`, `resolvedAt`,
+`resolvedByUserId/name`, `resolutionNote`. Include a server error code for
+open-blocking-stage, already-resolved, stale/terminal assignment and
+not-authorized. The Driver UI must show pause from that state; View Shipment
+may show Resolve & Continue only after the atomic operation exists. The
+Delay & Issues Report should read retained open/resolved incidents, types,
+reason, Driver/truck/ASN, timestamps and blocking flag. Duration is only
+derived when a real start/end pair exists; do not infer from completion.
+
+For legacy `assignments.task_status='Failed / Issue'`, preserve the raw row
+and reason, label it legacy/read-only, and do not guess its prior stage from
+photos or timestamps. Backfill issue history only where a real source proves
+type, actor, time, stage and lifecycle; otherwise leave those fields unknown.
+Resolve legacy recovery through case-by-case authorized review, not a blanket
+migration. If the business later needs a deliberate terminal Failed state,
+design a separate authorized operation with reason, failed_by/at, resource
+release and audit; the current `Failed / Issue` is not that operation.
+
+Backend tests must cover blocking/nonblocking report, unchanged stage, the
+server progression gate (including direct update), duplicate submission,
+atomic notification/activity, CSR and OPM/Driver authorization, resolution
+without advancing, concurrent double resolve, cancellation race, report while
+another stage update runs, resolved history retention, Driver poll visibility,
+and legacy rows without a provable prior stage.
+
+**Migration required:** Yes, pending backend approval/design. No SQL, Edge
+Function, database or Supabase change is part of this local frontend task.
 
 ---
 

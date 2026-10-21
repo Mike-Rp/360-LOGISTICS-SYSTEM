@@ -30,6 +30,7 @@ import { PaginationFooter, usePagination, useStablePageHeight } from './Paginati
 import { sortNewestFirst, markLocalRecordAdded, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
 import { ADMIN_NAVIGATION_EVENT, pushAdminNavigation } from '../../lib/adminNavigation';
 import type { ActivityKey } from '../../lib/notificationEvents';
+import { hasOpenBlockingIssue } from '../../lib/issueWorkflow';
 import { TRUCK_CLASSIFICATIONS, truckSideImageFor, capacityKgOnly } from '../../data/truckTypes';
 import { destinationAreaEnabled, getAssignmentRoute, getDeliveryLocation } from '../../data/assignmentRoute';
 import {
@@ -733,6 +734,8 @@ function RouteRow({ route }: { route: string }) {
 
 function DeliveryStepper({ assignment }: { assignment: Assignment }) {
   const progress = getAdminOperationalProgress(assignment);
+  const paused = hasOpenBlockingIssue(assignment);
+  const legacyIssue = assignment.taskStatus === 'Failed / Issue' && !!assignment.issueReason?.trim();
   const complete = [
     !!assignment.createdAt || !!assignment.assignedAt,
     !!assignment.pickupArrivedAt,
@@ -745,9 +748,11 @@ function DeliveryStepper({ assignment }: { assignment: Assignment }) {
   const hasOperationalHistory = !!(assignment.pickupArrivedAt || assignment.loadingStartedAt ||
     assignment.departedAt || assignment.destinationArrivedAt || assignment.unloadingStartedAt);
   return (
-    <div aria-label={progress.terminal ? `Delivery progress ended: ${assignment.taskStatus}` : `Step ${progress.index + 1} of 7, ${progress.label}`}>
-      <p className="mb-3 text-sm font-semibold text-foreground">{progress.terminal
-        ? `Progress ended · ${assignment.taskStatus}` : `Step ${progress.index + 1} of 7 · ${progress.label}`}</p>
+    <div aria-label={legacyIssue ? 'Legacy Failed / Issue; prior stage unavailable' : progress.terminal ? `Delivery progress ended: ${assignment.taskStatus}` : paused ? `Delivery progress paused at ${progress.label}` : `Step ${progress.index + 1} of 7, ${progress.label}`}>
+      <p className="mb-3 text-sm font-semibold text-foreground">{legacyIssue
+        ? 'Legacy Failed / Issue · prior stage unavailable' : progress.terminal
+        ? `Progress ended · ${assignment.taskStatus}` : paused ? `Progress paused · Issue under review · ${progress.label}`
+          : `Step ${progress.index + 1} of 7 · ${progress.label}`}</p>
       <div className="grid grid-cols-4 gap-y-3 sm:grid-cols-7" aria-label="Physical delivery stages">
         {OPERATIONAL_STEPS.map((step, i) => {
           const color = statusColors[step];
@@ -946,8 +951,9 @@ function DocChip({ doc, uploadAvailable }: { doc: AssignmentDoc; uploadAvailable
 /* ─── View Details Modal ───────────────────────────── */
 type ShipmentTab = 'overview' | 'activity' | 'photos' | 'documents';
 
-function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApproveDoc, onRejectDoc, onComplete, onCancel, onSimulateLate, isViewOnly = false, adminEmail, reviewTarget, activityTarget, timingNow }: {
+function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClose, onEdit, onApproveDoc, onRejectDoc, onComplete, onCancel, onSimulateLate, isViewOnly = false, adminEmail, reviewTarget, activityTarget, timingNow }: {
   assignment: Assignment | null; driver: LocalDriver | null;
+  issueNotifications: AppNotification[];
   /* null when the truck record was deleted — the plate saved on the assignment is still shown */
   truck: LocalTruck | null;
   onClose: () => void;
@@ -1041,7 +1047,13 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
   const documentProgress = assignment ? getAssignmentDocumentProgress(assignment) : null;
   const allApproved = documentProgress?.allApproved ?? false;
   const approvedCount = documentProgress?.approved ?? 0;
-  const completionEligible = !!assignment && canCompleteAssignment(assignment);
+  const openIssue = !!assignment && hasOpenBlockingIssue(assignment);
+  const legacyIssue = assignment?.taskStatus === 'Failed / Issue' && !!assignment.issueReason?.trim();
+  const issueReport = assignment && issueNotifications
+    .filter((notification) => notification.assignmentId === assignment.id && notification.type === 'issue_report'
+      && notification.reason === assignment.issueReason)
+    .sort((a, b) => Date.parse(b.createdAt || '') - Date.parse(a.createdAt || ''))[0];
+  const completionEligible = !!assignment && !openIssue && canCompleteAssignment(assignment);
   const photosNeedAttention = !photosViewed && Object.values(assignment?.statusPhotos ?? {}).some((photo) => !!photo?.url);
   const documentsNeedAttention = assignment?.documents.some((doc) => doc.uploaded && doc.docStatus === 'pending') ?? false;
   const completeShipment = async () => {
@@ -1119,6 +1131,18 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
             </div>
             <DeliveryStepper assignment={assignment} />
           </div>
+
+          {(openIssue || legacyIssue) && <section className="rounded-xl border border-red-200 bg-red-50 p-4" aria-label={openIssue ? 'Open issue' : 'Recorded issue'}>
+            <p className="text-xs font-bold uppercase tracking-wider text-red-700">{openIssue ? 'Open Issue · Blocking' : 'Recorded Issue · Legacy Failed / Issue'}</p>
+            <p className="mt-1 break-words text-base font-semibold text-red-900">{assignment.issueReason}</p>
+            <div className="mt-3 grid gap-2 text-sm text-red-900 sm:grid-cols-2">
+              <p><span className="font-medium">Reported by:</span> {issueReport?.driverName || 'Not recorded on the issue'}</p>
+              <p><span className="font-medium">Reported:</span> {issueReport?.createdAt ? formatOperationalStamp(issueReport.createdAt) : 'Not recorded on the issue'}</p>
+              <p><span className="font-medium">Delivery stage:</span> {openIssue ? getAdminOperationalProgress(assignment).label : 'Not preserved at issue report'}</p>
+              <p><span className="font-medium">Status:</span> {openIssue ? 'Blocking marker present; resolution unavailable' : 'Legacy status; recovery cannot be verified'}</p>
+            </div>
+            <p className="mt-3 text-xs text-red-800">Resolve &amp; Continue requires a recorded issue lifecycle and an authorized server action. This issue cannot be safely cleared from this screen.</p>
+          </section>}
 
           {/* Demo-only: simulate a late driver — "adminabuse" account only */}
           {isDemoAdmin && (assignment.taskStatus === 'Assigned' || assignment.taskStatus === 'In Transit') && (
@@ -1217,6 +1241,12 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
               </div>
             </div>
           )}
+          {issueNotifications.filter((notification) => notification.assignmentId === assignment.id && notification.type === 'issue_report').map((notification) => (
+            <div key={notification.id} className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm">
+              <p className="font-semibold text-red-900">Issue reported · {notification.createdAt ? formatOperationalStamp(notification.createdAt) : notification.timestamp}</p>
+              <p className="mt-1 break-words text-red-800">{notification.reason || notification.message}</p>
+            </div>
+          ))}
         </div>}
 
         {activeTab === 'photos' && <OperationalEvidence assignment={assignment}
@@ -2062,6 +2092,7 @@ export default function DriversManagement({
   const handleComplete = async (id: string) => {
     const a = assignments.find((x) => x.id === id);
     if (completed.some((item) => item.id === id)) throw new Error('This assignment is already completed.');
+    if (a && hasOpenBlockingIssue(a)) throw new Error('Resolve the open issue before completing this delivery.');
     if (!a || !canCompleteAssignment(a)) {
       throw new Error('All required documents must be approved before marking this delivery complete.');
     }
@@ -2757,6 +2788,7 @@ export default function DriversManagement({
         <ViewDetailsModal
           assignment={viewDetailsAssign}
           driver={viewDetailsDriver}
+          issueNotifications={notifications}
           truck={viewDetailsAssign ? trucks.find((t) => t.id === viewDetailsAssign.truckId) ?? null : null}
           onClose={() => { setViewDetailsId(null); setReviewTarget(null); setActivityTarget(null); }}
           onEdit={() => { setEditId(viewDetailsId); setViewDetailsId(null); setReviewTarget(null); }}

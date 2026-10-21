@@ -15,6 +15,7 @@ import { DriverLanguageProvider, useDriverI18n, type DriverLanguage } from './dr
 import { destinationAreaEnabled, getAssignmentRoute, getDeliveryLocation } from '../../data/assignmentRoute';
 import { checkPhoto, loadVehicleDetector, type PhotoCheckFailure } from '../../lib/photoQuality';
 import { MILESTONE_NOTIFICATIONS } from '../../lib/notificationEvents';
+import { BLOCKING_ISSUE_REASONS, hasOpenBlockingIssue } from '../../lib/issueWorkflow';
 import { newNotificationIds, notificationSoundEnabled, playNotificationSound, setNotificationSoundEnabled } from '../../lib/notificationSound';
 import { observeDriverCompletion, type DriverCompletionSnapshot } from './driverCompletion';
 import UploadedFilePreviewModal from '../admin/UploadedFilePreviewModal';
@@ -103,7 +104,7 @@ const REQUIRED_DOCS = [
 
 const PICKUP_DELAY_REASONS   = ['Heavy traffic','Vehicle breakdown','Waiting for cargo','Weather conditions','Driver health issue','Other...'];
 const DELIVERY_DELAY_REASONS = ['Heavy traffic','Wrong address / rerouting','Customer unavailable','Vehicle breakdown','Weather conditions','Other...'];
-const ISSUE_REASONS          = ['Cargo damaged in transit','Wrong delivery address','Customer refused delivery','Vehicle breakdown','Cargo lost or missing','Accident / road incident','Other...'];
+const ISSUE_REASONS          = [...BLOCKING_ISSUE_REASONS, 'Other...'];
 
 /* ── Mock data ── */
 /* Demo-preview dates are derived from the current date rather than written in.
@@ -1293,6 +1294,9 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   const [focusedDocType, setFocusedDocType] = useState<string | null>(null);
   const completionSnapshot = useRef<DriverCompletionSnapshot | null>(null);
   const reviewNotificationSnapshot = useRef<{ assignmentId: string | null; ids: Set<string> } | null>(null);
+  const issueSnapshot = useRef<{ assignmentId: string | null; open: boolean } | null>(null);
+  const issueSubmitting = useRef(false);
+  const [issueResolvedNotice, setIssueResolvedNotice] = useState(false);
   const fetchSequence = useRef(0);
   const appliedFetchSequence = useRef(0);
   const sessionActiveRef = useRef(true);
@@ -1389,6 +1393,13 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
         void playNotificationSound();
       }
       reviewNotificationSnapshot.current = { assignmentId, ids: reviewIds };
+      const openIssue = !!json.assignment && hasOpenBlockingIssue(json.assignment);
+      const previousIssue = issueSnapshot.current;
+      if (previousIssue?.assignmentId === assignmentId && previousIssue.open && !openIssue
+          && json.assignment && json.assignment.taskStatus !== 'Cancelled'
+          && json.assignment.taskStatus !== 'Failed / Issue') setIssueResolvedNotice(true);
+      if (openIssue || previousIssue?.assignmentId !== assignmentId) setIssueResolvedNotice(false);
+      issueSnapshot.current = { assignmentId, open: openIssue };
       setData(json); setOnline(true); setLastSync(new Date());
     } catch (err) {
       if (!sessionActiveRef.current || sequence !== fetchSequence.current) return;
@@ -1538,6 +1549,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   const handleOperationalSlide = async (): Promise<false | (() => void)> => {
     const assignment = data?.assignment;
     if (!assignment) return false;
+    if (hasOpenBlockingIssue(assignment)) return false;
     if (!online) { setActionError(t('workflow.noConnection')); return false; }
     const phase = getDriverPhase(assignment);
     const transitions: Partial<Record<DriverPhase, string>> = {
@@ -1611,12 +1623,15 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   };
 
   const handleIssueSubmit = async (reason: string) => {
-    if (!data?.assignment) return;
+    if (!data?.assignment || hasOpenBlockingIssue(data.assignment) || issueSubmitting.current) return;
+    issueSubmitting.current = true;
     setIssueSheet(false);
-    await pushUpdate(
-      { taskStatus: 'Failed / Issue', issueReason: reason },
-      { type: 'issue_report', message: `[${data.assignment.truckPlate}] Issue: ${reason}`, assignmentId: data.assignment.id, truckPlate: data.assignment.truckPlate, reason, navigateTo: 'Monitor' }
-    );
+    try {
+      await pushUpdate(
+        { issueReason: reason },
+        { type: 'issue_report', message: `[${data.assignment.truckPlate}] Issue: ${reason}`, assignmentId: data.assignment.id, truckPlate: data.assignment.truckPlate, reason, navigateTo: 'Monitor' }
+      );
+    } finally { issueSubmitting.current = false; }
   };
 
   const handleDocUpload = async (docType: string, file: File) => {
@@ -1682,6 +1697,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   const isDelivered = a?.taskStatus === 'Delivered';
   const isFailed    = a?.taskStatus === 'Failed / Issue';
   const isCancelled = a?.taskStatus === 'Cancelled';
+  const issueOpen = !!a && hasOpenBlockingIssue(a);
   const isTerminal  = isDelivered || isFailed || isCancelled;
   const deliveryTiming = a ? getDeliveryTimingStatus(a, timingNow) : null;
   const displayStatus = a ? getAssignmentDisplayStatus(a) : null;
@@ -1780,7 +1796,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   const hasDeliveryReport = (a?.delayReports ?? []).some((r) => r.type === 'delivery');
   const showPickupDelay   = isPickupLate   && !hasPickupReport   && !pickupDelayDone   && phase === 'assigned';
   const showDeliveryDelay = isDeliveryLate && !hasDeliveryReport && !deliveryDelayDone && phase === 'in_transit';
-  const blockSlider       = showPickupDelay || showDeliveryDelay;
+  const blockSlider       = showPickupDelay || showDeliveryDelay || issueOpen;
 
   /* ────────────────────────────────────────────────────────
      LOADING / OFFLINE SPLASHES
@@ -1996,6 +2012,11 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
                   <span className="min-w-0 text-sm font-mono font-bold text-gray-600 break-all">{a.id}</span>
                   <StatusBadge status={displayStatus ?? a.taskStatus} />
                 </div>
+                {issueOpen && <div className="flex items-start gap-2 border-b border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                  <div><p className="font-bold">{t('task.deliveryPaused')} · {t('task.issueUnderReview')}</p>
+                    <p className="mt-0.5 break-words">{reasonText(a.issueReason!)}</p></div>
+                </div>}
                 <DriverOverdueNotice timing={deliveryTiming} deliveryDate={a.deliveryDate} compact />
                 {postDelivery && documentProgress && (
                   <div className="px-4 pt-3 space-y-3">
@@ -2256,6 +2277,26 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
               </div>
             )}
 
+            {issueOpen && (
+              <div role="status" className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="mt-0.5 h-6 w-6 shrink-0 text-red-600" aria-hidden="true" />
+                  <div className="min-w-0 space-y-1">
+                    <p className="text-xs font-bold uppercase tracking-wide text-red-700">{t('task.deliveryPaused')}</p>
+                    <p className="text-base font-bold text-red-900">{t('task.issueUnderReview')}</p>
+                    <p className="break-words text-sm font-medium text-red-800">{reasonText(a.issueReason!)}</p>
+                    <p className="text-sm text-red-800">{t('task.pauseExplanation')}</p>
+                    <p className="text-xs font-semibold text-red-700">{t('task.waitingStaff')}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+            {issueResolvedNotice && !issueOpen && !isTerminal && (
+              <p role="status" className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-semibold text-green-800">
+                {t('task.issueResolvedContinue')}
+              </p>
+            )}
+
             {/* ── Delay prompts (when active) ── */}
             {showPickupDelay && (
               <div className="bg-amber-50 border-2 border-amber-400 rounded-2xl p-5 space-y-4">
@@ -2403,7 +2444,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
             </div>
 
             {/* ── Report a problem (subtle, away from slider) ── */}
-            {!isTerminal && (
+            {!isTerminal && !issueOpen && (
               <div className="px-1 pb-2">
                 <button
                   onClick={() => setIssueSheet(true)}
@@ -2422,7 +2463,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-4 pt-4 pb-6 shadow-[0_-4px_20px_rgba(0,0,0,0.10)] z-20">
           <div className="mx-auto max-w-2xl">
             {(photosIncomplete || blockSlider) && <p className="mb-3 text-sm font-semibold text-amber-800">
-              {blockSlider ? t('slide.reportDelay') : t(phase === 'loading' ? 'workflow.completeLoadingPhoto'
+              {issueOpen ? t('task.pauseExplanation') : blockSlider ? t('slide.reportDelay') : t(phase === 'loading' ? 'workflow.completeLoadingPhoto'
                 : phase === 'arrived' ? 'workflow.completeBeforeUnloadingPhoto'
                   : phase === 'unloading' ? 'workflow.completeAfterUnloadingPhoto'
                     : phase === 'pickup' && !pickupTruckPhotosIncomplete ? 'workflow.completeBeforeLoadingPhoto' : 'workflow.completeFour')}
@@ -2432,6 +2473,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
               completedLabel={completedAction ? t(completedAction) : undefined}
               disabled={updating || photosIncomplete || blockSlider || !online}
               onConfirm={async () => {
+                if (issueOpen) return false;
                 if (phase === 'legacy_picked_up') {
                   setPhotoTarget('In Transit');
                   return false;
