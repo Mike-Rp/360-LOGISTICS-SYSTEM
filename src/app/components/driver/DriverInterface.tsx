@@ -15,6 +15,8 @@ import { DriverLanguageProvider, useDriverI18n, type DriverLanguage } from './dr
 import { destinationAreaEnabled, getAssignmentRoute, getDeliveryLocation } from '../../data/assignmentRoute';
 import { checkPhoto, loadVehicleDetector, type PhotoCheckFailure } from '../../lib/photoQuality';
 import { MILESTONE_NOTIFICATIONS } from '../../lib/notificationEvents';
+import { observeDriverCompletion, type DriverCompletionSnapshot } from './driverCompletion';
+import UploadedFilePreviewModal from '../admin/UploadedFilePreviewModal';
 
 /* ── Types ── */
 interface CompletedHistoryItem {
@@ -916,11 +918,11 @@ function DetailRow({ label, value }: { label: string; value?: string | null }) {
   );
 }
 
-function PastDeliveryRow({ item, onOpen }: { item: CompletedHistoryItem; onOpen: () => void }) {
+function PastDeliveryRow({ item, onOpen, highlighted = false }: { item: CompletedHistoryItem; onOpen: () => void; highlighted?: boolean }) {
   const { t } = useDriverI18n();
   return (
-    <button type="button" onClick={onOpen}
-      className="w-full min-w-0 min-h-20 rounded-2xl border border-gray-200 bg-white px-4 py-3 text-left flex items-center justify-between gap-3 active:bg-green-50 focus-visible:outline-2 focus-visible:outline-green-600">
+    <button type="button" onClick={onOpen} data-history-target={highlighted ? 'true' : undefined}
+      className={`w-full min-w-0 min-h-20 rounded-2xl border px-4 py-3 text-left flex items-center justify-between gap-3 transition-colors motion-reduce:transition-none active:bg-green-50 focus-visible:outline-2 focus-visible:outline-green-600 ${highlighted ? 'border-green-400 bg-green-50 ring-2 ring-green-200' : 'border-gray-200 bg-white'}`}>
       <span className="min-w-0 flex-1">
         <span className="block font-bold text-foreground break-all">{item.id}</span>
         <span className="block text-sm text-gray-700 break-words">{getAssignmentRoute(item)}</span>
@@ -930,6 +932,52 @@ function PastDeliveryRow({ item, onOpen }: { item: CompletedHistoryItem; onOpen:
       </span>
       <ChevronRight className="w-5 h-5 shrink-0 text-gray-400" aria-hidden="true" />
     </button>
+  );
+}
+
+function DeliveryCompleteDialog({ item, onClose, onViewHistory }: {
+  item: CompletedHistoryItem; onClose: () => void; onViewHistory: () => void;
+}) {
+  const { t } = useDriverI18n();
+  const actionRef = useRef<HTMLButtonElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    document.body.style.overflow = 'hidden';
+    actionRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') closeRef.current(); };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', onKey);
+      previousFocus?.focus();
+    };
+  }, []);
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/35 px-4 py-6 [padding-bottom:max(1.5rem,env(safe-area-inset-bottom))]">
+      <div role="dialog" aria-modal="true" aria-labelledby="delivery-complete-title"
+        className="w-full max-w-md max-h-[calc(100dvh-3rem)] overflow-y-auto rounded-2xl bg-white px-5 py-6 text-center shadow-xl motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95 motion-safe:duration-200 sm:px-7">
+        <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-green-100 text-green-700">
+          <CheckCircle2 className="h-8 w-8" aria-hidden="true" />
+        </span>
+        <h2 id="delivery-complete-title" className="mt-4 text-2xl font-bold text-foreground">{t('completion.title')}</h2>
+        <p className="mt-2 break-words text-base font-semibold text-foreground">{t('completion.assignment', { id: item.id })}</p>
+        <p className="mt-2 text-base leading-relaxed text-gray-600">{t('completion.moved')}</p>
+        {item.completedAt && <p className="mt-3 text-sm text-gray-500">{manilaStamp(item.completedAt)}</p>}
+        <button ref={actionRef} type="button" onClick={onViewHistory}
+          className="mt-6 min-h-12 w-full rounded-xl bg-green-700 px-4 py-3 text-base font-bold text-white hover:bg-green-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-green-700">
+          {t('completion.viewHistory')}
+        </button>
+        <button type="button" onClick={onClose}
+          className="mt-2 min-h-11 w-full rounded-xl px-4 text-base font-semibold text-gray-600 hover:bg-gray-100 focus-visible:outline-2 focus-visible:outline-green-700">
+          {t('login.close')}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -1020,7 +1068,7 @@ function HistoryDetailsSheet({ driverId, driverName, assignmentId, onClose }: { 
   const [remarksOpen, setRemarksOpen] = useState(false);
   const [remarksOverflow, setRemarksOverflow] = useState(false);
   const remarksRef = useRef<HTMLParagraphElement>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewDoc, setPreviewDoc] = useState<{ type: string; url: string; timestamp?: string } | null>(null);
 
   /* A completed delivery's documents are otherwise read-only (no upload flow
      exists here at all) — this lets a driver fill in a still-missing or
@@ -1073,11 +1121,11 @@ function HistoryDetailsSheet({ driverId, driverName, assignmentId, onClose }: { 
     const previous = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { if (previewUrl) setPreviewUrl(null); else onClose(); }
+      if (event.key === 'Escape') { if (previewDoc) setPreviewDoc(null); else onClose(); }
     };
     window.addEventListener('keydown', onKey);
     return () => { document.body.style.overflow = previous; window.removeEventListener('keydown', onKey); };
-  }, [onClose, previewUrl]);
+  }, [onClose, previewDoc]);
 
   useEffect(() => {
     if (!detail?.remarks || remarksOpen || !remarksRef.current) return;
@@ -1096,7 +1144,6 @@ function HistoryDetailsSheet({ driverId, driverName, assignmentId, onClose }: { 
     ...docs.filter((doc) => !REQUIRED_DOCS.includes(doc.type)),
   ] : [];
   const safeUrl = (url?: string) => url && (/^https:\/\//i.test(url) || /^data:(image\/(png|jpeg|webp)|application\/pdf);base64,/i.test(url)) ? url : null;
-  const isImage = (url: string) => /^data:image\//i.test(url) || /\.(png|jpe?g|webp)(\?|$)/i.test(url);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center sm:justify-center sm:p-4">
@@ -1139,17 +1186,16 @@ function HistoryDetailsSheet({ driverId, driverName, assignmentId, onClose }: { 
                     : doc.docStatus === 'rejected' ? statusColors['Needs Correction'].badge
                     : statusColors['Under Review'].badge;
                   return <div key={doc.type} className="min-w-0 flex items-center gap-3 rounded-xl border border-gray-200 p-3">
-                    {doc.type === 'Proof of Delivery' && url && isImage(url) ? (
-                      <button type="button" onClick={() => setPreviewUrl(url)} aria-label={t('history.enlargeProof')} className="shrink-0 w-11 h-11 rounded-lg overflow-hidden border border-gray-200">
-                        <img src={url} alt={t('history.proofThumbnail')} loading="lazy" decoding="async" className="w-full h-full object-cover" />
-                      </button>
-                    ) : <FileText className="w-5 h-5 text-gray-400 shrink-0" />}
+                    <FileText className="w-5 h-5 text-gray-400 shrink-0" aria-hidden="true" />
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-semibold text-foreground break-words">{documentText(doc.type)}</p>
                       <span className={`inline-block text-xs rounded-full px-2 py-0.5 ${color}`}>{status}</span>
                       {doc.uploaded && <p className="text-xs text-gray-500">{'uploadedAt' in doc && typeof doc.uploadedAt === 'string' ? manilaStamp(doc.uploadedAt, t('common.notAvailable')) : t('history.uploadTimeUnavailable')}</p>}
                     </div>
-                    {url && <a href={url} target="_blank" rel="noopener noreferrer" className="shrink-0 min-h-11 px-3 flex items-center text-sm font-semibold text-green-700">{t('common.view')}</a>}
+                    {url && <button type="button" onClick={() => setPreviewDoc({
+                      type: doc.type, url,
+                      timestamp: 'uploadedAt' in doc && typeof doc.uploadedAt === 'string' ? doc.uploadedAt : undefined,
+                    })} className="shrink-0 min-h-11 px-3 flex items-center text-sm font-semibold text-green-700 focus-visible:outline-2 focus-visible:outline-green-700">{t('common.view')}</button>}
                     {(!doc.uploaded || doc.docStatus === 'rejected') && (
                       <button type="button" disabled={uploadingType === doc.type}
                         onClick={() => { setPendingDocType(doc.type); historyFileRef.current?.click(); }}
@@ -1171,10 +1217,14 @@ function HistoryDetailsSheet({ driverId, driverName, assignmentId, onClose }: { 
           </>}
         </div>
       </div>
-      {previewUrl && <div className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center p-4" onClick={() => setPreviewUrl(null)}>
-        <button type="button" onClick={() => setPreviewUrl(null)} aria-label={t('history.closePreview')} className="absolute top-4 right-4 h-11 w-11 text-white flex items-center justify-center"><X className="w-6 h-6" /></button>
-        <img src={previewUrl} alt={documentText('Proof of Delivery')} className="max-w-full max-h-full object-contain" />
-      </div>}
+      {previewDoc && <UploadedFilePreviewModal key={`${previewDoc.type}:${previewDoc.url}`}
+        url={previewDoc.url} title={documentText(previewDoc.type)} kind="document"
+        timestamp={previewDoc.timestamp} assignmentId={assignmentId} onClose={() => setPreviewDoc(null)}
+        labels={{
+          close: t('history.closePreview'), dateUnavailable: t('history.previewDateUnavailable'),
+          download: t('history.downloadFile'), downloading: t('history.downloadingFile'),
+          downloadError: t('history.downloadError'), previewUnavailable: t('history.previewUnavailable'),
+        }} />}
     </div>
   );
 }
@@ -1226,13 +1276,39 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const [historySearch, setHistorySearch] = useState('');
   const [historyPage, setHistoryPage] = useState(1);
+  const [historyHighlightId, setHistoryHighlightId] = useState<string | null>(null);
+  const [completionNotice, setCompletionNotice] = useState<CompletedHistoryItem | null>(null);
   const [notificationPage, setNotificationPage] = useState(1);
   const [activeDrawer, setActiveDrawer] = useState<'notifications' | 'menu' | 'language' | null>(null);
   const [languageNotice, setLanguageNotice] = useState<DriverLanguage | null>(null);
   const [statusNotice, setStatusNotice] = useState<TaskStatus | null>(null);
   const [focusedDocType, setFocusedDocType] = useState<string | null>(null);
+  const completionSnapshot = useRef<DriverCompletionSnapshot | null>(null);
+  const fetchSequence = useRef(0);
+  const appliedFetchSequence = useRef(0);
   const closeHistoryDetail = useCallback(() => setSelectedHistoryId(null), []);
   const closeDrawer = useCallback(() => setActiveDrawer(null), []);
+
+  useEffect(() => {
+    if (screen !== 'history' || !historyHighlightId) return;
+    const frame = window.requestAnimationFrame(() => {
+      const row = document.querySelector<HTMLElement>('[data-history-target="true"]');
+      row?.scrollIntoView({ block: 'center' });
+      row?.focus({ preventScroll: true });
+    });
+    const timer = window.setTimeout(() => setHistoryHighlightId(null), 2500);
+    return () => { window.cancelAnimationFrame(frame); window.clearTimeout(timer); };
+  }, [screen, historyHighlightId, historyPage]);
+
+  const openCompletedHistory = (item: CompletedHistoryItem) => {
+    const index = data?.completedHistory?.findIndex(delivery => delivery.id === item.id) ?? -1;
+    setCompletionNotice(null);
+    setHistorySearch('');
+    setHistoryPage(index >= 0 ? Math.floor(index / 8) + 1 : 1);
+    setHistoryHighlightId(item.id);
+    setActiveDrawer(null);
+    setScreen('history');
+  };
 
   useEffect(() => {
     if (!languageNotice) return;
@@ -1271,12 +1347,24 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
   /* ── Fetch data ── */
   const fetchData = useCallback(async (quiet = false) => {
     if (!driverId) return;
+    const sequence = ++fetchSequence.current;
     if (!quiet) setSyncing(true);
     try {
       /* Reads only this driver's own rows — the database's row-level security enforces that. */
       const json = await loadDriverData(driverId);
+      if (sequence < appliedFetchSequence.current) return;
+      appliedFetchSequence.current = sequence;
+      const observation = observeDriverCompletion(completionSnapshot.current,
+        json.assignment?.id ?? null, json.completedHistory ?? []);
+      completionSnapshot.current = observation.snapshot;
+      if (observation.newlyCompleted) {
+        setCompletionNotice(observation.newlyCompleted);
+        setScreen('dashboard');
+      }
       setData(json); setOnline(true); setLastSync(new Date());
     } catch (err) {
+      if (sequence < appliedFetchSequence.current) return;
+      appliedFetchSequence.current = sequence;
       console.error('[loadDriverData] error:', err);
       /* Do NOT auto-fill fake demo data here — leave `data` untouched so a
          first-load failure correctly falls through to the "No Connection"
@@ -1285,7 +1373,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
          last-fetched assignment with the "Offline" banner instead of
          silently swapping in a fabricated one. */
       setOnline(false);
-    } finally { setSyncing(false); }
+    } finally { if (sequence >= appliedFetchSequence.current) setSyncing(false); }
   }, [driverId]);
 
   useEffect(() => {
@@ -1687,6 +1775,12 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
     </div>
   );
 
+  const CompletionPopup = completionNotice && (
+    <DeliveryCompleteDialog item={completionNotice}
+      onClose={() => { setCompletionNotice(null); setScreen('dashboard'); }}
+      onViewHistory={() => openCompletedHistory(completionNotice)} />
+  );
+
   /* ── Shared logout dialog ── */
   const LogoutDialog = logoutDlg && (
     <div className="fixed inset-0 z-50 flex items-end">
@@ -1942,6 +2036,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
         {LogoutDialog}
         {LanguageNotice}
         {StatusNotice}
+        {CompletionPopup}
       </div>
     );
   }
@@ -1960,7 +2055,8 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
           placeholder={t('history.searchPlaceholder')} className="w-full min-w-0 h-12 px-4 rounded-xl border border-gray-200 bg-white text-base mb-4" />
         {filteredHistory.length ? <>
           <div className="grid gap-2">
-            {historyRows.map((item) => <PastDeliveryRow key={item.id} item={item} onOpen={() => setSelectedHistoryId(item.id)} />)}
+            {historyRows.map((item) => <PastDeliveryRow key={item.id} item={item}
+              highlighted={historyHighlightId === item.id} onOpen={() => setSelectedHistoryId(item.id)} />)}
             {Array.from({ length: 8 - historyRows.length }, (_, index) => <div key={`empty-${index}`} aria-hidden="true" className="invisible min-h-20 rounded-2xl border px-4 py-3" />)}
           </div>
           <DriverPageControls page={shownHistoryPage} pages={historyPages} onPage={setHistoryPage} />
@@ -1969,6 +2065,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
       {selectedHistoryId && <HistoryDetailsSheet key={selectedHistoryId} driverId={driverId} driverName={driverName} assignmentId={selectedHistoryId} onClose={closeHistoryDetail} />}
       {LanguageNotice}
       {StatusNotice}
+      {CompletionPopup}
     </div>;
   }
 
@@ -2315,6 +2412,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
       {LogoutDialog}
       {LanguageNotice}
       {StatusNotice}
+      {CompletionPopup}
     </div>
   );
 }
