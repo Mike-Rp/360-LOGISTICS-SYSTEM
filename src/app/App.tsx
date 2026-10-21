@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, type Dispatch, type SetStateAction } from 'react';
 import { CheckCircle2 } from 'lucide-react';
 import { supabase } from './lib/supabaseClient';
-import { loadAdminData, syncAdminData, markNotificationsRead, resetAllData, restoreSession, signOut, readRecordCreationTimes } from './lib/db';
+import { loadAdminData, syncAdminData, markNotificationsRead, resetAllData, restoreSession, signOut, checkSessionStatus, endThisDeviceSession, readRecordCreationTimes } from './lib/db';
 import { rememberNotificationReads, restoreNotificationReads } from './lib/notificationReadState';
 import type { StaffSession } from './lib/db';
 import AdminDashboard from './components/admin/AdminDashboard';
@@ -15,6 +15,7 @@ import type { Assignment, CompletedTask, LocalDriver, LocalTruck, AppNotificatio
 
 type AppView = 'login' | 'admin' | 'driver';
 type NavItem = 'Dashboard' | 'Monitor' | 'Deliveries' | 'Documents' | 'Reports' | 'Accounts';
+type SessionEndReason = 'replaced' | 'signed_out';
 
 export default function App() {
   const [view,      setView]      = useState<AppView>('login');  // ← back to login
@@ -62,9 +63,95 @@ export default function App() {
   const [saveError,     setSaveError]     = useState<string | null>(null);
   const [loadError,     setLoadError]     = useState<string | null>(null);
   const [loginSuccess,  setLoginSuccess]  = useState<string | null>(null);
+  const [loginNotice, setLoginNotice] = useState<SessionEndReason | null>(null);
+  const sessionTerminationRef = useRef(false);
+  const sessionCheckRef = useRef<Promise<boolean> | null>(null);
+  const sessionEpochRef = useRef(0);
+  const activeSessionRef = useRef(false);
+  const normalLogoutRef = useRef(false);
   const notificationsRef = useRef(notifications);
   notificationsRef.current = notifications;
   const pendingReadWrites = useRef(new Set<string>());
+
+  /* One cleanup path for normal logout, remote sign-out, and session replacement.
+     The epoch makes responses started under the old account unable to restore its data. */
+  const clearSession = useCallback(() => {
+    sessionEpochRef.current += 1;
+    sessionCheckRef.current = null;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = null;
+    if (adminRoleRef.current) redirectToAdminLogin(false);
+    localStorage.removeItem('360_driver_screen');
+    localStorage.removeItem('360_active_nav');
+    localStorage.removeItem('360_display_name');
+    signedInRef.current = false;
+    activeSessionRef.current = false;
+    adminEmailRef.current = null;
+    adminRoleRef.current = null;
+    setAdminRole(null);
+    setAdminEmail(null);
+    setAdminIsOm(false);
+    setSignedIn(false);
+    setAdminLoadFinished(false);
+    setDriverInfo(null);
+    setView('login');
+    setDrivers([]);
+    setTrucks([]);
+    setAssignments([]);
+    setCompleted([]);
+    setCancelled([]);
+    setNotifications([]);
+    notificationsRef.current = [];
+    pendingReadWrites.current.clear();
+    setNotificationsReady(false);
+    setActivityLog([]);
+    setArchivedDrivers([]);
+    setArchivedTrucks([]);
+    setSaveError(null);
+    setLoadError(null);
+    setLoginSuccess(null);
+    setDataLoading(false);
+    setSavingToDb(false);
+    isMounted.current = false;
+    isPollUpdate.current = true;
+  }, []);
+
+  const handleSessionInvalidated = useCallback((reason: SessionEndReason) => {
+    if (sessionTerminationRef.current) return;
+    sessionTerminationRef.current = true;
+    setRestoring(true);
+    setLoginNotice(reason);
+    clearSession();
+    void endThisDeviceSession().catch((error) => {
+      console.warn('[session] could not clear this device session:', error);
+    }).finally(() => {
+      setRestoring(false);
+    });
+  }, [clearSession]);
+
+  /* A single in-flight check is shared by the poll, focus, and mutation failures. */
+  const checkAppSession = useCallback((): Promise<boolean> => {
+    if (sessionTerminationRef.current) return Promise.resolve(false);
+    if (sessionCheckRef.current) return sessionCheckRef.current;
+    const epoch = sessionEpochRef.current;
+    const request = (async () => {
+      try {
+        const status = await checkSessionStatus();
+        if (sessionEpochRef.current !== epoch || sessionTerminationRef.current) return false;
+        if (status === 'replaced' || status === 'signed_out') {
+          handleSessionInvalidated(status);
+          return false;
+        }
+        return true; // 'unknown' is deliberately non-destructive.
+      } catch (error) {
+        console.warn('[session] status check unavailable:', error);
+        return sessionEpochRef.current === epoch && !sessionTerminationRef.current;
+      }
+    })();
+    sessionCheckRef.current = request;
+    void request.finally(() => { if (sessionCheckRef.current === request) sessionCheckRef.current = null; });
+    return request;
+  }, [handleSessionInvalidated]);
 
   const flushNotificationReads = useCallback((account: string, ids: string[]) => {
     if (!signedInRef.current || adminEmailRef.current !== account
@@ -78,6 +165,7 @@ export default function App() {
         setSaveError((current) => current === failureMessage ? null : current);
       }
     }).catch((err) => {
+      if (signedInRef.current && adminEmailRef.current === account) void checkAppSession();
       console.error('[notification read] save failed:', err);
       if (signedInRef.current && adminEmailRef.current === account) {
         setSaveError(failureMessage);
@@ -85,7 +173,7 @@ export default function App() {
     }).finally(() => {
       pending.forEach((id) => pendingReadWrites.current.delete(`${account}:${id}`));
     });
-  }, []);
+  }, [checkAppSession]);
 
   const restoreNotifications = useCallback((loaded: AppNotification[]) => {
     const account = adminEmailRef.current;
@@ -102,6 +190,7 @@ export default function App() {
 
   // Header uses this same setter for individual reads and Mark all as read.
   const persistNotificationReads: Dispatch<SetStateAction<AppNotification[]>> = useCallback((update) => {
+    if (!signedInRef.current || sessionTerminationRef.current) return;
     const previous = notificationsRef.current;
     const next = typeof update === 'function' ? update(previous) : update;
     const unreadIds = new Set(previous.filter((notification) => !notification.read).map((notification) => notification.id));
@@ -118,6 +207,7 @@ export default function App() {
   /* ── Admin activity logging — auto-tags the signed-in account. (The database also stamps the
      real email/role on insert, so this can't be spoofed from the browser.) ── */
   const onLogActivity = useCallback((entry: AdminActivityInput) => {
+    if (!signedInRef.current || sessionTerminationRef.current) return;
     const fullEntry: AdminActivityEntry = {
       ...entry,
       adminEmail: entry.adminEmail ?? adminEmailRef.current ?? undefined,
@@ -130,11 +220,13 @@ export default function App() {
 
   /* ── Load data from the database (all tables the signed-in user is allowed to see) ── */
   const loadData = useCallback(async () => {
+    const epoch = sessionEpochRef.current;
     setDataLoading(true);
     setLoadError(null);
     isPollUpdate.current = true; // block auto-save while loading
     try {
       const data = await loadAdminData();
+      if (sessionEpochRef.current !== epoch) return;
       setDrivers(data.drivers);
       setTrucks(data.trucks);
       setAssignments(data.assignments);
@@ -145,18 +237,27 @@ export default function App() {
       setArchivedDrivers(data.archivedDrivers);
       setArchivedTrucks(data.archivedTrucks);
     } catch (err) {
+      if (sessionEpochRef.current !== epoch) return;
+      if (!await checkAppSession()) return;
       console.error('[loadData] error:', err);
       // do NOT clear state on error — leave whatever is already in memory
       /* Without this the screen just rendered empty or stale with no explanation. */
       setLoadError('Could not load your data. Something went wrong, please try again.');
     } finally {
-      setAdminLoadFinished(true);
-      setDataLoading(false);
-      setTimeout(() => { isPollUpdate.current = false; }, 200);
+      if (sessionEpochRef.current === epoch) {
+        setAdminLoadFinished(true);
+        setDataLoading(false);
+        setTimeout(() => { if (sessionEpochRef.current === epoch) isPollUpdate.current = false; }, 200);
+      }
     }
-  }, [restoreNotifications]);
+  }, [restoreNotifications, checkAppSession]);
 
   const applySession = useCallback(async (staff: StaffSession, fresh = false) => {
+    if (fresh) {
+      sessionTerminationRef.current = false;
+      setLoginNotice(null);
+    }
+    const epoch = sessionEpochRef.current;
     isPollUpdate.current = true; // block auto-save until loadData finishes
     setAdminRole(staff.role);
     setAdminEmail(staff.email);
@@ -164,6 +265,7 @@ export default function App() {
     adminRoleRef.current  = staff.role;
     adminEmailRef.current = staff.email;
     signedInRef.current   = true;
+    activeSessionRef.current = true;
     setSignedIn(true);
     if (fresh) {
       /* Reset the device-local display name on every fresh login so a previous account's name never
@@ -172,6 +274,7 @@ export default function App() {
       else localStorage.removeItem('360_display_name');
     }
     await loadData();
+    if (sessionEpochRef.current !== epoch || sessionTerminationRef.current) return;
     setActiveNav(startAdminNavigation());
     setView('admin');
     if (fresh) {
@@ -187,18 +290,26 @@ export default function App() {
       try {
         // The one-time reset link is available without an authenticated session.
         if (window.location.pathname === '/reset-password') return;
+        const stored = (await supabase.auth.getSession()).data.session;
+        if (cancelled) return;
+        if (stored && !await checkAppSession()) return;
         const s = await restoreSession();
         if (cancelled || !s) return;
+        if (!await checkAppSession() || cancelled) return;
         if (s.kind === 'staff') await applySession(s.staff);
-        else { setDriverInfo(s.driver); setView('driver'); }
+        else {
+          activeSessionRef.current = true;
+          setDriverInfo(s.driver);
+          setView('driver');
+        }
       } catch (err) {
         console.error('[restoreSession] error:', err);   // e.g. offline — stay on the login screen
       } finally {
-        if (!cancelled) setRestoring(false);
+        if (!cancelled && !sessionTerminationRef.current) setRestoring(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [applySession]);
+  }, [applySession, checkAppSession]);
 
   useEffect(() => {
     if (restoring || view === 'driver' || window.location.pathname === '/reset-password') return;
@@ -238,11 +349,13 @@ export default function App() {
     ca: Assignment[], n: AppNotification[],
     al: AdminActivityEntry[]
   ) => {
+    const epoch = sessionEpochRef.current;
     savingRef.current = true;
     setSavingToDb(true);
     setSaveError(null);
     try {
       await syncAdminData({ drivers: d, trucks: t, assignments: a, completed: co, cancelled: ca, notifications: n, activityLog: al });
+      if (sessionEpochRef.current !== epoch) return;
       try {
         const driverIds = new Set(d.map((driver) => driver.id));
         const assignmentIds = new Set([...a, ...co, ...ca].map((assignment) => assignment.id));
@@ -258,15 +371,16 @@ export default function App() {
         console.warn('[creation timestamps] read failed; the existing poll will reload saved timestamps:', err);
       }
     } catch (err) {
+      if (sessionEpochRef.current !== epoch || !await checkAppSession()) return;
       console.error('[saveToServer] error:', err);
       const why = err instanceof Error ? err.message : String(err);
       setSaveError(`Auto-save failed: ${why}. Changes may be lost on refresh.`);
       setTimeout(() => setSaveError(null), 6000);
     } finally {
       savingRef.current = false;
-      setSavingToDb(false);
+      if (sessionEpochRef.current === epoch) setSavingToDb(false);
     }
-  }, []);
+  }, [checkAppSession]);
 
   /* Auto-save: only fires for user-driven changes, not poll-driven merges */
   useEffect(() => {
@@ -289,12 +403,19 @@ export default function App() {
      2. Run the change. Errors are re-thrown for the calling screen to show.
      3. Reload quietly (like the poll — no full-screen loading spinner). */
   const onServerChange = useCallback(async (action: () => Promise<void>, onActionSuccess?: () => void): Promise<void> => {
+    const epoch = sessionEpochRef.current;
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
       await saveToServer(drivers, trucks, assignments, completed, cancelled, notifications, activityLog);
     }
-    await action();
+    if (sessionEpochRef.current !== epoch) return;
+    try { await action(); }
+    catch (error) {
+      if (sessionEpochRef.current === epoch) await checkAppSession();
+      throw error;
+    }
+    if (sessionEpochRef.current !== epoch) return;
     if (onActionSuccess) {
       // The database mutation has succeeded. Reflect it immediately while the
       // full reload catches up, and do not auto-save this server-owned change.
@@ -303,6 +424,7 @@ export default function App() {
     }
     try {
       const data = await loadAdminData();
+      if (sessionEpochRef.current !== epoch) return;
       isPollUpdate.current = true;
       setAssignments(data.assignments);
       restoreNotifications(data.notifications);
@@ -316,16 +438,20 @@ export default function App() {
     } catch (err) {
       /* The change itself succeeded; keep the immediate local update until the
          next poll can replace it with the database state. */
-      console.warn('[onServerChange] reload failed, the next poll will retry:', err);
+      if (sessionEpochRef.current === epoch && await checkAppSession()) {
+        console.warn('[onServerChange] reload failed, the next poll will retry:', err);
+      }
     } finally {
-      setTimeout(() => { isPollUpdate.current = false; }, 100);
+      setTimeout(() => { if (sessionEpochRef.current === epoch) isPollUpdate.current = false; }, 100);
     }
-  }, [saveToServer, restoreNotifications, drivers, trucks, assignments, completed, cancelled, notifications, activityLog]);
+  }, [saveToServer, restoreNotifications, checkAppSession, drivers, trucks, assignments, completed, cancelled, notifications, activityLog]);
 
   /* ── Admin real-time poll — refresh data every 12 s ── */
   useEffect(() => {
     if (!signedIn) return;
     const id = setInterval(async () => {
+      const epoch = sessionEpochRef.current;
+      if (!await checkAppSession()) return;
       /* A local edit is mid-flight (debounced save pending, or the save itself
          still running) — local state is already more current than whatever this
          poll would fetch, so skip this cycle entirely rather than momentarily
@@ -333,6 +459,7 @@ export default function App() {
       if (saveTimerRef.current || savingRef.current) return;
       try {
         const data = await loadAdminData();
+        if (sessionEpochRef.current !== epoch || sessionTerminationRef.current) return;
         if (saveTimerRef.current || savingRef.current) return;   // an edit started while we were fetching
         /* Mark as poll update so auto-save doesn't fire */
         isPollUpdate.current = true;
@@ -347,63 +474,52 @@ export default function App() {
         setArchivedDrivers(data.archivedDrivers);
         setArchivedTrucks(data.archivedTrucks);
         /* Reset flag after React has processed the state updates */
-        setTimeout(() => { isPollUpdate.current = false; }, 100);
+        setTimeout(() => { if (sessionEpochRef.current === epoch) isPollUpdate.current = false; }, 100);
       } catch (err) {
         /* A failed poll is not shown to the user on purpose — the screen keeps the
            last good data and the next tick retries 12 s later. It is logged, though:
            silently swallowing it hid real outages during debugging. */
-        console.warn('[poll] refresh failed, keeping last loaded data:', err);
+        if (sessionEpochRef.current === epoch) console.warn('[poll] refresh failed, keeping last loaded data:', err);
       }
     }, 12000);
     return () => clearInterval(id);
-  }, [signedIn, adminRole, restoreNotifications]);
+  }, [signedIn, adminRole, restoreNotifications, checkAppSession]);
 
-  /* Forget who was signed in and go back to the login screen (local state only). */
-  const clearSession = useCallback(() => {
-    if (adminRoleRef.current) redirectToAdminLogin(false);
-    localStorage.removeItem('360_driver_screen');
-    localStorage.removeItem('360_active_nav');
-    signedInRef.current   = false;
-    adminEmailRef.current = null;
-    adminRoleRef.current  = null;
-    setAdminRole(null);
-    setAdminEmail(null);
-    setAdminIsOm(false);
-    setSignedIn(false);
-    setAdminLoadFinished(false);
-    setDriverInfo(null);
-    setView('login');
-    setDrivers([]);
-    setTrucks([]);
-    setAssignments([]);
-    setCompleted([]);
-    setCancelled([]);
-    setNotifications([]);
-    setNotificationsReady(false);
-    setActivityLog([]);
-    setArchivedDrivers([]);
-    setArchivedTrucks([]);
-    isMounted.current = false;
-  }, []);
+  useEffect(() => {
+    if (!activeSessionRef.current || restoring || view === 'login') return;
+    const checkWhenActive = () => { if (document.visibilityState === 'visible') void checkAppSession(); };
+    document.addEventListener('visibilitychange', checkWhenActive);
+    window.addEventListener('focus', checkWhenActive);
+    return () => {
+      document.removeEventListener('visibilitychange', checkWhenActive);
+      window.removeEventListener('focus', checkWhenActive);
+    };
+  }, [view, restoring, checkAppSession]);
 
   /* Signed out from somewhere else (another tab, or the session expired) → drop back to login. */
   useEffect(() => {
     const { data } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'SIGNED_OUT') clearSession();
+      if (event !== 'SIGNED_OUT') return;
+      if (sessionTerminationRef.current || normalLogoutRef.current) return;
+      if (activeSessionRef.current) handleSessionInvalidated('signed_out');
     });
     return () => data.subscription.unsubscribe();
-  }, [clearSession]);
+  }, [handleSessionInvalidated]);
 
   const handleLogout = async () => {
+    normalLogoutRef.current = true;
     try { await signOut(); } catch { /* still leave the screen even if the network call failed */ }
     clearSession();
+    normalLogoutRef.current = false;
   };
 
   /* ── Reset all data (drivers, trucks, assignments, etc.) — keeps accounts and the activity log ── */
   const handleResetAll = useCallback(async (): Promise<void> => {
+    const epoch = sessionEpochRef.current;
     try {
       await resetAllData();
     } catch (err) {
+      if (!await checkAppSession()) throw err;
       console.error('[handleResetAll] error:', err);
       const why = err instanceof Error ? err.message : String(err);
       setSaveError(`Reset failed: ${why}`);
@@ -413,6 +529,7 @@ export default function App() {
          The screen is still NOT emptied — the database wasn't actually wiped. */
       throw err;
     }
+    if (sessionEpochRef.current !== epoch) return;
     isPollUpdate.current = true;
     setDrivers([]);
     setTrucks([]);
@@ -420,8 +537,8 @@ export default function App() {
     setCompleted([]);
     setCancelled([]);
     setNotifications([]);
-    setTimeout(() => { isPollUpdate.current = false; }, 200);
-  }, []);
+    setTimeout(() => { if (sessionEpochRef.current === epoch) isPollUpdate.current = false; }, 200);
+  }, [checkAppSession]);
 
   const isViewOnly   = !canDispatchAssignments(adminRole);
   const isOperationManager = adminIsOm;
@@ -472,8 +589,13 @@ export default function App() {
       {/* ── Main Content ── */}
       {view === 'login' && !signedIn && (
         <LoginScreen
+          sessionNotice={loginNotice}
+          onDismissSessionNotice={() => setLoginNotice(null)}
           onAdminLogin={async (staff) => { await applySession(staff, true); }}
           onDriverLogin={(info) => {
+            sessionTerminationRef.current = false;
+            activeSessionRef.current = true;
+            setLoginNotice(null);
             setDriverInfo(info);
             setView('driver');
             setLoginSuccess(`Login Successful! Welcome, ${info.name}.`);
@@ -512,6 +634,7 @@ export default function App() {
           driverId={driverInfo?.id ?? ''}
           driverName={driverInfo?.name ?? ''}
           onLogout={handleLogout}
+          onCheckSession={checkAppSession}
         />
       )}
 

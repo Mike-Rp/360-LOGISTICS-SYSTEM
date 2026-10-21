@@ -19,6 +19,7 @@ import { supabase } from './supabaseClient';
 import { DOCUMENT_TYPES } from '../data/assignmentTypes';
 import { destinationAreaEnabled } from '../data/assignmentRoute';
 import { locationFieldsFromRow, locationColumnsForRow, invalidLocationEdit } from './assignmentLocation';
+import { storagePathOf, storedFileRef, sameStoredFile } from './storageRefs';
 import type {
   Assignment, AssignmentDoc, CompletedTask, LocalDriver, LocalTruck, AppNotification,
   AdminActivityEntry, AdminRole, StatusPhoto, DelayReport, TeamMember,
@@ -48,6 +49,39 @@ const isInlineImage = (s: unknown) => typeof s === 'string' && (s.startsWith('da
 function stripBase64<T>(v: T): T {
   if (typeof v === 'string') return (v.startsWith('data:') ? '[image-data-stripped]' : v) as unknown as T;
   return v;
+}
+
+/* ── Photo / document links ──
+   The database stores a file's PATH (storageRefs.ts), never a link. When data is loaded,
+   paths become signed links that work for one hour — created through Storage's own
+   security rules, so only current staff or the owning driver can get one. Links are
+   cached and renewed 10 minutes before they expire, so pictures do not reload on every
+   poll. (Older rows still hold a 10-year link; it is read as its path and re-signed.) */
+const SIGNED_LINK_SECONDS = 60 * 60;
+const RENEW_BEFORE_MS = 10 * 60 * 1000;
+const signedLinks = new Map<string, { url: string; expiresAt: number }>();
+
+/** What to save in the database for a photo/document value: its path, never a link. */
+const fileRefToStore = <T,>(v: T) => storedFileRef(stripBase64(v), BUCKET);
+
+/** Make sure every file referenced by `values` has a current short-lived link cached. */
+async function signStoredFiles(values: unknown[]): Promise<void> {
+  const now = Date.now();
+  const need = [...new Set(values.map((v) => storagePathOf(v, BUCKET)).filter((p): p is string => !!p))]
+    .filter((p) => { const c = signedLinks.get(p); return !c || c.expiresAt - now < RENEW_BEFORE_MS; });
+  if (!need.length) return;
+  const { data, error } = await supabase.storage.from(BUCKET).createSignedUrls(need, SIGNED_LINK_SECONDS);
+  if (error) { console.warn('[storage] could not create file links:', error); return; }
+  for (const item of data ?? []) {
+    if (item.signedUrl && item.path) signedLinks.set(item.path, { url: item.signedUrl, expiresAt: now + SIGNED_LINK_SECONDS * 1000 });
+  }
+}
+
+/** The link the screens show for a stored value ('' if the file could not be signed). */
+function displayUrl(value: unknown): string {
+  const path = storagePathOf(value, BUCKET);
+  if (!path) return typeof value === 'string' ? value : '';
+  return signedLinks.get(path)?.url ?? '';
 }
 
 const timeLabel = () =>
@@ -102,6 +136,25 @@ async function fetchOwnDriver(uid: string): Promise<{ id: string; name: string }
   return { id: data.id, name: data.name };
 }
 
+/* Single active session: every sign-out ends only THIS browser's session. The default
+   (scope 'global') would end all of the account's sessions — a device that was replaced
+   by a newer login would then also log out the newer device. */
+const signOutThisDevice = () => {
+  signedLinks.clear();            // the next account on this browser gets its own links
+  return supabase.auth.signOut({ scope: 'local' });
+};
+
+/* Right after a successful sign-in: ask the database for this session's status. Being the
+   newest, it is 'current', and the database removes the account's older sessions, so the
+   previous device's refresh token dies now instead of at its next poll. Fire-and-forget,
+   like touch_last_active — it must never block or fail a login. */
+function endOlderSessions(): void {
+  void supabase.rpc('my_session_status').then(
+    ({ error }) => { if (error) console.warn('[my_session_status] could not end older sessions:', error); },
+    (err: unknown) => { console.warn('[my_session_status] request failed:', err); },
+  );
+}
+
 function loginFailure(error: { status?: number; code?: string }): LoginError {
   if (error.status === 429) return new LoginError('rate_limited');
   if (error.status && error.status >= 500) return new LoginError('server');
@@ -117,11 +170,12 @@ export async function signInStaff(email: string, password: string): Promise<Staf
   if (error || !data.user) throw loginFailure(error ?? {});
   let profile: Row | null;
   try { profile = await fetchProfile(data.user.id); }
-  catch { await supabase.auth.signOut(); throw new LoginError('network'); }
+  catch { await signOutThisDevice(); throw new LoginError('network'); }
   if (!profile || profile.status !== 'active') {
-    await supabase.auth.signOut();          // valid login but not a staff account (e.g. a driver, or removed)
+    await signOutThisDevice();              // valid login but not a staff account (e.g. a driver, or removed)
     throw new LoginError('no_access');
   }
+  endOlderSessions();
   /* Fire-and-forget: stamping "last active" must never block or fail a login.
      The .catch() is required — without it a rejection here surfaces as an
      unhandled promise rejection instead of a log line. */
@@ -143,8 +197,9 @@ export async function signInDriver(mobile10: string, pin: string): Promise<{ id:
   if (error || !data.user) throw loginFailure(error ?? {});
   let driver: { id: string; name: string } | null;
   try { driver = await fetchOwnDriver(data.user.id); }
-  catch { await supabase.auth.signOut(); throw new LoginError('network'); }
-  if (!driver) { await supabase.auth.signOut(); throw new LoginError('no_access'); }
+  catch { await signOutThisDevice(); throw new LoginError('network'); }
+  if (!driver) { await signOutThisDevice(); throw new LoginError('no_access'); }
+  endOlderSessions();
   return driver;
 }
 
@@ -158,11 +213,47 @@ export async function restoreSession(): Promise<AppSession> {
   if (profile && profile.status === 'active') return { kind: 'staff', staff: toStaff(profile) };
   const driver = await fetchOwnDriver(user.id);
   if (driver) return { kind: 'driver', driver };
-  await supabase.auth.signOut();
+  await signOutThisDevice();
   return null;
 }
 
-export const signOut = () => supabase.auth.signOut();
+/* Logout button: ends this device's session only (see signOutThisDevice). */
+export const signOut = () => signOutThisDevice();
+
+/* ── Single active session ──
+   'current'    this browser's login is the account's newest — keep going
+   'replaced'   the same account signed in on another device → show the message, sign out here
+   'signed_out' the session no longer exists (PIN/password reset, account removed)
+   'unknown'    could not tell (offline, or the database part is not installed yet) —
+                never log anyone out for this; just try again on the next poll. */
+export type SessionStatus = 'current' | 'replaced' | 'signed_out' | 'unknown';
+
+function sessionIdOf(accessToken: string | undefined): string | null {
+  try {
+    const payload = accessToken!.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(atob(payload)).session_id ?? null;
+  } catch { return null; }
+}
+
+export async function checkSessionStatus(): Promise<SessionStatus> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const before = sessionIdOf((await supabase.auth.getSession()).data.session?.access_token);
+    if (!before) return 'signed_out';
+    const { data, error } = await supabase.rpc('my_session_status');
+    if (error) return 'unknown';
+    /* Re-entering a password (edit/cancel confirmation, password change) signs in again in
+       THIS browser, i.e. starts a newer session here. If that happened while we were asking,
+       the answer was about the old session — ask again with the current one. */
+    const after = sessionIdOf((await supabase.auth.getSession()).data.session?.access_token);
+    if (after !== before) continue;
+    return data === 'current' || data === 'replaced' || data === 'signed_out' ? data : 'unknown';
+  }
+  return 'unknown';
+}
+
+/* After 'replaced' / 'signed_out': clear this device's stored login without touching
+   the account's other (newer) session. */
+export const endThisDeviceSession = () => signOutThisDevice();
 
 export type PasswordErrorCode = 'wrong_current' | 'same_password' | 'weak_password' | 'not_signed_in' | 'network';
 export class PasswordError extends Error {
@@ -199,11 +290,11 @@ export async function changeOwnPassword(current: string, next: string): Promise<
 
 const docFromRow = (r: Row): AssignmentDoc => ({
   type: r.type, uploaded: !!r.uploaded, docStatus: r.doc_status,
-  ...(r.file_url ? { fileUrl: r.file_url } : {}),
+  ...(r.file_url ? { fileUrl: displayUrl(r.file_url) } : {}),
   ...(r.reject_reason ? { rejectReason: r.reject_reason } : {}),
 });
 const photoFromRow = (r: Row): StatusPhoto => ({
-  url: r.url, timestamp: r.taken_at ?? '', location: r.location ?? '',
+  url: displayUrl(r.url), timestamp: r.taken_at ?? '', location: r.location ?? '',
   ...(r.lat != null && r.lng != null ? { coords: { lat: r.lat, lng: r.lng } } : {}),
 });
 const delayFromRow = (r: Row): DelayReport => ({ type: r.type, reason: r.reason, reportedAt: r.reported_at ?? '' });
@@ -277,6 +368,7 @@ export async function loadAdminData(): Promise<AdminData & ArchivedData> {
     fetchAll('notifications',        [['created_at', false], ['id', false]]),
     fetchAll('activity_log',         [['ts', false], ['id', false]]),
   ]);
+  await signStoredFiles([...docRows.map((r) => r.file_url), ...photoRows.map((r) => r.url), ...notifRows.map((r) => r.photo_url)]);
 
   const pins = new Map(pinRows.map((p) => [p.driver_id as string, p.pin as string]));
   const allDrivers: LocalDriver[] = driverRows.map((r) => ({
@@ -328,7 +420,7 @@ export async function loadAdminData(): Promise<AdminData & ArchivedData> {
     ...(r.created_at ? { createdAt: r.created_at } : {}),
     ...(r.doc_type ? { docType: r.doc_type } : {}),
     ...(r.status_update ? { statusUpdate: r.status_update } : {}),
-    ...(r.photo_url ? { photoUrl: r.photo_url } : {}),
+    ...(r.photo_url ? { photoUrl: displayUrl(r.photo_url) } : {}),
     ...(r.reason ? { reason: r.reason } : {}),
     ...(r.navigate_to ? { navigateTo: r.navigate_to } : {}),
   }));
@@ -415,12 +507,12 @@ function flatten(d: AdminData): Flat {
     (a.documents ?? []).forEach((doc, i) => {
       f.docs.set(key2(a.id, doc.type), {
         assignment_id: a.id, type: doc.type, position: i, uploaded: !!doc.uploaded,
-        doc_status: doc.docStatus ?? 'pending', file_url: stripBase64(doc.fileUrl ?? null), reject_reason: doc.rejectReason ?? null,
+        doc_status: doc.docStatus ?? 'pending', file_url: fileRefToStore(doc.fileUrl ?? null), reject_reason: doc.rejectReason ?? null,
       });
     });
     for (const [status, p] of Object.entries(a.statusPhotos ?? {})) {
       f.photos.set(key2(a.id, status), {
-        assignment_id: a.id, status, url: stripBase64(p.url), taken_at: p.timestamp ?? '', location: p.location ?? '',
+        assignment_id: a.id, status, url: fileRefToStore(p.url), taken_at: p.timestamp ?? '', location: p.location ?? '',
         lat: p.coords?.lat ?? null, lng: p.coords?.lng ?? null,
       });
     }
@@ -436,7 +528,7 @@ function flatten(d: AdminData): Flat {
     f.notifications.set(n.id, {
       id: n.id, type: n.type, message: n.message ?? '', assignment_id: n.assignmentId ?? '',
       driver_name: n.driverName ?? '', truck_plate: n.truckPlate ?? '', doc_type: n.docType ?? null,
-      status_update: n.statusUpdate ?? null, photo_url: stripBase64(n.photoUrl ?? null), reason: n.reason ?? null,
+      status_update: n.statusUpdate ?? null, photo_url: fileRefToStore(n.photoUrl ?? null), reason: n.reason ?? null,
       read: !!n.read, time_label: n.timestamp ?? '', navigate_to: n.navigateTo ?? null,
     });
   }
@@ -869,6 +961,7 @@ export async function loadDriverData(driverId: string): Promise<DriverViewData> 
       supabase.from('delay_reports').select('*').eq('assignment_id', chosen.id),
     ]);
     for (const r of [docs, photos, delays]) if (r.error) throw r.error;
+    await signStoredFiles([...(docs.data ?? []).map((r) => r.file_url), ...(photos.data ?? []).map((r) => r.url)]);
     assignment = assignmentFromRow(chosen, docs.data ?? [], photos.data ?? [], delays.data ?? []);
   }
 
@@ -898,6 +991,7 @@ export async function loadDriverCompletedDelivery(driverId: string, assignmentId
   const { data: docs, error: docsError } = await supabase.from('assignment_documents').select('*')
     .eq('assignment_id', assignmentId);
   if (docsError) throw docsError;
+  await signStoredFiles((docs ?? []).map((d) => d.file_url));
   return {
     ...assignmentFromRow(row, docs ?? [], [], []),
     completedAt: row.completed_at ?? '',
@@ -926,7 +1020,7 @@ export async function driverUpdate(
     const rows = Object.entries(updates.statusPhotos)
       .filter(([, p]) => !isInlineImage(p.url))
       .map(([status, p]) => ({
-        assignment_id: assignmentId, status, url: p.url, taken_at: p.timestamp ?? '', location: p.location ?? '',
+        assignment_id: assignmentId, status, url: fileRefToStore(p.url), taken_at: p.timestamp ?? '', location: p.location ?? '',
         lat: p.coords?.lat ?? null, lng: p.coords?.lng ?? null,
       }));
     if (rows.length) {
@@ -963,11 +1057,12 @@ export async function driverUpdate(
     if (error) throw new Error(`documents: ${error.message}`);
     const have = new Map((existing ?? []).map((r) => [r.type as string, r.file_url as string | null]));
     for (const d of updates.documents) {
-      if (!d.fileUrl || isInlineImage(d.fileUrl) || have.get(d.type) === d.fileUrl) continue;
+      if (!d.fileUrl || isInlineImage(d.fileUrl) || sameStoredFile(have.get(d.type), d.fileUrl, BUCKET)) continue;
+      const fileRef = fileRefToStore(d.fileUrl);
       const res = have.has(d.type)
-        ? await supabase.from('assignment_documents').update({ file_url: d.fileUrl, uploaded: true }).eq('assignment_id', assignmentId).eq('type', d.type)
+        ? await supabase.from('assignment_documents').update({ file_url: fileRef, uploaded: true }).eq('assignment_id', assignmentId).eq('type', d.type)
         : await supabase.from('assignment_documents').insert({
-            assignment_id: assignmentId, type: d.type, uploaded: true, doc_status: 'pending', file_url: d.fileUrl,
+            assignment_id: assignmentId, type: d.type, uploaded: true, doc_status: 'pending', file_url: fileRef,
             position: Math.max(0, (DOCUMENT_TYPES as readonly string[]).indexOf(d.type)),
           });
       if (res.error) throw new Error(`documents: ${res.error.message}`);
@@ -981,7 +1076,7 @@ export async function driverUpdate(
       read: false, time_label: timeLabel(), driver_name: driverName,
       type: notif.type, message: notif.message ?? '', assignment_id: assignmentId,
       truck_plate: notif.truckPlate ?? '', doc_type: notif.docType ?? null, status_update: notif.statusUpdate ?? null,
-      photo_url: notif.photoUrl ?? null, reason: notif.reason ?? null, navigate_to: notif.navigateTo ?? null,
+      photo_url: fileRefToStore(notif.photoUrl ?? null), reason: notif.reason ?? null, navigate_to: notif.navigateTo ?? null,
     });
     // A repeated request for the same persisted milestone must not make a second card.
     if (error && !(notif.id && error.code === '23505')) throw new Error(`notification: ${error.message}`);
@@ -999,7 +1094,8 @@ export async function notifyAssignmentCancelled(assignment: Assignment, reason: 
   if (error && error.code !== '23505') throw error;
 }
 
-/* Upload a photo/document (a base64 data URL from the camera) and return a long-lived signed URL. */
+/* Upload a photo/document (a base64 data URL from the camera) and return a link to show it.
+   The link works for one hour; whatever saves it stores only the file's path (fileRefToStore). */
 export async function uploadImage(dataUrl: string, path: string): Promise<string> {
   const [head, b64 = ''] = dataUrl.split(',');
   const contentType = head.startsWith('data:') ? head.slice(5).split(';')[0] || 'image/jpeg' : 'image/jpeg';
@@ -1009,7 +1105,8 @@ export async function uploadImage(dataUrl: string, path: string): Promise<string
 
   const up = await supabase.storage.from(BUCKET).upload(path, bytes, { contentType, upsert: true });
   if (up.error) throw new Error(`upload: ${up.error.message}`);
-  const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(path, 315360000);   // ~10 years
+  const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(path, SIGNED_LINK_SECONDS);
   if (error || !data) throw new Error(`sign: ${error?.message ?? 'no url'}`);
+  signedLinks.set(path, { url: data.signedUrl, expiresAt: Date.now() + SIGNED_LINK_SECONDS * 1000 });
   return data.signedUrl;
 }

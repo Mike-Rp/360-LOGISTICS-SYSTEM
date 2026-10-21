@@ -1060,7 +1060,7 @@ function DriverDrawer({ title, onClose, children, compact = false }: { title: st
   );
 }
 
-function HistoryDetailsSheet({ driverId, driverName, assignmentId, onClose }: { driverId: string; driverName: string; assignmentId: string; onClose: () => void }) {
+function HistoryDetailsSheet({ driverId, driverName, assignmentId, onClose, onCheckSession }: { driverId: string; driverName: string; assignmentId: string; onClose: () => void; onCheckSession: () => Promise<boolean> }) {
   const { t, document: documentText, status: statusText } = useDriverI18n();
   const [detail, setDetail] = useState<HistoryDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1099,6 +1099,7 @@ function HistoryDetailsSheet({ driverId, driverName, assignmentId, onClose }: { 
       await driverUpdate(driverName, assignmentId, { documents: nextDocuments });
       setDetail((prev) => prev ? { ...prev, documents: nextDocuments } : prev);
     } catch (err) {
+      if (!await onCheckSession()) return;
       console.error('[history document upload] failed:', err);
       setUploadError(t('home.saveError'));
     } finally {
@@ -1232,13 +1233,13 @@ function HistoryDetailsSheet({ driverId, driverName, assignmentId, onClose }: { 
 /* ════════════════════════════════════════════════════════════
    MAIN COMPONENT
    ════════════════════════════════════════════════════════════ */
-interface Props { driverId: string; driverName: string; onLogout: () => void; }
+interface Props { driverId: string; driverName: string; onLogout: () => void; onCheckSession: () => Promise<boolean>; }
 
 export default function DriverInterface(props: Props) {
   return <DriverLanguageProvider key={props.driverId} driverId={props.driverId}><DriverInterfaceContent {...props} /></DriverLanguageProvider>;
 }
 
-function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
+function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession }: Props) {
   const { t, status: statusText, document: documentText, reason: reasonText, language, setLanguage } = useDriverI18n();
   /* ── Server state ── */
   const [data,     setData]     = useState<DriverData | null>(null);
@@ -1286,6 +1287,11 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
   const completionSnapshot = useRef<DriverCompletionSnapshot | null>(null);
   const fetchSequence = useRef(0);
   const appliedFetchSequence = useRef(0);
+  const sessionActiveRef = useRef(true);
+  useEffect(() => {
+    sessionActiveRef.current = true;
+    return () => { sessionActiveRef.current = false; fetchSequence.current += 1; };
+  }, []);
   const closeHistoryDetail = useCallback(() => setSelectedHistoryId(null), []);
   const closeDrawer = useCallback(() => setActiveDrawer(null), []);
 
@@ -1346,13 +1352,14 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
 
   /* ── Fetch data ── */
   const fetchData = useCallback(async (quiet = false) => {
-    if (!driverId) return;
+    if (!driverId || !sessionActiveRef.current) return;
     const sequence = ++fetchSequence.current;
     if (!quiet) setSyncing(true);
     try {
+      if (!await onCheckSession() || !sessionActiveRef.current) return;
       /* Reads only this driver's own rows — the database's row-level security enforces that. */
       const json = await loadDriverData(driverId);
-      if (sequence < appliedFetchSequence.current) return;
+      if (!sessionActiveRef.current || sequence !== fetchSequence.current) return;
       appliedFetchSequence.current = sequence;
       const observation = observeDriverCompletion(completionSnapshot.current,
         json.assignment?.id ?? null, json.completedHistory ?? []);
@@ -1363,7 +1370,8 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
       }
       setData(json); setOnline(true); setLastSync(new Date());
     } catch (err) {
-      if (sequence < appliedFetchSequence.current) return;
+      if (!sessionActiveRef.current || sequence !== fetchSequence.current) return;
+      if (!await onCheckSession() || !sessionActiveRef.current) return;
       appliedFetchSequence.current = sequence;
       console.error('[loadDriverData] error:', err);
       /* Do NOT auto-fill fake demo data here — leave `data` untouched so a
@@ -1373,8 +1381,8 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
          last-fetched assignment with the "Offline" banner instead of
          silently swapping in a fabricated one. */
       setOnline(false);
-    } finally { if (sequence >= appliedFetchSequence.current) setSyncing(false); }
-  }, [driverId]);
+    } finally { if (sessionActiveRef.current && sequence >= appliedFetchSequence.current) setSyncing(false); }
+  }, [driverId, onCheckSession]);
 
   useEffect(() => {
     fetchData();
@@ -1392,6 +1400,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
       /* The database triggers only let a driver change status / photos / delay reports / new document
          files (an approved document can't be re-approved or flipped by the driver). */
       await driverUpdate(driverName, a.id, updates);
+      if (!sessionActiveRef.current) return false;
       // Show the new state only after the primary write has succeeded.
       setData((prev) => prev?.assignment?.id === a.id
         ? { ...prev, assignment: { ...prev.assignment, ...updates } } : prev);
@@ -1400,9 +1409,11 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
         catch (err) { console.warn('[driverUpdate] notification failed after save:', err); }
       }
       await fetchData(true);
+      if (!sessionActiveRef.current) return false;
       setActionError('');
       return true;
     } catch (err) {
+      if (!await onCheckSession() || !sessionActiveRef.current) return false;
       console.error('[driverUpdate] error:', err);
       setActionError(t('home.saveError'));
       return false;
@@ -1444,8 +1455,10 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
     try {
       // Every operational status requires a real Storage upload before its status changes.
       const storedUrl = await uploadImage(photo.url, path);
+      if (!sessionActiveRef.current) return;
       const updates = { taskStatus: status, statusPhotos: { ...(assignment.statusPhotos ?? {}), [status]: { ...photo, url: storedUrl } } };
       await driverUpdate(driverName, assignment.id, updates);
+      if (!sessionActiveRef.current) return;
       setData((prev) => prev?.assignment?.id === assignment.id
         ? { ...prev, assignment: { ...prev.assignment, ...updates } } : prev);
       setActionError('');
@@ -1465,6 +1478,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
       }
       await fetchData(true);
     } catch (err) {
+      if (!await onCheckSession() || !sessionActiveRef.current) throw err;
       setActionError(t('home.saveError'));
       throw err;
     } finally {
@@ -1480,8 +1494,10 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
     setUpdating(true);
     try {
       const url = await uploadImage(photo.url, `photos/${assignment.id}/${category}_${Date.now()}.jpg`);
+      if (!sessionActiveRef.current) return;
       const stored = { ...photo, url };
       await driverUpdate(driverName, assignment.id, { statusPhotos: { [category]: stored } });
+      if (!sessionActiveRef.current) return;
       // The slot counts only after Storage and its status_photos row both saved.
       setData((previous) => previous?.assignment?.id === assignment.id
         ? { ...previous, assignment: { ...previous.assignment,
@@ -1491,6 +1507,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
       setActionError('');
       await fetchData(true);
     } catch (error) {
+      if (!await onCheckSession() || !sessionActiveRef.current) throw error;
       console.error('[operational photo] save failed:', error);
       setActionError(t('workflow.photoFailed'));
       throw error;
@@ -1521,8 +1538,10 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
     try {
       if (transition) {
         await advanceDriverStage(assignment.id, transition);
+        if (!sessionActiveRef.current) return false;
         if (transition in MILESTONE_NOTIFICATIONS && transition !== 'depart') {
           await notifyMilestone(assignment, transition as keyof typeof MILESTONE_NOTIFICATIONS);
+          if (!sessionActiveRef.current) return false;
         }
       }
       // REQ-002 deliberately leaves these two physical task_status changes on
@@ -1532,15 +1551,23 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
         : phase === 'unloading' || phase === 'delivery_pending' ? 'Delivered' : null;
       if (status) {
         await driverUpdate(driverName, assignment.id, { taskStatus: status });
+        if (!sessionActiveRef.current) return false;
         await notifyMilestone(assignment, status === 'Delivered' ? 'delivered' : 'depart');
+        if (!sessionActiveRef.current) return false;
       }
       const fresh = await loadDriverData(driverId);
+      if (!sessionActiveRef.current) return false;
       setActionError('');
       // Let the shared slider show its short success state before changing screens.
-      return () => setData(fresh);
+      return () => { if (sessionActiveRef.current) setData(fresh); };
     } catch (error) {
+      if (!await onCheckSession() || !sessionActiveRef.current) return false;
       console.error('[driver workflow] transition failed:', error);
-      try { setData(await loadDriverData(driverId)); } catch { /* Keep last confirmed view. */ }
+      try {
+        const latest = await loadDriverData(driverId);
+        if (sessionActiveRef.current) setData(latest);
+      } catch { /* Keep last confirmed view. */ }
+      if (!sessionActiveRef.current) return false;
       const message = error instanceof Error ? error.message : '';
       setActionError(message.includes('missing_required_photo') ? t('workflow.completeFour')
         : message.includes('wrong_stage') ? t('workflow.changedElsewhere')
@@ -1598,6 +1625,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
         const safeDocType = docType.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
         const path = `docs/${data.assignment!.id}/${safeDocType}_${Date.now()}.${ext}`;
         const fileUrl = await uploadImage(compressed, path);
+        if (!sessionActiveRef.current) return;
         const assignment = data.assignment!;
         const corrected = assignment.documents.some((doc) => doc.type === docType && doc.docStatus === 'rejected');
         const uploadedDocument = { type: docType, uploaded: true, docStatus: 'pending' as DocStatus, fileUrl };
@@ -1617,11 +1645,12 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
         } : undefined;
         await pushUpdate({ documents }, notification);
       } catch (err) {
+        if (!await onCheckSession() || !sessionActiveRef.current) return;
         console.error('[document upload] save failed:', err);
         setActionError(t('home.saveError'));
       }
     };
-    reader.onerror = () => setActionError(t('home.saveError'));
+    reader.onerror = () => { if (sessionActiveRef.current) setActionError(t('home.saveError')); };
     reader.readAsDataURL(file);
   };
 
@@ -2062,7 +2091,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
           <DriverPageControls page={shownHistoryPage} pages={historyPages} onPage={setHistoryPage} />
         </> : <div className="bg-white rounded-2xl border border-gray-200 px-5 py-7 text-center text-gray-500">{historySearch ? t('history.noMatches') : t('history.empty')}</div>}
       </main>
-      {selectedHistoryId && <HistoryDetailsSheet key={selectedHistoryId} driverId={driverId} driverName={driverName} assignmentId={selectedHistoryId} onClose={closeHistoryDetail} />}
+      {selectedHistoryId && <HistoryDetailsSheet key={selectedHistoryId} driverId={driverId} driverName={driverName} assignmentId={selectedHistoryId} onClose={closeHistoryDetail} onCheckSession={onCheckSession} />}
       {LanguageNotice}
       {StatusNotice}
       {CompletionPopup}

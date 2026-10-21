@@ -222,6 +222,8 @@ const en = {
   'login.network': 'Unable to connect to the server. Please try again.',
   'login.server': 'Unable to log in right now. Please try again.',
   'login.rateLimited': 'Too many login requests. Please try again shortly.',
+  'login.sessionReplaced': 'This account was signed in on another device. Please sign in again.',
+  'login.sessionEnded': 'Your session has ended. Please sign in again.',
 } as const;
 
 type TranslationKey = keyof typeof en;
@@ -445,6 +447,8 @@ const fil: Partial<Record<TranslationKey, string>> = {
   'login.network': 'Hindi makakonekta sa server. Subukan muli.',
   'login.server': 'Hindi makapag-log in ngayon. Subukan muli.',
   'login.rateLimited': 'Masyadong maraming pagtatangkang mag-log in. Subukan muli mamaya.',
+  'login.sessionReplaced': 'Na-sign in ang account na ito sa ibang device. Mag-sign in muli.',
+  'login.sessionEnded': 'Natapos na ang iyong session. Mag-sign in muli.',
 };
 
 const keyFor = (prefix: string, value: string) => `${prefix}.${value}` as TranslationKey;

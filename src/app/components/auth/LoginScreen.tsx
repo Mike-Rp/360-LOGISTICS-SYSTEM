@@ -8,6 +8,8 @@ import { getLastDriverLanguage, translateDriver } from '../driver/driverI18n';
 interface Props {
   onAdminLogin:  (session: StaffSession) => void | Promise<void>;
   onDriverLogin: (info: { id: string; name: string }) => void;
+  sessionNotice: 'replaced' | 'signed_out' | null;
+  onDismissSessionNotice: () => void;
 }
 
 /* Dispatch hotline shown in the "Forgot your PIN?" dialog. Drivers cannot reset their own
@@ -17,7 +19,7 @@ interface Props {
 const DISPATCH_TEL     = '09384033610';
 const DISPATCH_DISPLAY = '0938 403 3610';
 
-export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
+export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice, onDismissSessionNotice }: Props) {
   const [view, setView] = useState<'driver' | 'admin'>(() =>
     new URLSearchParams(window.location.search).get('account') === 'staff' ? 'admin' : 'driver');
   const [passwordFlow, setPasswordFlow] = useState<'login' | 'request'>('login');
@@ -203,6 +205,18 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin }: Props) {
                 }`}
               >
                 Admin
+              </button>
+            </div>}
+
+            {sessionNotice && <div role="status" className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm leading-5 text-foreground">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" aria-hidden="true" />
+              <span className="min-w-0 flex-1">{view === 'driver'
+                ? tr(sessionNotice === 'replaced' ? 'login.sessionReplaced' : 'login.sessionEnded')
+                : sessionNotice === 'replaced'
+                  ? 'This account was signed in on another device. Please sign in again.'
+                  : 'Your session has ended. Please sign in again.'}</span>
+              <button type="button" onClick={onDismissSessionNotice} aria-label={view === 'driver' ? tr('login.close') : 'Dismiss notice'} className="rounded p-0.5 text-muted-foreground hover:bg-amber-100 focus-visible:outline-2 focus-visible:outline-primary">
+                <X className="h-4 w-4" aria-hidden="true" />
               </button>
             </div>}
 
