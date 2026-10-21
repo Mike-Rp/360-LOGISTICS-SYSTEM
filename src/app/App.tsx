@@ -45,6 +45,7 @@ export default function App() {
   const [completed,     setCompleted]     = useState<CompletedTask[]>([]);
   const [cancelled,     setCancelled]     = useState<Assignment[]>([]);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [notificationsReady, setNotificationsReady] = useState(false);
   const [activityLog,   setActivityLog]   = useState<AdminActivityEntry[]>([]);
   /* Archived drivers/trucks — read-only lists for the Accounts "Archived" tabs (never auto-saved) */
   const [archivedDrivers, setArchivedDrivers] = useState<LocalDriver[]>([]);
@@ -92,6 +93,7 @@ export default function App() {
     const next = restored?.notifications ?? loaded;
     notificationsRef.current = next;
     setNotifications(next);
+    setNotificationsReady(true);
     if (restored?.storageError) {
       setSaveError('Browser storage is unavailable. Notification read status may not survive refresh until saved to the server.');
     }
@@ -377,6 +379,7 @@ export default function App() {
     setCompleted([]);
     setCancelled([]);
     setNotifications([]);
+    setNotificationsReady(false);
     setActivityLog([]);
     setArchivedDrivers([]);
     setArchivedTrucks([]);
@@ -488,6 +491,7 @@ export default function App() {
           completed={completed}      setCompleted={setCompleted}
           cancelled={cancelled}      setCancelled={setCancelled}
           notifications={notifications} setNotifications={persistNotificationReads}
+          notificationsReady={notificationsReady}
           activityLog={activityLog}
           onLogActivity={onLogActivity}
           onServerChange={onServerChange}

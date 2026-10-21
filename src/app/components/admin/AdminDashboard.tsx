@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Sidebar from './Sidebar';
 import Header from './Header';
+import NotificationToastContainer from './NotificationToastContainer';
 import KPICards from './KPICards';
 import DeliveryTable from './DeliveryTable';
 import DeliveryStatusBoard from './DeliveryStatusBoard';
@@ -17,18 +18,22 @@ import AdminContentSkeleton from './AdminContentSkeleton';
 import { Toaster } from '../ui/sonner';
 import { ADMIN_NAVIGATION_EVENT, adminPageFromUrl, pushAdminNavigation } from '../../lib/adminNavigation';
 import { canDispatchAssignments, canManageFleetAccounts as mayManageFleetAccounts } from '../../lib/staffPermissions';
+import { isActivityKey, notificationDestination, type ActivityKey } from '../../lib/notificationEvents';
 import type { Assignment, CompletedTask, LocalDriver, LocalTruck, AppNotification, AdminRole, AdminActivityEntry, AdminActivityInput } from '../../data/assignmentTypes';
 
 type NavItem = 'Dashboard' | 'Monitor' | 'Deliveries' | 'Documents' | 'Reports' | 'Accounts';
 
-type NotificationTarget = { page: 'Documents' | 'Monitor'; assignmentId: string; docType?: string; review?: boolean };
+type NotificationTarget = { page: 'Documents' | 'Monitor'; assignmentId: string; docType?: string; review?: boolean; activityKey?: ActivityKey };
 
 function targetFromUrl(): NotificationTarget | null {
   const params = new URLSearchParams(window.location.search);
   const page = adminPageFromUrl();
   const assignmentId = params.get('assignment') ?? '';
   if ((page !== 'Documents' && page !== 'Monitor') || !params.has('assignment')) return null;
-  return { page, assignmentId, docType: params.get('document') ?? undefined, review: page === 'Monitor' && params.get('review') === 'true' };
+  const activity = params.get('activity');
+  return { page, assignmentId, docType: params.get('document') ?? undefined,
+    review: page === 'Monitor' && params.get('review') === 'true',
+    activityKey: page === 'Monitor' && isActivityKey(activity) ? activity : undefined };
 }
 
 const SEARCH_PLACEHOLDERS: Partial<Record<NavItem, string>> = {
@@ -56,6 +61,7 @@ interface Props {
   cancelled: Assignment[];
   setCancelled: React.Dispatch<React.SetStateAction<Assignment[]>>;
   notifications: AppNotification[];
+  notificationsReady: boolean;
   setNotifications: React.Dispatch<React.SetStateAction<AppNotification[]>>;
   activityLog: AdminActivityEntry[];
   onLogActivity: (entry: AdminActivityInput) => void;
@@ -78,7 +84,7 @@ export default function AdminDashboard({
   drivers, setDrivers, trucks, setTrucks,
   assignments, setAssignments, completed, setCompleted,
   cancelled, setCancelled,
-  notifications, setNotifications,
+  notifications, notificationsReady, setNotifications,
   activityLog, onLogActivity, onServerChange, archivedDrivers, archivedTrucks,
   activeNav, setActiveNav,
   onLogout, isViewOnly, adminRole, savingToDb,
@@ -133,11 +139,19 @@ export default function AdminDashboard({
     setActiveNav(page);
   };
 
-  const navigateToNotification = (page: string, target: { assignmentId: string; docType?: string; review?: boolean }) => {
+  const navigateToNotification = (page: string, target: { assignmentId: string; docType?: string; review?: boolean; activityKey?: ActivityKey }) => {
     if (page !== 'Documents' && page !== 'Monitor') return;
     pushAdminNavigation(page, target);
     setNotificationTarget({ page, ...target });
     setActiveNav(page);
+  };
+
+  const openNotification = (notification: AppNotification) => {
+    setNotifications(previous => previous.some(item => item.id === notification.id && !item.read)
+      ? previous.map(item => item.id === notification.id ? { ...item, read: true } : item)
+      : previous);
+    const destination = notificationDestination(notification);
+    navigateToNotification(destination.page, destination.target);
   };
 
   const clearNotificationTarget = useCallback(() => {
@@ -146,6 +160,7 @@ export default function AdminDashboard({
     url.searchParams.delete('assignment');
     url.searchParams.delete('document');
     url.searchParams.delete('review');
+    url.searchParams.delete('activity');
     window.history.replaceState(window.history.state, '', url);
     setNotificationTarget(null);
   }, []);
@@ -274,7 +289,7 @@ export default function AdminDashboard({
         <Header
           notifications={notifications}
           setNotifications={setNotifications}
-          onNavigate={navigateToNotification}
+          onOpenNotification={openNotification}
           onLogout={onLogout}
           onOpenSettings={() => setSettingsOpen(true)}
           onOpenHelp={() => setHelpOpen(true)}
@@ -296,6 +311,8 @@ export default function AdminDashboard({
       </div>
 
       <Toaster position="bottom-right" duration={1800} visibleToasts={1} closeButton={false} />
+      <NotificationToastContainer notifications={notifications} ready={notificationsReady}
+        enabled={notifEnabled} onOpen={openNotification} />
 
       {/* ── Floating panels ── */}
       <SettingsPanel

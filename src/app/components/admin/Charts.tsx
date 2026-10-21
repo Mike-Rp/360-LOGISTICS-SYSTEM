@@ -132,7 +132,7 @@ function notifToEvent(n: AppNotification): FleetEvent {
         description: n.docType ? `Submitted ${n.docType} for review` : 'Submitted a document for review' };
     case 'status_update':
       return { ...base, Icon: Truck, iconCls: 'bg-teal-100 text-teal-600',
-        description: n.statusUpdate ? `Status: ${n.statusUpdate}` : 'Status updated' };
+        description: n.message.replace(/^\[[^\]]+\]\s*/, '') || 'Status updated' };
     case 'delay_report':
       return { ...base, Icon: AlertTriangle, iconCls: 'bg-amber-100 text-amber-600',
         description: 'Reported a delivery delay' };

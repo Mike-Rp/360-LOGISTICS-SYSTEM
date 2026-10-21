@@ -27,10 +27,11 @@ import { assignmentDisplayStatusConfig, canCompleteAssignment, getAssignmentDisp
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
 import { sortNewestFirst, markLocalRecordAdded, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
 import { ADMIN_NAVIGATION_EVENT, pushAdminNavigation } from '../../lib/adminNavigation';
+import type { ActivityKey } from '../../lib/notificationEvents';
 import { TRUCK_CLASSIFICATIONS, truckSideImageFor, capacityKgOnly } from '../../data/truckTypes';
 import { destinationAreaEnabled, getAssignmentRoute, getDeliveryLocation } from '../../data/assignmentRoute';
 import {
-  verifyOwnPassword, editAssignment, cancelAssignment, loadAdminData, syncAdminData, AssignmentActionError,
+  verifyOwnPassword, editAssignment, cancelAssignment, notifyAssignmentCancelled, loadAdminData, syncAdminData, AssignmentActionError,
   type AssignmentActionErrorCode, type AssignmentEdit, type AssignmentLocationEdit,
 } from '../../lib/db';
 
@@ -770,8 +771,8 @@ function DeliveryStepper({ assignment }: { assignment: Assignment }) {
   );
 }
 
-function DeliveryActivity({ assignment, now, onViewPhotos }: {
-  assignment: Assignment; now: Date; onViewPhotos: (group: string) => void;
+function DeliveryActivity({ assignment, now, onViewPhotos, highlightedEvent }: {
+  assignment: Assignment; now: Date; onViewPhotos: (group: string) => void; highlightedEvent?: ActivityKey | null;
 }) {
   const photos = assignment.statusPhotos ?? {};
   const photoStage = (index: number, name: string) => {
@@ -783,37 +784,44 @@ function DeliveryActivity({ assignment, now, onViewPhotos }: {
   const loadingDuration = formatOperationalDuration(assignment.loadingStartedAt, assignment.loadingCompletedAt ?? now);
   const unloadingDuration = formatOperationalDuration(assignment.unloadingStartedAt, assignment.unloadingCompletedAt ?? now);
   const rows: Array<{
-    label: string; done: boolean; main: string | null; prefix?: string;
+    label: string; done: boolean; main: string | null; prefix?: string; activityKey?: ActivityKey;
     details?: Array<string | null>; photoStage?: ReturnType<typeof photoStage>;
   }> = [
     { label: 'Assigned', done: true, main: formatOperationalStamp(assignment.createdAt || assignment.assignedAt) },
-    { label: 'At Pickup', done: !!assignment.pickupArrivedAt,
+    { label: 'At Pickup', activityKey: 'at_pickup', done: !!assignment.pickupArrivedAt,
       main: formatOperationalStamp(assignment.pickupArrivedAt),
       photoStage: photoStage(0, 'pickup') },
-    { label: 'Loading', done: !!assignment.loadingStartedAt,
+    { label: 'Loading', activityKey: 'loading_completed', done: !!assignment.loadingStartedAt,
       main: formatOperationalStamp(assignment.loadingStartedAt), prefix: 'Started',
       details: [assignment.loadingCompletedAt ? `Finished · ${formatOperationalStamp(assignment.loadingCompletedAt)}` : null,
         loadingDuration ? `${assignment.loadingCompletedAt ? 'Duration' : 'Elapsed'} · ${loadingDuration}` : null],
       photoStage: photoStage(1, 'loading') },
-    { label: 'In Transit', done: !!assignment.departedAt || assignment.taskStatus === 'In Transit',
+    { label: 'In Transit', activityKey: 'in_transit', done: !!assignment.departedAt || assignment.taskStatus === 'In Transit',
       main: formatOperationalStamp(assignment.departedAt), prefix: 'Departed',
       photoStage: photoStage(2, 'pre-trip') },
-    { label: 'Arrived', done: !!assignment.destinationArrivedAt,
+    { label: 'Arrived', activityKey: 'arrived', done: !!assignment.destinationArrivedAt,
       main: formatOperationalStamp(assignment.destinationArrivedAt) },
-    { label: 'Unloading', done: !!assignment.unloadingStartedAt,
+    { label: 'Unloading', activityKey: 'unloading_completed', done: !!assignment.unloadingStartedAt,
       main: formatOperationalStamp(assignment.unloadingStartedAt), prefix: 'Started',
       details: [assignment.unloadingCompletedAt ? `Finished · ${formatOperationalStamp(assignment.unloadingCompletedAt)}` : null,
         unloadingDuration ? `${assignment.unloadingCompletedAt ? 'Duration' : 'Elapsed'} · ${unloadingDuration}` : null],
       photoStage: photoStage(3, 'unloading') },
-    { label: 'Delivered', done: assignment.taskStatus === 'Delivered',
+    { label: 'Delivered', activityKey: 'delivered', done: assignment.taskStatus === 'Delivered',
       main: assignment.taskStatus === 'Delivered'
         ? formatOperationalStamp(assignment.unloadingCompletedAt) ?? assignment.statusPhotos?.Delivered?.timestamp ?? null : null },
   ];
+  if (assignment.taskStatus === 'Cancelled') rows.push({
+    label: 'Cancelled', activityKey: 'cancelled', done: true,
+    main: formatOperationalStamp(assignment.cancelledAt),
+    details: [assignment.cancelledBy ? `By ${assignment.cancelledBy}` : null,
+      assignment.cancelReason ? `Reason: ${assignment.cancelReason}` : null],
+  });
   return (
     <section aria-label="Delivery Activity" className="rounded-xl border border-border/70 bg-white p-3 sm:p-4">
       <p className="mb-2 text-[13px] font-semibold uppercase tracking-wider text-muted-foreground">Delivery Activity</p>
       <ol>
-        {rows.map((row, index) => <li key={row.label} className="relative grid grid-cols-[1.5rem_minmax(0,1fr)] gap-2 pb-1 last:pb-0">
+        {rows.map((row, index) => <li key={row.label} data-activity-key={row.activityKey} tabIndex={row.activityKey ? -1 : undefined}
+          className={`relative grid grid-cols-[1.5rem_minmax(0,1fr)] gap-2 rounded-lg pb-1 last:pb-0 transition-colors motion-reduce:transition-none ${highlightedEvent === row.activityKey ? 'bg-sky-50 ring-1 ring-sky-200' : ''}`}>
           {index < rows.length - 1 && <span aria-hidden="true"
             className={`absolute bottom-0 left-[11px] top-6 w-px ${row.done ? 'bg-green-300' : 'bg-border'}`} />}
           <span aria-hidden="true" className={`relative z-10 flex h-6 w-6 items-center justify-center rounded-full border ${row.done
@@ -925,7 +933,7 @@ function DocChip({ doc, uploadAvailable }: { doc: AssignmentDoc; uploadAvailable
 /* ─── View Details Modal ───────────────────────────── */
 type ShipmentTab = 'overview' | 'activity' | 'photos' | 'documents';
 
-function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApproveDoc, onRejectDoc, onComplete, onCancel, onSimulateLate, isViewOnly = false, adminEmail, reviewTarget, timingNow }: {
+function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApproveDoc, onRejectDoc, onComplete, onCancel, onSimulateLate, isViewOnly = false, adminEmail, reviewTarget, activityTarget, timingNow }: {
   assignment: Assignment | null; driver: LocalDriver | null;
   /* null when the truck record was deleted — the plate saved on the assignment is still shown */
   truck: LocalTruck | null;
@@ -939,6 +947,7 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
   isViewOnly?:    boolean;
   adminEmail?:    string | null;
   reviewTarget?: { docType?: string } | null;
+  activityTarget?: ActivityKey | null;
   timingNow: Date;
 }) {
   const isDemoAdmin = adminEmail === DEMO_ADMIN_EMAIL;
@@ -962,7 +971,8 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
   const reviewSectionRef = useRef<HTMLDivElement>(null);
   const reviewDocumentRef = useRef<HTMLDivElement>(null);
   const [highlightReview, setHighlightReview] = useState(false);
-  const [activeTab, setActiveTab] = useState<ShipmentTab>(reviewTarget ? 'documents' : 'overview');
+  const [highlightedEvent, setHighlightedEvent] = useState<ActivityKey | null>(null);
+  const [activeTab, setActiveTab] = useState<ShipmentTab>(reviewTarget ? 'documents' : activityTarget ? 'activity' : 'overview');
   const [expandedPhotoGroup, setExpandedPhotoGroup] = useState<string | null>(null);
   const [photosViewed, setPhotosViewed] = useState(false);
   const [completeBusy, setCompleteBusy] = useState(false);
@@ -985,6 +995,20 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
     if (reviewTarget) setActiveTab('documents');
   }, [reviewTarget]);
   useEffect(() => {
+    if (activityTarget) setActiveTab('activity');
+  }, [activityTarget]);
+  useLayoutEffect(() => {
+    setHighlightedEvent(null);
+    if (!activityTarget || activeTab !== 'activity') return;
+    const row = contentRef.current?.querySelector<HTMLElement>(`[data-activity-key="${activityTarget}"]`);
+    if (!row) return;
+    row.scrollIntoView({ block: 'center' });
+    row.focus({ preventScroll: true });
+    setHighlightedEvent(activityTarget);
+    const timer = window.setTimeout(() => setHighlightedEvent(null), 2500);
+    return () => window.clearTimeout(timer);
+  }, [activityTarget, activeTab, assignment?.id]);
+  useEffect(() => {
     setPhotosViewed(false);
     setCompleteError('');
   }, [assignment?.id]);
@@ -1000,7 +1024,6 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
     const timer = window.setTimeout(() => setHighlightReview(false), 3000);
     return () => window.clearTimeout(timer);
   }, [reviewTarget, assignment?.id, activeTab]);
-  if (!driver) return null;
 
   const documentProgress = assignment ? getAssignmentDocumentProgress(assignment) : null;
   const allApproved = documentProgress?.allApproved ?? false;
@@ -1035,9 +1058,9 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
             <User className="w-6 h-6 text-blue-600" />
           </div>
           <div className="flex-1 min-w-0">
-            <h3 className="text-xl sm:text-2xl font-bold text-foreground leading-tight break-words">{driver.name}</h3>
-            <p className="text-[13px] text-muted-foreground break-words">{driver.id} · {driver.phone}</p>
-            {driver.currentLocation?.trim() && driver.currentLocation.trim() !== '—' && (
+            <h3 className="text-xl sm:text-2xl font-bold text-foreground leading-tight break-words">{driver?.name ?? assignment?.driverName ?? 'Driver'}</h3>
+            <p className="text-[13px] text-muted-foreground break-words">{driver?.id ?? assignment?.driverId ?? '—'}{driver?.phone ? ` · ${driver.phone}` : ''}</p>
+            {driver?.currentLocation?.trim() && driver.currentLocation.trim() !== '—' && (
               <p className="text-xs text-muted-foreground break-words">Current location: {driver.currentLocation}</p>
             )}
           </div>
@@ -1149,7 +1172,7 @@ function ViewDetailsModal({ assignment, driver, truck, onClose, onEdit, onApprov
         </div>}
 
         {activeTab === 'activity' && <div className="space-y-4">
-          <DeliveryActivity assignment={assignment} now={timingNow} onViewPhotos={viewPhotoGroup} />
+          <DeliveryActivity assignment={assignment} now={timingNow} onViewPhotos={viewPhotoGroup} highlightedEvent={highlightedEvent} />
           {/* ── Delay Reports ── */}
           {assignment.delayReports && assignment.delayReports.length > 0 && (
             <div>
@@ -1782,7 +1805,7 @@ interface Props {
   onDispatchOpened?: () => void;
   search: string;
   onSearchChange: (value: string) => void;
-  notificationTarget?: { assignmentId: string; docType?: string; review?: boolean } | null;
+  notificationTarget?: { assignmentId: string; docType?: string; review?: boolean; activityKey?: ActivityKey } | null;
   onNotificationTargetHandled?: () => void;
 }
 
@@ -1822,6 +1845,7 @@ export default function DriversManagement({
   }, [openDispatchOnMount]); // eslint-disable-line react-hooks/exhaustive-deps
   const [viewDetailsId,  setViewDetailsId]  = useState<string | null>(null);
   const [reviewTarget, setReviewTarget] = useState<{ assignmentId: string; docType?: string } | null>(null);
+  const [activityTarget, setActivityTarget] = useState<{ assignmentId: string; key: ActivityKey } | null>(null);
   const [missingTarget, setMissingTarget] = useState(false);
   const [editId,         setEditId]         = useState<string | null>(null);
   const [classificationFilter, setClassificationFilter] = useState('');
@@ -2060,7 +2084,13 @@ export default function DriversManagement({
   const handleCancel = async (id: string, reason: string, password: string) => {
     const assignment = assignments.find((item) => item.id === id);
     try {
-      await onServerChange(() => cancelAssignment(id, reason, password), () => {
+      await onServerChange(async () => {
+        await cancelAssignment(id, reason, password);
+        if (assignment) {
+          try { await notifyAssignmentCancelled(assignment, reason, adminEmail ?? 'CSR'); }
+          catch (error) { console.warn('[cancellation] saved, notification failed:', error); }
+        }
+      }, () => {
         if (!assignment) return;
         setAssignments((current) => current.filter((item) => item.id !== id));
         setCancelled((current) => current.some((item) => item.id === id)
@@ -2115,15 +2145,18 @@ export default function DriversManagement({
   useEffect(() => {
     if (!notificationTarget) return;
     setReviewTarget(null);
+    setActivityTarget(null);
     const assignment = assignments.find(a => a.id === notificationTarget.assignmentId)
-      ?? completed.find(a => a.id === notificationTarget.assignmentId);
-    if (!assignment || !drivers.some(driver => driver.id === assignment.driverId)) {
+      ?? completed.find(a => a.id === notificationTarget.assignmentId)
+      ?? cancelled.find(a => a.id === notificationTarget.assignmentId);
+    if (!assignment) {
       setViewDetailsId(null);
       setMissingTarget(true);
     } else {
       setMissingTarget(false);
       setViewDetailsId(assignment.id);
       if (notificationTarget.review) setReviewTarget({ assignmentId: assignment.id, docType: notificationTarget.docType });
+      if (notificationTarget.activityKey) setActivityTarget({ assignmentId: assignment.id, key: notificationTarget.activityKey });
       setCompletedOpen(false);
       setClassificationFilter('');
       if (search) onSearchChange('');
@@ -2731,7 +2764,7 @@ export default function DriversManagement({
           assignment={viewDetailsAssign}
           driver={viewDetailsDriver}
           truck={viewDetailsAssign ? trucks.find((t) => t.id === viewDetailsAssign.truckId) ?? null : null}
-          onClose={() => { setViewDetailsId(null); setReviewTarget(null); }}
+          onClose={() => { setViewDetailsId(null); setReviewTarget(null); setActivityTarget(null); }}
           onEdit={() => { setEditId(viewDetailsId); setViewDetailsId(null); setReviewTarget(null); }}
           onApproveDoc={handleApproveDoc}
           onRejectDoc={handleRejectDoc}
@@ -2741,6 +2774,7 @@ export default function DriversManagement({
           isViewOnly={isViewOnly || !assignments.some(a => a.id === viewDetailsId) || completed.some(a => a.id === viewDetailsId)}
           adminEmail={adminEmail}
           reviewTarget={reviewTarget?.assignmentId === viewDetailsId ? reviewTarget : null}
+          activityTarget={activityTarget?.assignmentId === viewDetailsId ? activityTarget.key : null}
           timingNow={timingNow}
         />
       )}

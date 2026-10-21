@@ -6,7 +6,6 @@ import {
   RefreshCw, RotateCcw, X, Phone, Bell, Menu, History, Languages, MapPin,
 } from 'lucide-react';
 import type { Assignment, CompletedTask, TaskStatus, StatusPhoto, DocStatus } from '../../data/assignmentTypes';
-import { taskStatusConfig } from '../../data/assignmentTypes';
 import { statusColors } from '../../data/statusColors';
 import { OPERATIONAL_STEPS } from '../../lib/assignmentOperational';
 import { loadDriverData, loadDriverCompletedDelivery, driverUpdate, advanceDriverStage, uploadImage } from '../../lib/db';
@@ -15,6 +14,7 @@ import { assignmentDisplayStatusConfig, getAssignmentDisplayStatus, getAssignmen
 import { DriverLanguageProvider, useDriverI18n, type DriverLanguage } from './driverI18n';
 import { destinationAreaEnabled, getAssignmentRoute, getDeliveryLocation } from '../../data/assignmentRoute';
 import { checkPhoto, loadVehicleDetector, type PhotoCheckFailure } from '../../lib/photoQuality';
+import { MILESTONE_NOTIFICATIONS } from '../../lib/notificationEvents';
 
 /* ── Types ── */
 interface CompletedHistoryItem {
@@ -1047,10 +1047,8 @@ function HistoryDetailsSheet({ driverId, driverName, assignmentId, onClose }: { 
       const fileUrl = await uploadImage(compressed, path);
       const nextDocuments = (detail?.documents ?? []).map((d) =>
         d.type === docType ? { ...d, uploaded: true, docStatus: 'pending' as DocStatus, fileUrl } : d);
-      await driverUpdate(driverName, assignmentId, { documents: nextDocuments }, {
-        type: 'doc_upload', message: `[${detail?.truckPlate ?? ''}] "${docType}" uploaded`,
-        truckPlate: detail?.truckPlate ?? '', docType, navigateTo: 'Documents',
-      });
+      // Historical uploads are not individual notification-center action items.
+      await driverUpdate(driverName, assignmentId, { documents: nextDocuments });
       setDetail((prev) => prev ? { ...prev, documents: nextDocuments } : prev);
     } catch (err) {
       console.error('[history document upload] failed:', err);
@@ -1324,6 +1322,20 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
     finally { setUpdating(false); }
   };
 
+  const notifyMilestone = async (assignment: Assignment, event: keyof typeof MILESTONE_NOTIFICATIONS) => {
+    const milestone = MILESTONE_NOTIFICATIONS[event];
+    const message = milestone.message === 'arrived at pickup' || milestone.message === 'started the trip'
+      || milestone.message === 'arrived at destination'
+      ? `${driverName} ${milestone.message}` : milestone.message;
+    try {
+      await driverUpdate(driverName, assignment.id, {}, {
+        id: `assignment-${assignment.id}-${milestone.activityKey}`,
+        type: 'status_update', message: `[${assignment.truckPlate}] ${message}`,
+        truckPlate: assignment.truckPlate, statusUpdate: milestone.activityKey, navigateTo: 'Monitor',
+      });
+    } catch (error) { console.warn('[driver workflow] status saved, notification failed:', error); }
+  };
+
   /* ── Auto-acknowledge: mark the moment this assignment first appears on the
      driver's dashboard, so admin can tell a driver actually saw the task. ── */
   useEffect(() => {
@@ -1351,14 +1363,17 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
       setActionError('');
       setPhotoTarget(null);
       setStatusNotice(status);
-      try {
-        await driverUpdate(driverName, assignment.id, {}, {
-          type: 'status_update', message: `[${assignment.truckPlate}] Marked as ${taskStatusConfig[status].label}`,
-          assignmentId: assignment.id, truckPlate: assignment.truckPlate,
-          statusUpdate: status, photoUrl: storedUrl, navigateTo: 'Monitor',
-        });
-      } catch (err) {
-        console.warn('[driverUpdate] status saved, but notification failed:', err);
+      const legacyMilestone = status === 'Picked Up' ? 'arrive_pickup'
+        : status === 'In Transit' ? 'depart' : status === 'Delivered' ? 'delivered' : null;
+      if (legacyMilestone) await notifyMilestone(assignment, legacyMilestone);
+      else {
+        // Keep existing notifications for other legacy status-photo transitions.
+        try {
+          await driverUpdate(driverName, assignment.id, {}, {
+            type: 'status_update', message: `[${assignment.truckPlate}] Marked as ${status}`,
+            truckPlate: assignment.truckPlate, statusUpdate: status, navigateTo: 'Monitor',
+          });
+        } catch (error) { console.warn('[driver workflow] status saved, notification failed:', error); }
       }
       await fetchData(true);
     } catch (err) {
@@ -1416,7 +1431,12 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
     if (!actionKey) return false;
     setUpdating(true);
     try {
-      if (transition) await advanceDriverStage(assignment.id, transition);
+      if (transition) {
+        await advanceDriverStage(assignment.id, transition);
+        if (transition in MILESTONE_NOTIFICATIONS && transition !== 'depart') {
+          await notifyMilestone(assignment, transition as keyof typeof MILESTONE_NOTIFICATIONS);
+        }
+      }
       // REQ-002 deliberately leaves these two physical task_status changes on
       // the existing driver update path. A failed second write is recoverable
       // from the persisted departed/unloaded stage after a refresh.
@@ -1424,13 +1444,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
         : phase === 'unloading' || phase === 'delivery_pending' ? 'Delivered' : null;
       if (status) {
         await driverUpdate(driverName, assignment.id, { taskStatus: status });
-        try {
-          await driverUpdate(driverName, assignment.id, {}, {
-            type: 'status_update', message: `[${assignment.truckPlate}] Marked as ${status}`,
-            assignmentId: assignment.id, truckPlate: assignment.truckPlate,
-            statusUpdate: status, navigateTo: 'Monitor',
-          });
-        } catch (error) { console.warn('[driver workflow] status saved, notification failed:', error); }
+        await notifyMilestone(assignment, status === 'Delivered' ? 'delivered' : 'depart');
       }
       const fresh = await loadDriverData(driverId);
       setActionError('');
@@ -1496,10 +1510,24 @@ function DriverInterfaceContent({ driverId, driverName, onLogout }: Props) {
         const safeDocType = docType.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
         const path = `docs/${data.assignment!.id}/${safeDocType}_${Date.now()}.${ext}`;
         const fileUrl = await uploadImage(compressed, path);
-        await pushUpdate(
-          { documents: data.assignment!.documents.map((d) => d.type === docType ? { ...d, uploaded: true, docStatus: 'pending' as DocStatus, fileUrl } : d) },
-          { type: 'doc_upload', message: `[${data.assignment!.truckPlate}] "${docType}" uploaded`, assignmentId: data.assignment!.id, truckPlate: data.assignment!.truckPlate, docType, navigateTo: 'Documents' }
-        );
+        const assignment = data.assignment!;
+        const corrected = assignment.documents.some((doc) => doc.type === docType && doc.docStatus === 'rejected');
+        const uploadedDocument = { type: docType, uploaded: true, docStatus: 'pending' as DocStatus, fileUrl };
+        const documents = assignment.documents.some((doc) => doc.type === docType)
+          ? assignment.documents.map((doc) => doc.type === docType ? { ...doc, ...uploadedDocument } : doc)
+          : [...assignment.documents, uploadedDocument];
+        const readyBefore = getAssignmentDisplayStatus(assignment) === 'Under Review';
+        const readyAfter = getAssignmentDisplayStatus({ ...assignment, documents }) === 'Under Review';
+        const requiredCount = getAssignmentDocumentProgress({ ...assignment, documents }).required;
+        const notification = corrected ? {
+          type: 'doc_upload', message: `[${assignment.truckPlate}] Corrected ${docType} uploaded`,
+          truckPlate: assignment.truckPlate, docType, navigateTo: 'Monitor',
+        } : !readyBefore && readyAfter ? {
+          id: `assignment-${assignment.id}-documents-ready`, type: 'doc_upload',
+          message: `[${assignment.truckPlate}] Documents ready for review · ${requiredCount} documents uploaded`,
+          truckPlate: assignment.truckPlate, navigateTo: 'Monitor',
+        } : undefined;
+        await pushUpdate({ documents }, notification);
       } catch (err) {
         console.error('[document upload] save failed:', err);
         setActionError(t('home.saveError'));

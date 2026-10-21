@@ -32,6 +32,16 @@ const EVENT_BADGE = {
 };
 
 const statusBadge = (status?: string) => {
+  const eventBadge: Record<string, { label: string; cls: string }> = {
+    at_pickup: { label: 'At Pickup', cls: statusColors['At Pickup'].badge },
+    loading_completed: { label: 'Loading completed', cls: statusColors.Loading.badge },
+    in_transit: { label: 'In Transit', cls: statusColors['In Transit'].badge },
+    arrived: { label: 'Arrived', cls: statusColors.Arrived.badge },
+    unloading_completed: { label: 'Unloading completed', cls: statusColors.Unloading.badge },
+    delivered: { label: 'Delivered', cls: statusColors.Delivered.badge },
+    cancelled: { label: 'Cancelled', cls: statusColors.Cancelled.badge },
+  };
+  if (status && eventBadge[status]) return eventBadge[status];
   const cfg = status ? taskStatusConfig[status as TaskStatus] : undefined;
   return cfg ? { label: cfg.label, cls: cfg.badge } : EVENT_BADGE.status;
 };

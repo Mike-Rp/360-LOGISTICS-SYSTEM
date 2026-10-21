@@ -105,7 +105,8 @@ export function getDocumentAgingState(assignment: Assignment, now = new Date(), 
   if (getAssignmentDisplayStatus(assignment) !== 'Awaiting Documents') return null;
   const photoTime = getPhysicalDeliveryTimestamp(assignment);
   const eventTimes = notifications
-    .filter(event => event.assignmentId === assignment.id && event.type === 'status_update' && event.statusUpdate === 'Delivered')
+    .filter(event => event.assignmentId === assignment.id && event.type === 'status_update'
+      && (event.statusUpdate === 'Delivered' || event.statusUpdate === 'delivered'))
     .map(event => event.createdAt)
     .filter((value): value is string => !!value && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}.*(?:Z|[+-]\d{2}:?\d{2})$/i.test(value))
     .map(value => Date.parse(value))

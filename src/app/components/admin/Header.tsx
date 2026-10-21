@@ -7,11 +7,12 @@ import {
 import { parseStoredTimestamp, type AppNotification } from '../../data/assignmentTypes';
 import { Popover, PopoverTrigger, PopoverContent } from '../ui/popover';
 import { adminHref, followAdminLink } from '../../lib/adminNavigation';
+import { notificationDestination } from '../../lib/notificationEvents';
 
 interface Props {
   notifications: AppNotification[];
   setNotifications: React.Dispatch<React.SetStateAction<AppNotification[]>>;
-  onNavigate: (page: string, target: { assignmentId: string; docType?: string; review?: boolean }) => void;
+  onOpenNotification: (notification: AppNotification) => void;
   onLogout: () => void;
   onOpenSettings: () => void;
   onOpenHelp: () => void;
@@ -32,13 +33,6 @@ const NOTIF_ICON: Record<AppNotification['type'], React.ElementType> = {
   issue_report:  AlertCircle,
 };
 
-const NOTIF_NAV: Record<AppNotification['type'], 'Documents' | 'Monitor'> = {
-  doc_upload:    'Monitor',
-  status_update: 'Monitor',
-  delay_report:  'Monitor',
-  issue_report:  'Monitor',
-};
-
 const manilaDateFull = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
 const manilaDateShort = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', weekday: 'short', month: 'short', day: 'numeric' });
 const manilaDateCompact = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric' });
@@ -55,7 +49,7 @@ function fmtTimestamp(ts: string): string {
 }
 
 export default function Header({
-  notifications, setNotifications, onNavigate, onLogout, onOpenSettings, onOpenHelp, notifEnabled,
+  notifications, setNotifications, onOpenNotification, onLogout, onOpenSettings, onOpenHelp, notifEnabled,
   isOperationManager, adminEmail, adminName, onOpenWorkspaceSettings,
   searchPlaceholder, searchValue, onSearchChange,
 }: Props) {
@@ -211,26 +205,23 @@ export default function Header({
                         <h4 className="border-b border-border/60 bg-muted/20 px-4 pb-1.5 pt-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{group.label}</h4>
                         <div className="divide-y divide-border/60">
                           {group.items.map((n) => {
-                            const Icon = NOTIF_ICON[n.type];
-                            const navPage = NOTIF_NAV[n.type];
+                            const Icon = n.statusUpdate === 'cancelled' ? AlertCircle : NOTIF_ICON[n.type];
+                            const { page: navPage, target, actionLabel } = notificationDestination(n);
                             const identifier = n.truckPlate || n.assignmentId;
                             const prefix = `[${n.truckPlate}] `;
                             const message = n.message.startsWith(prefix) ? n.message.slice(prefix.length) : n.message;
-                            const actionLabel = n.type === 'doc_upload' ? 'Review' : 'View shipment';
-                            const actionAria = n.type === 'doc_upload' ? `Review ${n.docType ?? 'document'} for ${identifier}` : `View shipment for ${identifier}`;
-                            const target = { assignmentId: n.assignmentId, docType: n.type === 'doc_upload' ? n.docType : undefined, review: n.type === 'doc_upload' };
+                            const activityKey = target.activityKey;
+                            const actionAria = n.type === 'doc_upload' ? `Review ${n.docType ?? 'documents'} for ${identifier}`
+                              : activityKey ? `View ${activityKey.replace(/_/g, ' ')} activity for ${identifier}` : `View shipment for ${identifier}`;
                             const openDestination = () => {
-                              setNotifications((previous) => previous.some((item) => item.id === n.id && !item.read)
-                                ? previous.map((item) => item.id === n.id ? { ...item, read: true } : item)
-                                : previous);
-                              onNavigate(navPage, target);
+                              onOpenNotification(n);
                               setBellOpen(false);
                             };
                             return (
                               <div key={n.id} className={`flex min-w-0 items-start gap-2 px-4 py-3 transition-colors hover:bg-accent/30 ${n.read ? 'bg-white' : 'bg-primary/[0.035]'} ${enteringNotificationIds.has(n.id) ? 'motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-2 motion-safe:duration-300' : ''}`}>
                                 <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" aria-hidden="true" style={{ visibility: n.read ? 'hidden' : 'visible' }} />
                                 {!n.read && <span className="sr-only">Unread notification</span>}
-                                <Icon aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                                <Icon aria-hidden="true" className={`mt-0.5 h-4 w-4 shrink-0 ${n.statusUpdate === 'cancelled' || n.type === 'issue_report' ? 'text-red-600' : 'text-muted-foreground'}`} />
                                 <div className="min-w-0 flex-1">
                                   <div className="flex min-w-0 items-start justify-between gap-2">
                                     <span className="min-w-0 break-words text-sm font-semibold text-foreground">{identifier}</span>

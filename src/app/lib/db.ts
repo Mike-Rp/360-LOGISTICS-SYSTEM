@@ -966,14 +966,26 @@ export async function driverUpdate(
   if (notif) {
     /* no .select() here on purpose: drivers may insert notifications but not read the feed back */
     const { error } = await supabase.from('notifications').insert({
-      id: `notif-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      id: notif.id ?? `notif-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       read: false, time_label: timeLabel(), driver_name: driverName,
       type: notif.type, message: notif.message ?? '', assignment_id: assignmentId,
       truck_plate: notif.truckPlate ?? '', doc_type: notif.docType ?? null, status_update: notif.statusUpdate ?? null,
       photo_url: notif.photoUrl ?? null, reason: notif.reason ?? null, navigate_to: notif.navigateTo ?? null,
     });
-    if (error) throw new Error(`notification: ${error.message}`);
+    // A repeated request for the same persisted milestone must not make a second card.
+    if (error && !(notif.id && error.code === '23505')) throw new Error(`notification: ${error.message}`);
   }
+}
+
+/** Staff-side event after the cancellation RPC commits. The RPC owns cancellation and audit. */
+export async function notifyAssignmentCancelled(assignment: Assignment, reason: string, actor: string): Promise<void> {
+  const { error } = await supabase.from('notifications').insert({
+    id: `assignment-${assignment.id}-cancelled`, type: 'status_update',
+    message: `[${assignment.truckPlate}] Delivery cancelled · ${reason}`,
+    assignment_id: assignment.id, driver_name: actor, truck_plate: assignment.truckPlate,
+    status_update: 'cancelled', reason, navigate_to: 'Monitor', time_label: timeLabel(), read: false,
+  });
+  if (error && error.code !== '23505') throw error;
 }
 
 /* Upload a photo/document (a base64 data URL from the camera) and return a long-lived signed URL. */
