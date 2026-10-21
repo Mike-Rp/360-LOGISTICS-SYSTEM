@@ -5,6 +5,7 @@ import {
   CheckCircle2, Camera, Pencil,
 } from 'lucide-react';
 import { changeOwnPassword, PasswordError } from '../../lib/db';
+import { playNotificationSound } from '../../lib/notificationSound';
 import { useModalFocus } from './useModalFocus';
 
 /* ── Section separator ── */
@@ -31,9 +32,11 @@ interface Props {
   onClose: () => void;
   notifEnabled: boolean;
   setNotifEnabled: (v: boolean) => void;
+  soundEnabled: boolean;
+  setSoundEnabled: (v: boolean) => void;
 }
 
-export default function SettingsPanel({ open, onClose, notifEnabled, setNotifEnabled }: Props) {
+export default function SettingsPanel({ open, onClose, notifEnabled, setNotifEnabled, soundEnabled, setSoundEnabled }: Props) {
   /* ── Persist notifications preference ── */
   useEffect(() => {
     localStorage.setItem('360_notif_enabled', String(notifEnabled));
@@ -459,6 +462,24 @@ export default function SettingsPanel({ open, onClose, notifEnabled, setNotifEna
                 className={`relative w-10 h-6 rounded-full transition-colors duration-200 flex-shrink-0 ${notifEnabled ? 'bg-[#0d9488]' : 'bg-gray-300'}`}
               >
                 <span className={`absolute top-[4px] left-0 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200 ${notifEnabled ? 'translate-x-[20px]' : 'translate-x-[4px]'}`} />
+              </button>
+            </div>
+            <div className="mt-4 border-t border-border pt-4">
+              <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">Notifications</p>
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-foreground">Notification Sound</p>
+                  <p className="text-xs text-muted-foreground">Play a sound when a new notification arrives.</p>
+                </div>
+                <button type="button" role="switch" aria-label="Notification Sound" aria-checked={soundEnabled}
+                  onClick={() => setSoundEnabled(!soundEnabled)}
+                  className={`relative w-10 h-6 rounded-full transition-colors flex-shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0d9488] ${soundEnabled ? 'bg-[#0d9488]' : 'bg-gray-300'}`}>
+                  <span className={`absolute top-[4px] left-0 w-4 h-4 bg-white rounded-full shadow transition-transform ${soundEnabled ? 'translate-x-[20px]' : 'translate-x-[4px]'}`} />
+                </button>
+              </div>
+              <button type="button" onClick={() => { void playNotificationSound(true); }}
+                className="mt-3 min-h-8 rounded-lg border border-border bg-white px-3 text-xs font-medium text-foreground hover:bg-muted/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0d9488]">
+                Test Sound
               </button>
             </div>
           </section>

@@ -19,6 +19,7 @@ import { Toaster } from '../ui/sonner';
 import { ADMIN_NAVIGATION_EVENT, adminPageFromUrl, pushAdminNavigation } from '../../lib/adminNavigation';
 import { canDispatchAssignments, canManageFleetAccounts as mayManageFleetAccounts } from '../../lib/staffPermissions';
 import { isActivityKey, notificationDestination, type ActivityKey } from '../../lib/notificationEvents';
+import { notificationSoundEnabled, setNotificationSoundEnabled } from '../../lib/notificationSound';
 import type { Assignment, CompletedTask, LocalDriver, LocalTruck, AppNotification, AdminRole, AdminActivityEntry, AdminActivityInput } from '../../data/assignmentTypes';
 
 type NavItem = 'Dashboard' | 'Monitor' | 'Deliveries' | 'Documents' | 'Reports' | 'Accounts';
@@ -197,6 +198,15 @@ export default function AdminDashboard({
   const [notifEnabled, setNotifEnabled] = useState(
     () => localStorage.getItem('360_notif_enabled') !== 'false'
   );
+  const soundAccount = adminEmail ? `staff:${adminEmail}` : null;
+  const [soundEnabled, setSoundEnabled] = useState(() => soundAccount ? notificationSoundEnabled(soundAccount) : true);
+  useEffect(() => {
+    setSoundEnabled(soundAccount ? notificationSoundEnabled(soundAccount) : true);
+  }, [soundAccount]);
+  const updateSoundEnabled = (enabled: boolean) => {
+    setSoundEnabled(enabled);
+    if (soundAccount) setNotificationSoundEnabled(soundAccount, enabled);
+  };
 
   const renderContent = () => {
     switch (activeNav) {
@@ -312,7 +322,7 @@ export default function AdminDashboard({
 
       <Toaster position="bottom-right" duration={1800} visibleToasts={1} closeButton={false} />
       <NotificationToastContainer notifications={notifications} ready={notificationsReady}
-        enabled={notifEnabled} onOpen={openNotification} />
+        enabled={notifEnabled} soundEnabled={soundEnabled} onOpen={openNotification} />
 
       {/* ── Floating panels ── */}
       <SettingsPanel
@@ -320,6 +330,8 @@ export default function AdminDashboard({
         onClose={() => setSettingsOpen(false)}
         notifEnabled={notifEnabled}
         setNotifEnabled={setNotifEnabled}
+        soundEnabled={soundEnabled}
+        setSoundEnabled={updateSoundEnabled}
       />
       <HelpPanel
         open={helpOpen}

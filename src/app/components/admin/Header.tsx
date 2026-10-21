@@ -4,10 +4,11 @@ import {
   Truck, CheckCheck, X, Users,
   FileText, AlertTriangle, AlertCircle,
 } from 'lucide-react';
-import { parseStoredTimestamp, type AppNotification } from '../../data/assignmentTypes';
+import type { AppNotification } from '../../data/assignmentTypes';
 import { Popover, PopoverTrigger, PopoverContent } from '../ui/popover';
 import { adminHref, followAdminLink } from '../../lib/adminNavigation';
 import { notificationDestination } from '../../lib/notificationEvents';
+import { groupNotifications } from '../../lib/notificationGrouping';
 
 interface Props {
   notifications: AppNotification[];
@@ -36,7 +37,6 @@ const NOTIF_ICON: Record<AppNotification['type'], React.ElementType> = {
 const manilaDateFull = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
 const manilaDateShort = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', weekday: 'short', month: 'short', day: 'numeric' });
 const manilaDateCompact = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric' });
-const manilaDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' });
 
 function fmtTimestamp(ts: string): string {
   try {
@@ -101,18 +101,7 @@ export default function Header({
   const fullDate = manilaDateFull.format(now);
   const shortDate = manilaDateShort.format(now);
   const compactDate = manilaDateCompact.format(now);
-  const today = manilaDay.format(now);
-  const yesterday = manilaDay.format(new Date(now.getTime() - 86_400_000));
-  const notificationGroups = [
-    { label: 'Today', items: [] as AppNotification[] },
-    { label: 'Yesterday', items: [] as AppNotification[] },
-    { label: 'Earlier', items: [] as AppNotification[] },
-  ];
-  for (const notification of notifications.slice(0, 12)) {
-    const date = parseStoredTimestamp(notification.timestamp);
-    const day = date ? manilaDay.format(date) : '';
-    notificationGroups[day === today ? 0 : day === yesterday ? 1 : 2].items.push(notification);
-  }
+  const notificationGroups = groupNotifications(notifications, now);
 
   /* Bell panel's open/outside-click/positioning is handled by Popover itself
      now (see below) — only the account menu still needs a manual listener. */
@@ -200,7 +189,7 @@ export default function Header({
                   </div>
                 ) : (
                   <div>
-                    {notificationGroups.filter((group) => group.items.length > 0).map((group) => (
+                    {notificationGroups.map((group) => (
                       <section key={group.label} aria-label={`${group.label} notifications`}>
                         <h4 className="border-b border-border/60 bg-muted/20 px-4 pb-1.5 pt-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{group.label}</h4>
                         <div className="divide-y divide-border/60">

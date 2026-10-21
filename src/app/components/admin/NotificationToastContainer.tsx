@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, AlertTriangle, FileText, Truck, X } from 'lucide-react';
 import type { AppNotification } from '../../data/assignmentTypes';
 import { adminHref, followAdminLink } from '../../lib/adminNavigation';
+import { playNotificationSound } from '../../lib/notificationSound';
 import {
   dismissNotificationToast, enqueueNotificationToasts, isToastEligible,
   notificationDestination, NOTIFICATION_TOAST_DURATION, type NotificationToastQueue,
@@ -11,6 +12,7 @@ interface Props {
   notifications: AppNotification[];
   ready: boolean;
   enabled: boolean;
+  soundEnabled: boolean;
   onOpen: (notification: AppNotification) => void;
 }
 
@@ -100,7 +102,7 @@ function NotificationToast({ notification, onOpen, onDismiss }: {
   );
 }
 
-export default function NotificationToastContainer({ notifications, ready, enabled, onOpen }: Props) {
+export default function NotificationToastContainer({ notifications, ready, enabled, soundEnabled, onOpen }: Props) {
   const initialized = useRef(false);
   const knownIds = useRef(new Set<string>());
   const [queue, setQueue] = useState<NotificationToastQueue>(EMPTY_QUEUE);
@@ -119,9 +121,12 @@ export default function NotificationToastContainer({ notifications, ready, enabl
     }
     const incoming = notifications.filter(notification => !knownIds.current.has(notification.id));
     incoming.forEach(notification => knownIds.current.add(notification.id));
+    if (soundEnabled && incoming.some(notification => !notification.read && isToastEligible(notification))) {
+      void playNotificationSound();
+    }
     const actionable = enabled ? incoming.filter(notification => !notification.read && isToastEligible(notification)) : [];
     if (actionable.length) setQueue(current => enqueueNotificationToasts(current, actionable.reverse()));
-  }, [notifications, ready, enabled]);
+  }, [notifications, ready, enabled, soundEnabled]);
 
   const dismiss = useCallback((id: string) => {
     setQueue(current => dismissNotificationToast(current, id));

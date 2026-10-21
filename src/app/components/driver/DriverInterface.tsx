@@ -15,6 +15,7 @@ import { DriverLanguageProvider, useDriverI18n, type DriverLanguage } from './dr
 import { destinationAreaEnabled, getAssignmentRoute, getDeliveryLocation } from '../../data/assignmentRoute';
 import { checkPhoto, loadVehicleDetector, type PhotoCheckFailure } from '../../lib/photoQuality';
 import { MILESTONE_NOTIFICATIONS } from '../../lib/notificationEvents';
+import { newNotificationIds, notificationSoundEnabled, playNotificationSound, setNotificationSoundEnabled } from '../../lib/notificationSound';
 import { observeDriverCompletion, type DriverCompletionSnapshot } from './driverCompletion';
 import UploadedFilePreviewModal from '../admin/UploadedFilePreviewModal';
 
@@ -1241,6 +1242,12 @@ export default function DriverInterface(props: Props) {
 
 function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession }: Props) {
   const { t, status: statusText, document: documentText, reason: reasonText, language, setLanguage } = useDriverI18n();
+  const soundAccount = `driver:${driverId}`;
+  const [soundEnabled, setSoundEnabled] = useState(() => notificationSoundEnabled(soundAccount));
+  const updateSoundEnabled = (enabled: boolean) => {
+    setSoundEnabled(enabled);
+    setNotificationSoundEnabled(soundAccount, enabled);
+  };
   /* ── Server state ── */
   const [data,     setData]     = useState<DriverData | null>(null);
   const [online,   setOnline]   = useState(true);
@@ -1285,6 +1292,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   const [statusNotice, setStatusNotice] = useState<TaskStatus | null>(null);
   const [focusedDocType, setFocusedDocType] = useState<string | null>(null);
   const completionSnapshot = useRef<DriverCompletionSnapshot | null>(null);
+  const reviewNotificationSnapshot = useRef<{ assignmentId: string | null; ids: Set<string> } | null>(null);
   const fetchSequence = useRef(0);
   const appliedFetchSequence = useRef(0);
   const sessionActiveRef = useRef(true);
@@ -1368,6 +1376,19 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
         setCompletionNotice(observation.newlyCompleted);
         setScreen('dashboard');
       }
+      // The Driver bell is derived from persisted document review states, rather than
+      // notification rows. Compare its stable assignment/document/status keys after the
+      // first successful fetch; a later review change can chime once for this poll.
+      const assignmentId = json.assignment?.id ?? null;
+      const reviewIds = new Set((json.assignment?.documents ?? [])
+        .filter(doc => doc.uploaded && (doc.docStatus === 'approved' || doc.docStatus === 'rejected'))
+        .map(doc => `${assignmentId}:${doc.type}:${doc.docStatus}`));
+      const previousReviews = reviewNotificationSnapshot.current;
+      if (previousReviews?.assignmentId === assignmentId &&
+          newNotificationIds(previousReviews.ids, reviewIds).size > 0 && soundEnabled) {
+        void playNotificationSound();
+      }
+      reviewNotificationSnapshot.current = { assignmentId, ids: reviewIds };
       setData(json); setOnline(true); setLastSync(new Date());
     } catch (err) {
       if (!sessionActiveRef.current || sequence !== fetchSequence.current) return;
@@ -1382,7 +1403,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
          silently swapping in a fabricated one. */
       setOnline(false);
     } finally { if (sessionActiveRef.current && sequence >= appliedFetchSequence.current) setSyncing(false); }
-  }, [driverId, onCheckSession]);
+  }, [driverId, onCheckSession, soundEnabled]);
 
   useEffect(() => {
     fetchData();
@@ -1861,6 +1882,23 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
           <span className="text-sm text-gray-500">{language === 'fil' ? t('language.filipino') : t('language.english')}</span>
           <ChevronRight className="w-5 h-5 text-gray-400 shrink-0" aria-hidden="true" />
         </button>
+        <div className="mt-4 border-t border-gray-200 pt-4">
+          <div className="flex items-center justify-between gap-3 px-1">
+            <div className="min-w-0">
+              <p className="text-base font-bold text-foreground">{t('notifications.sound')}</p>
+              <p className="text-sm text-gray-500">{t('notifications.soundDescription')}</p>
+            </div>
+            <button type="button" role="switch" aria-label={t('notifications.sound')}
+              aria-checked={soundEnabled} onClick={() => updateSoundEnabled(!soundEnabled)}
+              className={`relative h-7 w-12 shrink-0 rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-green-700 ${soundEnabled ? 'bg-green-700' : 'bg-gray-300'}`}>
+              <span className={`absolute left-1 top-1 h-5 w-5 rounded-full bg-white shadow transition-transform ${soundEnabled ? 'translate-x-5' : ''}`} />
+            </button>
+          </div>
+          <button type="button" onClick={() => { void playNotificationSound(true); }}
+            className="mt-3 min-h-11 rounded-xl border border-gray-200 bg-white px-4 text-sm font-semibold text-gray-700 focus-visible:outline-2 focus-visible:outline-green-700">
+            {t('notifications.testSound')}
+          </button>
+        </div>
         <div className="mt-8 border-t border-gray-200 pt-5">
           <button type="button" onClick={() => { setActiveDrawer(null); setLogoutDlg(true); }}
             className="w-full min-h-14 rounded-2xl border border-red-200 bg-red-50 px-4 text-left flex items-center gap-3 font-bold text-red-700 focus-visible:outline-2 focus-visible:outline-red-600">
