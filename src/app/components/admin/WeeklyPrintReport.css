@@ -1,0 +1,222 @@
+.weekly-print-report {
+  display: none;
+}
+
+@page weekly-performance {
+  size: A4 portrait;
+  margin: 15mm 12mm 19mm;
+
+  @bottom-left {
+    content: "360 Logistics PH";
+    color: #59636b;
+    font-size: 8pt;
+  }
+
+  @bottom-right {
+    content: "Page " counter(page) " of " counter(pages);
+    color: #59636b;
+    font-size: 8pt;
+  }
+}
+
+@media print {
+  body:has(> .weekly-print-report) > #root {
+    display: none !important;
+  }
+
+  body > .weekly-print-report {
+    display: block !important;
+    page: weekly-performance;
+    width: 100%;
+    color: #1d2932;
+    background: #fff;
+    font-family: Arial, sans-serif;
+    font-size: 8.5pt;
+    line-height: 1.35;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  .weekly-print-report * {
+    box-sizing: border-box;
+  }
+
+  .wpr-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8mm;
+    padding-bottom: 5mm;
+    border-bottom: 1.5px solid #238a4a;
+  }
+
+  .wpr-header-main {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .wpr-logo {
+    display: block;
+    width: auto;
+    height: 14mm;
+    max-width: 65mm;
+    object-fit: contain;
+    object-position: left center;
+    margin-bottom: 3mm;
+  }
+
+  .wpr-header h1 {
+    margin: 0 0 2mm;
+    color: #172a36;
+    font-size: 18pt;
+    line-height: 1.15;
+  }
+
+  .wpr-header p {
+    margin: 0 0 1mm;
+    color: #59636b;
+    font-size: 8.5pt;
+  }
+
+  .wpr-verification {
+    width: 48mm;
+    padding: 3mm;
+    border: 1px solid #d9dee2;
+    border-radius: 2mm;
+    color: #59636b;
+    font-size: 8pt;
+  }
+
+  .wpr-verification strong,
+  .wpr-verification span {
+    display: block;
+  }
+
+  .wpr-verification strong {
+    margin-bottom: 1mm;
+    color: #34424a;
+  }
+
+  .wpr-section {
+    margin-top: 6mm;
+  }
+
+  .wpr-section h2 {
+    margin: 0 0 2.5mm;
+    color: #172a36;
+    font-size: 10pt;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    break-after: avoid;
+  }
+
+  .weekly-print-report table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+  }
+
+  .weekly-print-report th,
+  .weekly-print-report td {
+    border: 1px solid #d9dee2;
+    padding: 2mm 1.5mm;
+    vertical-align: middle;
+  }
+
+  .weekly-print-report th {
+    background: #f3f5f6;
+    color: #34424a;
+    font-weight: 600;
+    text-align: left;
+  }
+
+  .wpr-summary th,
+  .wpr-summary td {
+    width: 25%;
+    text-align: center;
+  }
+
+  .wpr-summary td {
+    font-size: 18pt;
+    font-weight: 700;
+  }
+
+  .wpr-completed { color: #237a43; }
+  .wpr-delayed { color: #a52d31; }
+  .wpr-active { color: #a96516; }
+
+  .wpr-deliveries {
+    font-size: 7.5pt;
+  }
+
+  .wpr-deliveries thead {
+    display: table-header-group;
+  }
+
+  .wpr-deliveries tr,
+  .wpr-summary tr,
+  .wpr-notes,
+  .wpr-audit {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .wpr-deliveries td {
+    overflow-wrap: anywhere;
+  }
+
+  .wpr-deliveries th:nth-child(6),
+  .wpr-deliveries th:nth-child(7),
+  .wpr-deliveries td:nth-child(6),
+  .wpr-deliveries td:nth-child(7) {
+    white-space: nowrap;
+  }
+
+  .wpr-col-date { width: 8%; }
+  .wpr-col-asn { width: 12%; }
+  .wpr-col-driver { width: 13%; }
+  .wpr-col-truck { width: 10%; }
+  .wpr-col-route { width: 28%; }
+  .wpr-col-eta { width: 9%; }
+  .wpr-col-ata { width: 9%; }
+  .wpr-col-status { width: 11%; }
+
+  .wpr-notes dl {
+    margin: 0;
+    border-top: 1px solid #d9dee2;
+  }
+
+  .wpr-notes dl > div {
+    display: flex;
+    justify-content: space-between;
+    gap: 5mm;
+    padding: 1.5mm 0;
+    border-bottom: 1px solid #d9dee2;
+  }
+
+  .wpr-notes dt,
+  .wpr-notes dd {
+    margin: 0;
+  }
+
+  .wpr-notes dd {
+    font-weight: 700;
+  }
+
+  .wpr-audit {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 2mm 5mm;
+    margin-top: 6mm;
+    padding-top: 3mm;
+    border-top: 1px solid #d9dee2;
+    color: #59636b;
+    font-size: 8pt;
+  }
+
+  .wpr-audit strong {
+    color: #1d2932;
+  }
+}

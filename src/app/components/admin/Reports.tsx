@@ -1,22 +1,30 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import {
   FileDown, TrendingUp, Package, AlertTriangle,
   X, Eye, Printer, Clock, Truck, Check,
   User, MapPin, Building2, Timer, AlarmClock, Gauge,
 } from 'lucide-react';
-import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { Assignment, CompletedTask, TaskStatus, LocalTruck } from '../../data/assignmentTypes';
 import { parseStoredTimestamp } from '../../data/assignmentTypes';
+import { splitDisplayDateTime } from '../../lib/displayDateTime';
 import { getAssignmentRoute } from '../../data/assignmentRoute';
 import { statusColors } from '../../data/statusColors';
 import { PaginationFooter, usePagination } from './Pagination';
+import { restoreSession } from '../../lib/db';
+import WeeklyPrintReport from './WeeklyPrintReport';
+import MonthlyPrintReport from './MonthlyPrintReport';
+import DelayPrintReport from './DelayPrintReport';
+import FleetUtilizationPrintReport from './FleetUtilizationPrintReport';
 
 const REPORT_PAGE_SIZE = 8;
+const INCIDENT_PAGE_SIZE = 10;
+const UTILIZATION_PAGE_SIZE = 10;
 
 /* ─── Types ───────────────────────────────────────── */
 interface WeeklyRow {
-  date: string; driver: string; truck: string; route: string;
+  date: string; asn: string; driver: string; truck: string; route: string;
   client: string; pickupTime: string; eta: string; ata: string;
   status: 'On Time' | 'Delayed' | 'Completed' | 'Assigned' | 'Picked Up' | 'In Transit';
 }
@@ -25,8 +33,8 @@ interface MonthlyRow {
   onTime: number; delayed: number; cancelled: number; rate: string;
 }
 interface DelayRow {
-  date: string; driver: string; truck: string; route: string;
-  client: string; scheduledTime: string; reportedAt: string;
+  date: string; asn: string; driver: string; truck: string; route: string;
+  client: string; scheduledTime: string; reportedAt: string; reportedStamp: string;
   reason: string; type: string; status: 'Resolved' | 'Ongoing';
 }
 interface TruckUtilRow {
@@ -35,11 +43,26 @@ interface TruckUtilRow {
   lastDriver: string; lastUsedDate: string;
 }
 interface DriverUtilRow {
-  name: string; timesAssigned: number; completedDeliveries: number;
-  cancelledAssignments: number; lastTruck: string; lastDeliveryDate: string;
+  key: string; name: string; timesAssigned: number; completedDeliveries: number;
+  cancelledAssignments: number; lastTruck: string; lastRoute: string; lastDeliveryDate: string;
 }
 type ReportKey = 'weekly' | 'monthly' | 'delay' | 'utilization';
 type UtilTab = 'trucks' | 'drivers';
+type ReportMetric = {
+  label: string;
+  value: number | string;
+  icon: typeof Package;
+  valueColor?: string;
+  supporting?: string;
+  printColor: string;
+  printBackground?: string;
+};
+
+interface MonthlyPreviewRow {
+  key: string; month: string; total: number; completed: number;
+  onTime: number; delayed: number; cancelled: number; active: number;
+  weeks: number[];
+}
 
 /* ─── Helpers ─────────────────────────────────────── */
 function fmtDate(iso: string) {
@@ -53,6 +76,14 @@ function fmtTime(iso: string) {
   } catch { return iso; }
 }
 
+function completionRate(completedTrips: number, timesAssigned: number): string {
+  return timesAssigned > 0 ? `${((completedTrips / timesAssigned) * 100).toFixed(1)}%` : '—';
+}
+
+function arrivalTime(assignment: Assignment): string {
+  return splitDisplayDateTime(assignment.destinationArrivedAt)?.time ?? '—';
+}
+
 /* Build weekly rows from live data */
 function buildWeeklyRows(assignments: Assignment[], completed: CompletedTask[]): WeeklyRow[] {
   const rows: WeeklyRow[] = [];
@@ -61,10 +92,11 @@ function buildWeeklyRows(assignments: Assignment[], completed: CompletedTask[]):
     const isDelayed = (c.delayReports?.length ?? 0) > 0;
     rows.push({
       date: c.completedAt ? fmtDate(c.completedAt) : c.deliveryDate,
+      asn: c.id,
       driver: c.driverName, truck: c.truckPlate,
       route: getAssignmentRoute(c),
       client: c.company,
-      pickupTime: c.pickupTime || '—', eta: c.eta || '—', ata: c.ata || '—',
+      pickupTime: c.pickupTime || '—', eta: c.eta || '—', ata: arrivalTime(c),
       status: isDelayed ? 'Delayed' : 'Completed',
     });
   }
@@ -78,10 +110,11 @@ function buildWeeklyRows(assignments: Assignment[], completed: CompletedTask[]):
     };
     rows.push({
       date: a.deliveryDate,
+      asn: a.id,
       driver: a.driverName, truck: a.truckPlate,
       route: getAssignmentRoute(a),
       client: a.company,
-      pickupTime: a.pickupTime || '—', eta: a.eta || '—', ata: a.ata || '—',
+      pickupTime: a.pickupTime || '—', eta: a.eta || '—', ata: arrivalTime(a),
       status: isDelayed ? 'Delayed' : (statusMap[a.taskStatus] ?? 'Assigned'),
     });
   }
@@ -98,11 +131,13 @@ function buildDelayRows(assignments: Assignment[], completed: CompletedTask[]): 
     for (const dr of a.delayReports) {
       rows.push({
         date: dr.reportedAt ? fmtDate(dr.reportedAt) : a.deliveryDate,
+        asn: a.id,
         driver: a.driverName, truck: a.truckPlate,
         route: getAssignmentRoute(a),
         client: a.company,
         scheduledTime: dr.type === 'pickup' ? (a.pickupTime || '—') : (a.ata || '—'),
         reportedAt: dr.reportedAt ? fmtTime(dr.reportedAt) : '—',
+        reportedStamp: dr.reportedAt || '—',
         reason: dr.reason,
         type: dr.type === 'pickup' ? 'Pickup Delay' : 'Delivery Delay',
         status: resolved ? 'Resolved' : 'Ongoing',
@@ -141,6 +176,42 @@ function buildMonthlyRows(completed: CompletedTask[]): MonthlyRow[] {
     const rate     = total > 0 ? `${((onTime / total) * 100).toFixed(1)}%` : '0%';
     return { week: month, period: month, total, onTime, delayed, cancelled, rate };
   });
+}
+
+/* Web overview uses the scheduled delivery month for every assignment state.
+   The existing completed-only rows remain intact for CSV and Print / PDF. */
+function buildMonthlyPreviewRows(
+  assignments: Assignment[], completed: CompletedTask[], cancelled: Assignment[],
+): MonthlyPreviewRow[] {
+  const months = new Map<string, MonthlyPreviewRow>();
+  const add = (task: Assignment, state: 'active' | 'completed' | 'cancelled') => {
+    if (!/\d{4}/.test(task.deliveryDate)) return;
+    const date = parseStoredTimestamp(task.deliveryDate);
+    if (!date) return;
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    let row = months.get(key);
+    if (!row) {
+      row = {
+        key, month: date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+        total: 0, completed: 0, onTime: 0, delayed: 0, cancelled: 0, active: 0,
+        weeks: [0, 0, 0, 0, 0],
+      };
+      months.set(key, row);
+    }
+    row.total += 1;
+    row.weeks[Math.floor((date.getDate() - 1) / 7)] += 1;
+    const hasDelay = (task.delayReports?.length ?? 0) > 0;
+    if (hasDelay) row.delayed += 1;
+    if (state === 'completed') {
+      row.completed += 1;
+      if (!hasDelay) row.onTime += 1;
+    } else if (state === 'cancelled') row.cancelled += 1;
+    else row.active += 1;
+  };
+  assignments.forEach((task) => add(task, 'active'));
+  completed.forEach((task) => add(task, 'completed'));
+  cancelled.forEach((task) => add(task, 'cancelled'));
+  return [...months.values()].sort((a, b) => b.key.localeCompare(a.key));
 }
 
 /* Build truck utilization rows from ALL history (active + completed + cancelled),
@@ -191,19 +262,23 @@ function buildTruckUtilRows(
     .sort((a, b) => b.timesAssigned - a.timesAssigned || a.plate.localeCompare(b.plate));
 }
 
-/* Same idea as buildTruckUtilRows, keyed by driver name instead of plate. */
+/* Use the persisted driver ID so two people with the same name stay separate.
+   Historical records without an ID retain the previous name-based grouping. */
 function buildDriverUtilRows(assignments: Assignment[], completed: CompletedTask[], cancelled: Assignment[]): DriverUtilRow[] {
-  const byName = new Map<string, {
+  const byDriver = new Map<string, {
+    name: string;
     timesAssigned: number; completedDeliveries: number; cancelledAssignments: number;
-    lastTruck: string; lastDeliveryDate: string; lastUsedSort: number;
+    lastTruck: string; lastRoute: string; lastDeliveryDate: string; lastUsedSort: number;
   }>();
 
-  const touch = (name: string, truck: string, dateValue: string, kind: 'completed' | 'cancelled' | 'other') => {
+  const touch = (driverId: string, name: string, truck: string, route: string, dateValue: string, kind: 'completed' | 'cancelled' | 'other') => {
     if (!name.trim()) return;
-    let row = byName.get(name);
+    const persistedId = driverId?.trim();
+    const key = persistedId ? `id:${persistedId}` : `name:${name.trim().toLocaleLowerCase()}`;
+    let row = byDriver.get(key);
     if (!row) {
-      row = { timesAssigned: 0, completedDeliveries: 0, cancelledAssignments: 0, lastTruck: '—', lastDeliveryDate: '—', lastUsedSort: -1 };
-      byName.set(name, row);
+      row = { name, timesAssigned: 0, completedDeliveries: 0, cancelledAssignments: 0, lastTruck: '—', lastRoute: '—', lastDeliveryDate: '—', lastUsedSort: -1 };
+      byDriver.set(key, row);
     }
     row.timesAssigned += 1;
     if (kind === 'completed') row.completedDeliveries += 1;
@@ -211,21 +286,23 @@ function buildDriverUtilRows(assignments: Assignment[], completed: CompletedTask
     const sortValue = parseStoredTimestamp(dateValue)?.getTime() ?? 0;
     if (sortValue >= row.lastUsedSort) {
       row.lastUsedSort = sortValue;
+      row.name = name;
       row.lastTruck = truck.trim() || '—';
+      row.lastRoute = route;
       row.lastDeliveryDate = dateValue ? fmtDate(dateValue) : '—';
     }
   };
 
-  for (const a of assignments) touch(a.driverName, a.truckPlate, a.pickedUpDate || a.deliveryDate, 'other');
-  for (const c of completed)   touch(c.driverName, c.truckPlate, c.completedAt || c.deliveryDate, 'completed');
-  for (const x of cancelled)   touch(x.driverName, x.truckPlate, x.deliveryDate, 'cancelled');
+  for (const a of assignments) touch(a.driverId, a.driverName, a.truckPlate, getAssignmentRoute(a), a.pickedUpDate || a.deliveryDate, 'other');
+  for (const c of completed)   touch(c.driverId, c.driverName, c.truckPlate, getAssignmentRoute(c), c.completedAt || c.deliveryDate, 'completed');
+  for (const x of cancelled)   touch(x.driverId, x.driverName, x.truckPlate, getAssignmentRoute(x), x.deliveryDate, 'cancelled');
 
-  return [...byName.entries()]
-    .map(([name, r]) => ({
-      name, timesAssigned: r.timesAssigned, completedDeliveries: r.completedDeliveries,
-      cancelledAssignments: r.cancelledAssignments, lastTruck: r.lastTruck, lastDeliveryDate: r.lastDeliveryDate,
+  return [...byDriver.entries()]
+    .map(([key, r]) => ({
+      key, name: r.name, timesAssigned: r.timesAssigned, completedDeliveries: r.completedDeliveries,
+      cancelledAssignments: r.cancelledAssignments, lastTruck: r.lastTruck, lastRoute: r.lastRoute, lastDeliveryDate: r.lastDeliveryDate,
     }))
-    .sort((a, b) => b.timesAssigned - a.timesAssigned || a.name.localeCompare(b.name));
+    .sort((a, b) => b.timesAssigned - a.timesAssigned || a.name.localeCompare(b.name) || a.key.localeCompare(b.key));
 }
 
 /* ─── CSV Export Helper ───────────────────────────── */
@@ -264,6 +341,41 @@ function EmptyTable({ message }: { message: string }) {
   );
 }
 
+function ReportMetricGrid({ metrics, printMetrics = metrics, weeklyPrint = false, gridClassName = 'lg:grid-cols-4', mobileSingle = false }: { metrics: ReportMetric[]; printMetrics?: ReportMetric[]; weeklyPrint?: boolean; gridClassName?: string; mobileSingle?: boolean }) {
+  return <>
+    <div className={`grid gap-2.5 print:hidden ${mobileSingle ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-2'} ${gridClassName}`}>
+      {metrics.map(({ label, value, icon: Icon, valueColor = 'text-foreground', supporting }) => (
+        <div key={label} className="flex min-h-[128px] min-w-0 flex-col rounded-xl border border-border bg-white p-3 sm:p-4">
+          <div className="flex min-w-0 items-start justify-between gap-2">
+            <p className="min-w-0 break-words text-[13px] font-medium leading-snug text-foreground sm:text-sm">{label}</p>
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-muted/50 text-muted-foreground sm:h-7 sm:w-7">
+              <Icon className="h-4 w-4" aria-hidden="true" />
+            </span>
+          </div>
+          <p className={`mt-auto text-4xl font-bold leading-none tabular-nums ${valueColor}`}>{value}</p>
+          {supporting && <p className="mt-2 text-xs text-muted-foreground">{supporting}</p>}
+        </div>
+      ))}
+    </div>
+    {/* Print / PDF keeps the existing summary treatment. */}
+    <div className="hidden print:block">
+      <div className={weeklyPrint ? 'grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-4' : 'grid grid-cols-2 gap-3 sm:grid-cols-4'}>
+        {printMetrics.map(({ label, value, printColor, printBackground }) => weeklyPrint ? (
+          <div key={label} className="flex min-h-[92px] flex-col justify-between rounded-xl border border-border bg-white p-3 sm:min-h-[108px] sm:p-4">
+            <p className="text-xs font-medium text-muted-foreground">{label}</p>
+            <p className={`text-3xl font-bold leading-none tabular-nums ${printColor}`}>{value}</p>
+          </div>
+        ) : (
+          <div key={label} className={`${printBackground} rounded-xl p-3 text-center`}>
+            <p className={`text-2xl font-bold ${printColor}`}>{value}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">{label}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  </>;
+}
+
 /* ─── Preview Modal ───────────────────────────────── */
 function PreviewModal({
   reportKey, assignments, completed, cancelled, trucks, onClose,
@@ -278,27 +390,37 @@ function PreviewModal({
   const weeklyRows  = buildWeeklyRows(assignments, completed);
   const delayRows   = buildDelayRows(assignments, completed);
   const monthlyRows = buildMonthlyRows(completed);
+  const monthlyPreviewRows = buildMonthlyPreviewRows(assignments, completed, cancelled);
+  const [selectedMonthKey, setSelectedMonthKey] = useState<string | null>(null);
+  const selectedMonth = monthlyPreviewRows.find((row) => row.key === selectedMonthKey) ?? monthlyPreviewRows[0];
   const [utilTab, setUtilTab] = useState<UtilTab>('trucks');
   const truckUtilRows  = buildTruckUtilRows(assignments, completed, cancelled, trucks);
   const driverUtilRows = buildDriverUtilRows(assignments, completed, cancelled);
   const weeklyPage = usePagination(weeklyRows, REPORT_PAGE_SIZE);
-  const monthlyPage = usePagination(monthlyRows, REPORT_PAGE_SIZE);
-  const delayPage = usePagination(delayRows, REPORT_PAGE_SIZE);
-  const truckUtilPage = usePagination(truckUtilRows, REPORT_PAGE_SIZE);
-  const driverUtilPage = usePagination(driverUtilRows, REPORT_PAGE_SIZE);
-  const selectedPage = reportKey === 'weekly' ? weeklyPage : reportKey === 'monthly' ? monthlyPage
+  const monthlyPreviewPage = usePagination(monthlyPreviewRows, REPORT_PAGE_SIZE);
+  const delayPage = usePagination(delayRows, INCIDENT_PAGE_SIZE);
+  const truckUtilPage = usePagination(truckUtilRows, UTILIZATION_PAGE_SIZE);
+  const driverUtilPage = usePagination(driverUtilRows, UTILIZATION_PAGE_SIZE);
+  const selectedPage = reportKey === 'weekly' ? weeklyPage : reportKey === 'monthly' ? monthlyPreviewPage
     : reportKey === 'delay' ? delayPage : utilTab === 'trucks' ? truckUtilPage : driverUtilPage;
-  const selectedCount = reportKey === 'weekly' ? weeklyRows.length : reportKey === 'monthly' ? monthlyRows.length
+  const selectedCount = reportKey === 'weekly' ? weeklyRows.length : reportKey === 'monthly' ? monthlyPreviewRows.length
     : reportKey === 'delay' ? delayRows.length : utilTab === 'trucks' ? truckUtilRows.length : driverUtilRows.length;
   const [printing, setPrinting] = useState(false);
+  const [formalPrintContext, setFormalPrintContext] = useState<{
+    generatedAt: Date; generatedBy: string; role: 'OPM' | 'CSR';
+  } | null>(null);
+  const [printError, setPrintError] = useState('');
   const selectedDataKey = JSON.stringify(
-    reportKey === 'weekly' ? weeklyRows : reportKey === 'monthly' ? monthlyRows
+    reportKey === 'weekly' ? weeklyRows : reportKey === 'monthly' ? monthlyPreviewRows
       : reportKey === 'delay' ? delayRows : utilTab === 'trucks' ? truckUtilRows : driverUtilRows,
   );
   useEffect(() => { selectedPage.setPage(1); }, [reportKey, utilTab, selectedDataKey]);
   useEffect(() => {
     const showAllForPrint = () => flushSync(() => setPrinting(true));
-    const restorePage = () => setPrinting(false);
+    const restorePage = () => {
+      setPrinting(false);
+      setFormalPrintContext(null);
+    };
     window.addEventListener('beforeprint', showAllForPrint);
     window.addEventListener('afterprint', restorePage);
     return () => {
@@ -307,7 +429,7 @@ function PreviewModal({
     };
   }, []);
   const visibleWeeklyRows = printing ? weeklyRows : weeklyPage.pageItems;
-  const visibleMonthlyRows = printing ? monthlyRows : monthlyPage.pageItems;
+  const visibleMonthlyPreviewRows = monthlyPreviewPage.pageItems;
   const visibleDelayRows = printing ? delayRows : delayPage.pageItems;
   const visibleTruckUtilRows = printing ? truckUtilRows : truckUtilPage.pageItems;
   const visibleDriverUtilRows = printing ? driverUtilRows : driverUtilPage.pageItems;
@@ -329,22 +451,22 @@ function PreviewModal({
   /* Summary stats */
   const weeklySummary = {
     total:   weeklyRows.length,
-    onTime:  weeklyRows.filter((r) => r.status === 'On Time' || r.status === 'Completed').length,
+    completed: completed.length,
     delayed: weeklyRows.filter((r) => r.status === 'Delayed').length,
-    active:  weeklyRows.filter((r) => r.status === 'Assigned' || r.status === 'In Transit' || r.status === 'Picked Up').length,
-  };
-  const monthlySummary = {
-    total:     monthlyRows.reduce((s, r) => s + r.total, 0),
-    onTime:    monthlyRows.reduce((s, r) => s + r.onTime, 0),
-    delayed:   monthlyRows.reduce((s, r) => s + r.delayed, 0),
-    cancelled: monthlyRows.reduce((s, r) => s + r.cancelled, 0),
+    active:  assignments.length,
   };
   const delaySummary = {
     total:    delayRows.length,
     resolved: delayRows.filter((r) => r.status === 'Resolved').length,
     ongoing:  delayRows.filter((r) => r.status === 'Ongoing').length,
-    types:    [...new Set(delayRows.map((r) => r.type))].length,
+    affected: new Set(delayRows.map((r) => r.asn)).size,
   };
+  const issueCounts = [...delayRows.reduce((counts, row) =>
+    counts.set(row.type, (counts.get(row.type) ?? 0) + 1), new Map<string, number>())]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const mostCommonIssues = issueCounts.length
+    ? issueCounts.filter(([, count]) => count === issueCounts[0][1]).map(([type]) => type).join(', ')
+    : null;
   const truckUtilSummary = {
     trucks:    truckUtilRows.length,
     assigned:  truckUtilRows.reduce((s, r) => s + r.timesAssigned, 0),
@@ -357,6 +479,18 @@ function PreviewModal({
     completed: driverUtilRows.reduce((s, r) => s + r.completedDeliveries, 0),
     cancelled: driverUtilRows.reduce((s, r) => s + r.cancelledAssignments, 0),
   };
+  const truckUtilMetrics: ReportMetric[] = [
+    { label:'Trucks Used',           value: truckUtilSummary.trucks,    icon: Truck,   printColor:'text-blue-600',  printBackground:'bg-blue-50' },
+    { label:'Total Assignments',     value: truckUtilSummary.assigned,  icon: Package, printColor:'text-foreground',printBackground:'bg-muted/40' },
+    { label:'Completed Trips',       value: truckUtilSummary.completed, icon: Check,   valueColor:'text-green-700', printColor:'text-green-600', printBackground:'bg-green-50' },
+    { label:'Cancelled Assignments', value: truckUtilSummary.cancelled, icon: X,       printColor:'text-slate-600', printBackground:'bg-slate-50' },
+  ];
+  const driverUtilMetrics: ReportMetric[] = [
+    { label:'Drivers Used',          value: driverUtilSummary.drivers,   icon: User,    printColor:'text-blue-600',  printBackground:'bg-blue-50' },
+    { label:'Total Assignments',     value: driverUtilSummary.assigned,  icon: Package, printColor:'text-foreground',printBackground:'bg-muted/40' },
+    { label:'Completed Deliveries',  value: driverUtilSummary.completed, icon: Check,   valueColor:'text-green-700', printColor:'text-green-600', printBackground:'bg-green-50' },
+    { label:'Cancelled Assignments', value: driverUtilSummary.cancelled, icon: X,       printColor:'text-slate-600', printBackground:'bg-slate-50' },
+  ];
 
   /* CSV Export */
   const handleExportCSV = () => {
@@ -388,17 +522,34 @@ function PreviewModal({
     }
   };
 
-  const handlePrint = () => window.print();
+  const handlePrint = async () => {
+    setPrintError('');
+    try {
+      if (reportKey === 'monthly' && !selectedMonth) throw new Error('No selected reporting month');
+      const session = await restoreSession();
+      if (session?.kind !== 'staff') throw new Error('No active staff session');
+      flushSync(() => setFormalPrintContext({
+        generatedAt: new Date(),
+        generatedBy: session.staff.name.trim() || session.staff.email,
+        // The retained legacy admin role has CSR permissions; OPM is its own role.
+        role: session.staff.role === 'opm' ? 'OPM' : 'CSR',
+      }));
+      window.print();
+    } catch {
+      setPrintError('Unable to prepare the report. Please try again.');
+    }
+  };
 
   return (
+    <>
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className={`relative min-w-0 max-w-full bg-white rounded-xl sm:rounded-2xl shadow-2xl w-full xl:max-w-6xl max-h-[94vh] sm:max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-200 ${selectedCount > REPORT_PAGE_SIZE ? 'h-[94vh] sm:h-[90vh]' : ''}`}>
+      <div className={`relative min-w-0 max-w-full bg-white rounded-xl sm:rounded-2xl shadow-2xl w-full xl:max-w-6xl max-h-[94vh] sm:max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-200 ${selectedCount > (reportKey === 'delay' ? INCIDENT_PAGE_SIZE : REPORT_PAGE_SIZE) ? 'h-[94vh] sm:h-[90vh]' : ''}`}>
 
         {/* Header */}
-        <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-border flex-shrink-0">
+        <div className="flex items-center justify-between border-b border-border px-4 py-3 sm:px-6 flex-shrink-0">
           <div>
-            <h3 className="font-semibold text-foreground">{config.title}</h3>
+            <h3 className="text-lg font-semibold text-foreground">{config.title}</h3>
             <p className="text-xs text-muted-foreground mt-0.5">{config.subtitle}</p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-accent transition-colors text-muted-foreground">
@@ -407,51 +558,22 @@ function PreviewModal({
         </div>
 
         {/* Summary Stats */}
-        <div className="px-4 sm:px-6 py-4 border-b border-border flex-shrink-0">
+        <div className="border-b border-border px-4 py-3 sm:px-6 flex-shrink-0">
           {reportKey === 'weekly' && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {[
-                { label:'Total Deliveries', value: weeklySummary.total,   color:'text-blue-600',  bg:'bg-blue-50'   },
-                { label:'On Time / Done',   value: weeklySummary.onTime,  color:'text-green-600', bg:'bg-green-50'  },
-                { label:'Delayed',          value: weeklySummary.delayed, color:'text-red-600',   bg:'bg-red-50'    },
-                { label:'Active / Assigned',value: weeklySummary.active,  color:'text-amber-600', bg:'bg-amber-50'  },
-              ].map((s) => (
-                <div key={s.label} className={`${s.bg} rounded-xl p-3 text-center`}>
-                  <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">{s.label}</p>
-                </div>
-              ))}
-            </div>
-          )}
-          {reportKey === 'monthly' && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {[
-                { label:'Total Deliveries', value: monthlySummary.total,     color:'text-blue-600',  bg:'bg-blue-50'  },
-                { label:'On-Time',          value: monthlySummary.onTime,    color:'text-green-600', bg:'bg-green-50' },
-                { label:'Delayed',          value: monthlySummary.delayed,   color:'text-red-600',   bg:'bg-red-50'   },
-                { label:'Cancelled',        value: monthlySummary.cancelled, color:'text-gray-600',  bg:'bg-gray-50'  },
-              ].map((s) => (
-                <div key={s.label} className={`${s.bg} rounded-xl p-3 text-center`}>
-                  <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">{s.label}</p>
-                </div>
-              ))}
-            </div>
+            <ReportMetricGrid weeklyPrint metrics={[
+              { label:'Total Deliveries', value: weeklySummary.total,     icon: Package,       printColor:'text-foreground' },
+              { label:'Completed',        value: weeklySummary.completed, icon: Check,         valueColor:'text-green-700', printColor:'text-green-700' },
+              { label:'Delayed',          value: weeklySummary.delayed,   icon: AlertTriangle, valueColor:weeklySummary.delayed > 0 ? 'text-red-700' : 'text-foreground', printColor:weeklySummary.delayed > 0 ? 'text-red-700' : 'text-foreground' },
+              { label:'Active',           value: weeklySummary.active,    icon: Truck,         valueColor:'text-amber-700', printColor:'text-amber-700' },
+            ]} />
           )}
           {reportKey === 'delay' && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {[
-                { label:'Total Incidents', value: delaySummary.total,    color:'text-red-600',   bg:'bg-red-50'    },
-                { label:'Resolved',        value: delaySummary.resolved, color:'text-green-600', bg:'bg-green-50'  },
-                { label:'Ongoing',         value: delaySummary.ongoing,  color:'text-amber-600', bg:'bg-amber-50'  },
-                { label:'Issue Types',     value: delaySummary.types,    color:'text-purple-600',bg:'bg-purple-50' },
-              ].map((s) => (
-                <div key={s.label} className={`${s.bg} rounded-xl p-3 text-center`}>
-                  <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">{s.label}</p>
-                </div>
-              ))}
-            </div>
+            <ReportMetricGrid metrics={[
+              { label:'Total Incidents', value: delaySummary.total,    icon: AlertTriangle, valueColor:delaySummary.total > 0 ? 'text-red-700' : 'text-foreground', printColor:'text-red-600',    printBackground:'bg-red-50' },
+              { label:'Resolved',        value: delaySummary.resolved, icon: Check,         valueColor:'text-green-700', printColor:'text-green-600',  printBackground:'bg-green-50' },
+              { label:'Ongoing',         value: delaySummary.ongoing,  icon: Timer,         valueColor:'text-amber-700', printColor:'text-amber-600',  printBackground:'bg-amber-50' },
+              { label:'Affected Deliveries', value: delaySummary.affected, icon: Truck, supporting:'Unique assignments with reports', printColor:'text-foreground' },
+            ]} />
           )}
           {reportKey === 'utilization' && (
             <>
@@ -466,33 +588,17 @@ function PreviewModal({
                 ))}
               </div>
               {utilTab === 'trucks' ? (
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  {[
-                    { label:'Trucks Used',           value: truckUtilSummary.trucks,    color:'text-blue-600',  bg:'bg-blue-50'  },
-                    { label:'Total Assignments',     value: truckUtilSummary.assigned,  color:'text-foreground',bg:'bg-muted/40' },
-                    { label:'Completed Trips',       value: truckUtilSummary.completed, color:'text-green-600', bg:'bg-green-50' },
-                    { label:'Cancelled Assignments', value: truckUtilSummary.cancelled, color:'text-slate-600', bg:'bg-slate-50' },
-                  ].map((s) => (
-                    <div key={s.label} className={`${s.bg} rounded-xl p-3 text-center`}>
-                      <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">{s.label}</p>
-                    </div>
-                  ))}
-                </div>
+                <ReportMetricGrid mobileSingle gridClassName="lg:grid-cols-3 2xl:grid-cols-5" printMetrics={truckUtilMetrics} metrics={[
+                  ...truckUtilMetrics,
+                  { label:'Completion Rate', value:completionRate(truckUtilSummary.completed, truckUtilSummary.assigned), icon:Gauge,
+                    supporting:'Completed trips / assignments', printColor:'text-foreground' },
+                ]} />
               ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  {[
-                    { label:'Drivers Used',          value: driverUtilSummary.drivers,   color:'text-blue-600',  bg:'bg-blue-50'  },
-                    { label:'Total Assignments',     value: driverUtilSummary.assigned,  color:'text-foreground',bg:'bg-muted/40' },
-                    { label:'Completed Deliveries',  value: driverUtilSummary.completed, color:'text-green-600', bg:'bg-green-50' },
-                    { label:'Cancelled Assignments', value: driverUtilSummary.cancelled, color:'text-slate-600', bg:'bg-slate-50' },
-                  ].map((s) => (
-                    <div key={s.label} className={`${s.bg} rounded-xl p-3 text-center`}>
-                      <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">{s.label}</p>
-                    </div>
-                  ))}
-                </div>
+                <ReportMetricGrid mobileSingle gridClassName="lg:grid-cols-3 2xl:grid-cols-5" printMetrics={driverUtilMetrics} metrics={[
+                  ...driverUtilMetrics,
+                  { label:'Completion Rate', value:completionRate(driverUtilSummary.completed, driverUtilSummary.assigned), icon:Gauge,
+                    supporting:'Completed trips / assignments', printColor:'text-foreground' },
+                ]} />
               )}
             </>
           )}
@@ -518,7 +624,7 @@ function PreviewModal({
                   </thead>
                   <tbody className={tableBody}>
                     {visibleWeeklyRows.map((r, i) => (
-                      <tr key={i} className={`${tableRow} border-b border-border/40 hover:bg-muted/10 transition-colors`}>
+                      <tr key={i} className={`${tableRow} border-b border-border/40 hover:bg-muted/10 transition-colors xl:[&>td]:align-middle`}>
                         <td data-label="Date" className={`${tableCell} text-muted-foreground`}>{r.date}</td>
                         <td data-label="Driver" className={tableCell}>
                           <div className="flex min-w-0 items-start gap-1.5">
@@ -545,13 +651,13 @@ function PreviewModal({
                           </div>
                         </td>
                         <td data-label="Pickup Time" className={tableCell}>
-                          <div className="flex min-w-0 items-start gap-1"><Clock className="w-3 h-3 shrink-0 text-muted-foreground" /><span className="min-w-0 break-words">{r.pickupTime}</span></div>
+                          <div className="flex min-w-0 items-center gap-1"><Clock className="w-3 h-3 shrink-0 text-muted-foreground" /><span className="min-w-0 break-words xl:whitespace-nowrap">{r.pickupTime}</span></div>
                         </td>
                         <td data-label="ETA" className={tableCell}>
-                          <div className="flex min-w-0 items-start gap-1"><Timer className="w-3 h-3 shrink-0 text-muted-foreground" /><span className="min-w-0 break-words">{r.eta}</span></div>
+                          <div className="flex min-w-0 items-center gap-1"><Timer className="w-3 h-3 shrink-0 text-muted-foreground" /><span className="min-w-0 break-words xl:whitespace-nowrap">{r.eta}</span></div>
                         </td>
                         <td data-label="ATA" className={tableCell}>
-                          <div className="flex min-w-0 items-start gap-1"><AlarmClock className="w-3 h-3 shrink-0 text-muted-foreground" /><span className="min-w-0 break-words">{r.ata}</span></div>
+                          <div className="flex min-w-0 items-center gap-1"><AlarmClock className="w-3 h-3 shrink-0 text-muted-foreground" /><span className="min-w-0 break-words xl:whitespace-nowrap">{r.ata}</span></div>
                         </td>
                         <td data-label="Status" className={tableCell}>
                           <span className={`text-xs px-2 py-0.5 rounded-full border font-medium whitespace-nowrap ${
@@ -569,73 +675,160 @@ function PreviewModal({
               )
           )}
 
-          {/* ── Monthly Table ── */}
-          {reportKey === 'monthly' && (
-            monthlyRows.length === 0
-              ? <EmptyTable message="No completed deliveries yet. Monthly summary will appear here once deliveries are completed." />
-              : (
-                <table className={`${tableLayout} text-sm`}>
-                  <colgroup className="hidden xl:table-column-group print:table-column-group">
-                    {[22, 16, 16, 14, 14, 18].map((width, i) => <col key={i} style={{ width: `${width}%` }} />)}
-                  </colgroup>
-                  <thead className={`${tableHead} sticky top-0 bg-muted/40 border-b border-border z-10`}>
-                    <tr>
-                      {['Month','Total Deliveries','On-Time','Delayed','Cancelled','Completion Rate'].map((h) => (
-                        <th key={h} className="text-left px-2 py-3 text-xs font-semibold text-muted-foreground tracking-wide break-words">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className={tableBody}>
-                    {visibleMonthlyRows.map((r, i) => (
-                      <tr key={i} className={`${tableRow} border-b border-border/40 hover:bg-muted/10 transition-colors`}>
-                        <td data-label="Month" className={`${tableCell} font-semibold text-foreground`}>{r.week}</td>
-                        <td data-label="Total Deliveries" className={tableCell}>
-                          <span className="text-blue-700 font-bold">{r.total}</span>
-                        </td>
-                        <td data-label="On-Time" className={tableCell}>
-                          <div className="flex min-w-0 items-center gap-1.5">
-                            <span className="font-semibold text-green-600">{r.onTime}</span>
-                            <div className="min-w-0 flex-1 bg-gray-100 rounded-full h-1.5 w-16">
-                              <div className="bg-green-500 h-1.5 rounded-full" style={{ width: `${(r.onTime / Math.max(r.total,1)) * 100}%` }} />
-                            </div>
-                          </div>
-                        </td>
-                        <td data-label="Delayed" className={tableCell}>
-                          <span className={`font-semibold ${r.delayed > 0 ? 'text-red-600' : 'text-green-600'}`}>{r.delayed}</span>
-                        </td>
-                        <td data-label="Cancelled" className={tableCell}>
-                          <span className={`font-semibold ${r.cancelled > 0 ? 'text-gray-600' : 'text-green-600'}`}>{r.cancelled}</span>
-                        </td>
-                        <td data-label="Completion Rate" className={tableCell}>
-                          <span className={`text-sm font-bold px-2 py-0.5 rounded-full ${
-                            parseFloat(r.rate) >= 90 ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
-                          }`}>{r.rate}</span>
-                        </td>
-                      </tr>
-                    ))}
-                    {monthlyRows.length > 1 && (
-                      <tr className={`${tableRow} bg-muted/30 font-semibold border-t-2 border-border`}>
-                        <td data-label="Month" className={`${tableCell} text-foreground`}>Total</td>
-                        <td data-label="Total Deliveries" className={`${tableCell} text-blue-700 font-bold`}>{monthlySummary.total}</td>
-                        <td data-label="On-Time" className={`${tableCell} text-green-600 font-bold`}>{monthlySummary.onTime}</td>
-                        <td data-label="Delayed" className={`${tableCell} text-red-600 font-bold`}>{monthlySummary.delayed}</td>
-                        <td data-label="Cancelled" className={`${tableCell} text-gray-600 font-bold`}>{monthlySummary.cancelled}</td>
-                        <td data-label="Completion Rate" className={tableCell}>
-                          <span className="text-sm font-bold px-2 py-0.5 rounded-full bg-green-100 text-green-700">
-                            {monthlySummary.total > 0
-                              ? `${((monthlySummary.onTime / monthlySummary.total) * 100).toFixed(1)}%`
-                              : '—'}
-                          </span>
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              )
-          )}
+          {/* Monthly management overview stays interactive; the formal print document is separate. */}
+          {reportKey === 'monthly' && <div className="space-y-4 px-4 py-4 sm:px-6 print:hidden">
+            {monthlyPreviewRows.length === 0 ? (
+              <EmptyTable message="No deliveries with a dated delivery schedule are available for a monthly summary." />
+            ) : <>
+              <div className="flex flex-wrap items-end justify-between gap-2">
+                <div>
+                  <h4 className="text-base font-semibold text-foreground">Monthly overview</h4>
+                  <p className="text-xs text-muted-foreground">Grouped by scheduled delivery date across active, completed and cancelled assignments.</p>
+                </div>
+                <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                  Month
+                  <select aria-label="Report month" value={selectedMonth.key} onChange={(event) => setSelectedMonthKey(event.target.value)} className="h-9 rounded-lg border border-border bg-white px-2 text-sm text-foreground focus-visible:outline-2 focus-visible:outline-primary">
+                    {monthlyPreviewRows.map((row) => <option key={row.key} value={row.key}>{row.month}</option>)}
+                  </select>
+                </label>
+              </div>
+              <div className="space-y-2.5">
+                <ReportMetricGrid mobileSingle gridClassName="xl:grid-cols-4" metrics={[
+                  { label:'Total Deliveries', value:selectedMonth.total, icon:Package, supporting:selectedMonth.month, printColor:'text-foreground' },
+                  { label:'Completed', value:selectedMonth.completed, icon:Check, supporting:'Final completed assignments', valueColor:'text-green-700', printColor:'text-green-700' },
+                  { label:'Completion Rate', value:`${((selectedMonth.completed / selectedMonth.total) * 100).toFixed(1)}%`, icon:Gauge, supporting:'Completed / total deliveries', printColor:'text-foreground' },
+                  { label:'On-Time Rate', value:selectedMonth.completed ? `${((selectedMonth.onTime / selectedMonth.completed) * 100).toFixed(1)}%` : '—', icon:Clock, supporting:'Completed without a delay report', valueColor:'text-green-700', printColor:'text-green-700' },
+                ]} />
+                <ReportMetricGrid mobileSingle gridClassName="xl:grid-cols-3" metrics={[
+                  { label:'Delayed', value:selectedMonth.delayed, icon:AlertTriangle, supporting:'Assignments with a delay report', valueColor:selectedMonth.delayed ? 'text-red-700' : 'text-foreground', printColor:'text-foreground' },
+                  { label:'Cancelled', value:selectedMonth.cancelled, icon:X, supporting:'Cancelled assignments', printColor:'text-foreground' },
+                  { label:'Active', value:selectedMonth.active, icon:Truck, supporting:'Not finally completed', valueColor:'text-amber-700', printColor:'text-amber-700' },
+                ]} />
+              </div>
+              <section className="rounded-xl border border-border bg-white p-4">
+                <h4 className="text-sm font-semibold uppercase tracking-wide text-foreground">Delivery Activity</h4>
+                <p className="mt-1 text-xs text-muted-foreground">Scheduled delivery volume by day-of-month week for {selectedMonth.month}.</p>
+                <div className="mt-3 h-44 min-w-0" role="img" aria-label={`Weekly delivery volume: ${selectedMonth.weeks.map((count, index) => `Week ${index + 1}, ${count}`).join('; ')}`}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={selectedMonth.weeks.map((total, index) => ({ week:`Week ${index + 1}`, total }))} margin={{ top: 6, right: 4, left: -24, bottom: 0 }}>
+                      <CartesianGrid vertical={false} stroke="#e5e7eb" />
+                      <XAxis dataKey="week" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+                      <YAxis allowDecimals={false} tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+                      <Tooltip formatter={(value) => [value, 'Deliveries']} />
+                      <Bar dataKey="total" fill="#238a4a" radius={[3, 3, 0, 0]} maxBarSize={64} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </section>
+              <section>
+                <h4 className="mb-2 text-sm font-semibold uppercase tracking-wide text-foreground">Monthly Breakdown</h4>
+                <div className="overflow-x-auto rounded-xl border border-border">
+                  <table className="min-w-[760px] w-full text-sm">
+                    <thead className="bg-muted/40 text-left text-xs text-muted-foreground"><tr>
+                      {['Month','Total Deliveries','Completed','On-Time','Delayed','Cancelled','Completion Rate'].map((label) => <th key={label} className="px-3 py-2.5 font-semibold">{label}</th>)}
+                    </tr></thead>
+                    <tbody>{visibleMonthlyPreviewRows.map((row) => <tr key={row.key} className="border-t border-border/70">
+                      <td className="px-3 py-2.5 font-medium">{row.month}</td>
+                      <td className="px-3 py-2.5">{row.total}</td>
+                      <td className="px-3 py-2.5">{row.completed}</td>
+                      <td className="px-3 py-2.5">{row.onTime}</td>
+                      <td className="px-3 py-2.5">{row.delayed}</td>
+                      <td className="px-3 py-2.5">{row.cancelled}</td>
+                      <td className="px-3 py-2.5 font-medium">{((row.completed / row.total) * 100).toFixed(1)}%</td>
+                    </tr>)}</tbody>
+                  </table>
+                </div>
+              </section>
+              <section className="rounded-xl border border-border bg-white p-4">
+                <h4 className="text-sm font-semibold uppercase tracking-wide text-foreground">Monthly Notes</h4>
+                <dl className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-2 text-sm">
+                  <dt>Completed deliveries</dt><dd className="font-semibold">{selectedMonth.completed}</dd>
+                  <dt>On-time rate</dt><dd className="font-semibold">{selectedMonth.completed ? `${((selectedMonth.onTime / selectedMonth.completed) * 100).toFixed(1)}%` : '—'}</dd>
+                  <dt>Delayed deliveries</dt><dd className="font-semibold">{selectedMonth.delayed}</dd>
+                  <dt>Cancelled deliveries</dt><dd className="font-semibold">{selectedMonth.cancelled}</dd>
+                  {selectedMonth.active > 0 && <><dt>Active deliveries</dt><dd className="font-semibold">{selectedMonth.active}</dd></>}
+                </dl>
+              </section>
+            </>}
+          </div>}
 
-          {/* ── Delay Table ── */}
-          {reportKey === 'delay' && (
+          {reportKey === 'delay' && <div className="space-y-5 px-4 py-4 sm:px-6 print:hidden">
+            {delayRows.length === 0 ? (
+              <EmptyTable message="No delay reports yet. Incidents will appear here when drivers report delays." />
+            ) : <>
+              <section>
+                <h4 className="mb-2 text-sm font-semibold uppercase tracking-wide text-foreground">Issue Type Breakdown</h4>
+                <div className="rounded-xl border border-border bg-white">
+                  {issueCounts.map(([type, count]) => (
+                    <div key={type} className="flex items-center justify-between gap-4 border-b border-border/70 px-4 py-2.5 last:border-b-0">
+                      <span className="text-sm text-foreground">{type}</span>
+                      <span className="font-semibold tabular-nums text-foreground">{count}</span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section>
+                <h4 className="mb-2 text-sm font-semibold uppercase tracking-wide text-foreground">Incident Details</h4>
+                <div className="overflow-x-auto rounded-xl border border-border">
+                  <table className="w-full min-w-[880px] table-fixed text-xs">
+                    <colgroup>
+                      <col className="w-[9%]" /><col className="w-[12%]" /><col className="w-[15%]" />
+                      <col className="w-[11%]" /><col className="w-[27%]" /><col className="w-[15%]" /><col className="w-[11%]" />
+                    </colgroup>
+                    <thead className="bg-muted/40 text-left text-muted-foreground"><tr>
+                      {['Date', 'ASN', 'Driver', 'Truck', 'Route', 'Issue Type', 'Status'].map((label) => (
+                        <th key={label} className="px-2.5 py-2.5 font-semibold">{label}</th>
+                      ))}
+                    </tr></thead>
+                    <tbody>{delayPage.pageItems.map((row, index) => (
+                      <Fragment key={`${row.asn}-${delayPage.page}-${index}`}>
+                      <tr className="border-t border-border/70 align-top">
+                        <td className="px-2.5 py-3 text-muted-foreground">{row.date}</td>
+                        <td className="break-all px-2.5 py-3 font-semibold text-foreground">{row.asn}</td>
+                        <td className="break-words px-2.5 py-3">{row.driver}</td>
+                        <td className="break-words px-2.5 py-3">{row.truck}</td>
+                        <td className="break-words px-2.5 py-3">{row.route}</td>
+                        <td className="px-2.5 py-3"><DelayTypeBadge type={row.type} /></td>
+                        <td className="px-2.5 py-3">
+                          <span className={`inline-flex rounded-md border px-2 py-0.5 font-medium ${row.status === 'Resolved' ? 'border-green-200 bg-green-50 text-green-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>{row.status}</span>
+                        </td>
+                      </tr>
+                      <tr className="border-b border-border/70 bg-muted/10">
+                        <td colSpan={7} className="px-2.5 pb-3 pt-1 text-xs">
+                          <p className="break-words text-foreground"><span className="font-semibold">Reason:</span> {row.reason}</p>
+                          <p className="mt-1 break-words text-muted-foreground">Client: {row.client} · Scheduled: {row.scheduledTime}</p>
+                          <p className="mt-1 break-words text-muted-foreground">Reported: {row.reportedStamp} · Resolved at: — · Delay duration: —</p>
+                        </td>
+                      </tr>
+                      </Fragment>
+                    ))}</tbody>
+                  </table>
+                </div>
+              </section>
+
+              <section>
+                <h4 className="mb-2 text-sm font-semibold uppercase tracking-wide text-foreground">Incident Summary</h4>
+                <dl className="rounded-xl border border-border bg-white px-4 text-sm">
+                  {[
+                    ['Total incidents', String(delaySummary.total)],
+                    ['Resolved', String(delaySummary.resolved)],
+                    ['Ongoing', String(delaySummary.ongoing)],
+                    ['Affected deliveries', String(delaySummary.affected)],
+                    ...(mostCommonIssues ? [['Most common issue', mostCommonIssues]] : []),
+                  ].map(([label, value]) => (
+                    <div key={label} className="flex items-start justify-between gap-4 border-b border-border/70 py-2.5 last:border-b-0">
+                      <dt className="text-muted-foreground">{label}</dt><dd className="text-right font-semibold text-foreground">{value}</dd>
+                    </div>
+                  ))}
+                </dl>
+                <p className="mt-2 text-xs text-muted-foreground">Resolved follows the existing completed-delivery rule. Individual incident resolution times and durations are not recorded.</p>
+              </section>
+            </>}
+          </div>}
+
+          {/* Existing Print / PDF table and CSV fields retain their current definitions. */}
+          {reportKey === 'delay' && <div className="hidden print:block">{(
             delayRows.length === 0
               ? <EmptyTable message="No delay reports yet. Incidents will appear here when drivers report delays." />
               : (
@@ -689,21 +882,21 @@ function PreviewModal({
                   </tbody>
                 </table>
               )
-          )}
+          )}</div>}
 
           {/* ── Truck Utilization Table ── */}
           {reportKey === 'utilization' && utilTab === 'trucks' && (
             truckUtilRows.length === 0
-              ? <EmptyTable message="No assignment history yet. Truck usage will appear here once deliveries are dispatched." />
+              ? <EmptyTable message="No fleet utilization data available in the current assignment history." />
               : (
                 <table className={`${tableLayout} text-sm`}>
-                  <colgroup className="hidden xl:table-column-group print:table-column-group">
+                  <colgroup className="hidden print:table-column-group">
                     {[14, 14, 12, 12, 12, 18, 18].map((width, i) => <col key={i} style={{ width: `${width}%` }} />)}
                   </colgroup>
                   <thead className={`${tableHead} sticky top-0 bg-muted/40 border-b border-border z-10`}>
                     <tr>
-                      {['Plate Number','Classification','Times Assigned','Completed Trips','Cancelled','Last Driver','Last Used Date'].map((h) => (
-                        <th key={h} className="text-left px-2 py-3 text-[11px] leading-tight font-semibold text-muted-foreground tracking-wide break-words">{h}</th>
+                      {['Plate Number','Classification','Times Assigned','Completed Trips','Cancelled','Completion Rate','Last Driver','Last Used Date'].map((h) => (
+                        <th key={h} className={`text-left px-2 py-3 text-[11px] leading-tight font-semibold text-muted-foreground tracking-wide break-words ${h === 'Completion Rate' ? 'print:!hidden' : ''}`}>{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -722,6 +915,7 @@ function PreviewModal({
                         <td data-label="Cancelled" className={tableCell}>
                           <span className={`font-semibold ${r.cancelledAssignments > 0 ? 'text-red-600' : 'text-muted-foreground'}`}>{r.cancelledAssignments}</span>
                         </td>
+                        <td data-label="Completion Rate" className={`${tableCell} print:!hidden`}><span className="font-semibold tabular-nums text-foreground">{completionRate(r.completedTrips, r.timesAssigned)}</span></td>
                         <td data-label="Last Driver" className={tableCell}>
                           <div className="flex min-w-0 items-start gap-1.5">
                             <User className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
@@ -739,22 +933,22 @@ function PreviewModal({
           {/* ── Driver Utilization Table ── */}
           {reportKey === 'utilization' && utilTab === 'drivers' && (
             driverUtilRows.length === 0
-              ? <EmptyTable message="No assignment history yet. Driver usage will appear here once deliveries are dispatched." />
+              ? <EmptyTable message="No driver utilization data available in the current assignment history." />
               : (
                 <table className={`${tableLayout} text-sm`}>
-                  <colgroup className="hidden xl:table-column-group print:table-column-group">
+                  <colgroup className="hidden print:table-column-group">
                     {[20, 14, 16, 14, 16, 20].map((width, i) => <col key={i} style={{ width: `${width}%` }} />)}
                   </colgroup>
                   <thead className={`${tableHead} sticky top-0 bg-muted/40 border-b border-border z-10`}>
                     <tr>
-                      {['Driver Name','Times Assigned','Completed Deliveries','Cancelled','Last Truck Used','Last Delivery Date'].map((h) => (
-                        <th key={h} className="text-left px-2 py-3 text-[11px] leading-tight font-semibold text-muted-foreground tracking-wide break-words">{h}</th>
+                      {['Driver Name','Times Assigned','Completed Deliveries','Cancelled','Completion Rate','Last Truck Used','Last Route','Last Delivery Date'].map((h) => (
+                        <th key={h} className={`text-left px-2 py-3 text-[11px] leading-tight font-semibold text-muted-foreground tracking-wide break-words ${h === 'Completion Rate' || h === 'Last Route' ? 'print:!hidden' : ''}`}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody className={tableBody}>
                     {visibleDriverUtilRows.map((r) => (
-                      <tr key={r.name} className={`${tableRow} border-b border-border/40 hover:bg-muted/10 transition-colors`}>
+                      <tr key={r.key} className={`${tableRow} border-b border-border/40 hover:bg-muted/10 transition-colors`}>
                         <td data-label="Driver Name" className={tableCell}>
                           <div className="flex min-w-0 items-start gap-1.5">
                             <User className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
@@ -766,12 +960,14 @@ function PreviewModal({
                         <td data-label="Cancelled" className={tableCell}>
                           <span className={`font-semibold ${r.cancelledAssignments > 0 ? 'text-red-600' : 'text-muted-foreground'}`}>{r.cancelledAssignments}</span>
                         </td>
+                        <td data-label="Completion Rate" className={`${tableCell} print:!hidden`}><span className="font-semibold tabular-nums text-foreground">{completionRate(r.completedDeliveries, r.timesAssigned)}</span></td>
                         <td data-label="Last Truck Used" className={tableCell}>
                           <div className="flex min-w-0 items-start gap-1.5">
                             <Truck className="w-3.5 h-3.5 text-[#0d9488] flex-shrink-0" />
                             <span className="min-w-0 break-words font-semibold text-[#0d9488]">{r.lastTruck}</span>
                           </div>
                         </td>
+                        <td data-label="Last Route" className={`${tableCell} print:!hidden`}><span className="min-w-0 break-words">{r.lastRoute}</span></td>
                         <td data-label="Last Delivery Date" className={`${tableCell} text-muted-foreground`}>{r.lastDeliveryDate}</td>
                       </tr>
                     ))}
@@ -781,7 +977,7 @@ function PreviewModal({
           )}
         </div>
 
-        <PaginationFooter page={selectedPage.page} totalItems={selectedCount} pageSize={REPORT_PAGE_SIZE}
+        <PaginationFooter page={selectedPage.page} totalItems={selectedCount} pageSize={reportKey === 'delay' ? INCIDENT_PAGE_SIZE : reportKey === 'utilization' ? UTILIZATION_PAGE_SIZE : REPORT_PAGE_SIZE}
           onPageChange={selectedPage.setPage} singular="record" plural="records"
           className="border-t border-border bg-muted/10" />
 
@@ -789,7 +985,7 @@ function PreviewModal({
         <div className="px-4 sm:px-6 py-4 border-t border-border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 flex-shrink-0 bg-muted/10">
           <p className="text-xs text-muted-foreground">
             {reportKey === 'weekly'      && `${weeklyRows.length} record${weeklyRows.length !== 1 ? 's' : ''} total`}
-            {reportKey === 'monthly'     && `${monthlyRows.length} month${monthlyRows.length !== 1 ? 's' : ''} total`}
+            {reportKey === 'monthly'     && `${monthlyPreviewRows.length} month${monthlyPreviewRows.length !== 1 ? 's' : ''} total`}
             {reportKey === 'delay'       && `${delayRows.length} incident${delayRows.length !== 1 ? 's' : ''} total`}
             {reportKey === 'utilization' && utilTab === 'trucks'
               && `${truckUtilRows.length} truck${truckUtilRows.length !== 1 ? 's' : ''} total`}
@@ -811,8 +1007,52 @@ function PreviewModal({
             </button>
           </div>
         </div>
+        {printError && <p role="alert" className="px-4 pb-2 text-sm text-red-700 sm:px-6">{printError}</p>}
       </div>
     </div>
+    {reportKey === 'weekly' && formalPrintContext && (
+      <WeeklyPrintReport
+        rows={weeklyRows}
+        summary={weeklySummary}
+        includedDeliveryDates={[...assignments, ...completed].map(task => task.deliveryDate)}
+        generatedAt={formalPrintContext.generatedAt}
+        generatedBy={formalPrintContext.generatedBy}
+        role={formalPrintContext.role}
+      />
+    )}
+    {reportKey === 'monthly' && selectedMonth && formalPrintContext && (
+      <MonthlyPrintReport
+        month={selectedMonth}
+        breakdownMonths={monthlyPreviewRows}
+        generatedAt={formalPrintContext.generatedAt}
+        generatedBy={formalPrintContext.generatedBy}
+        role={formalPrintContext.role}
+      />
+    )}
+    {reportKey === 'delay' && formalPrintContext && (
+      <DelayPrintReport
+        rows={delayRows}
+        summary={delaySummary}
+        issueCounts={issueCounts}
+        mostCommonIssues={mostCommonIssues}
+        generatedAt={formalPrintContext.generatedAt}
+        generatedBy={formalPrintContext.generatedBy}
+        role={formalPrintContext.role}
+      />
+    )}
+    {reportKey === 'utilization' && formalPrintContext && (
+      <FleetUtilizationPrintReport
+        trucks={truckUtilRows}
+        drivers={driverUtilRows}
+        fleetSummary={truckUtilSummary}
+        driverSummary={driverUtilSummary}
+        formatCompletionRate={completionRate}
+        generatedAt={formalPrintContext.generatedAt}
+        generatedBy={formalPrintContext.generatedBy}
+        role={formalPrintContext.role}
+      />
+    )}
+    </>
   );
 }
 
@@ -822,7 +1062,7 @@ const STATUS_COLORS: Record<TaskStatus, string> = {
   'In Transit': statusColors['In Transit'].chart,
   Delivered: statusColors.Delivered.chart,
   'Failed / Issue': statusColors['Failed / Issue'].chart,
-  Cancelled: statusColors.Cancelled.chart,
+  Cancelled: '#64748B',
 };
 const STATUS_ORDER: TaskStatus[] = [
   'Assigned', 'Picked Up', 'In Transit', 'Delivered', 'Failed / Issue', 'Cancelled',
@@ -879,14 +1119,17 @@ function buildTrend(entries: ReportEntry[], range: DateRange) {
     monday.setUTCDate(monday.getUTCDate() - (monday.getUTCDay() + 6) % 7);
     return monday.toISOString().slice(0, 10);
   };
-  const bars = new Map<string, { key: string; label: string; onTime: number; delayed: number }>();
+  const bars = new Map<string, { key: string; label: string; title: string; onTime: number; delayed: number }>();
   for (const date = new Date(first); date <= last; date.setUTCDate(date.getUTCDate() + 1)) {
     const key = keyFor(date.toISOString().slice(0, 10));
     if (bars.has(key)) continue;
     const label = grouping === 'month'
       ? formatBucket(`${key}-01`, { month: 'short', year: '2-digit' })
       : formatBucket(key, { month: 'short', day: 'numeric' });
-    bars.set(key, { key, label, onTime: 0, delayed: 0 });
+    const title = grouping === 'month'
+      ? formatBucket(`${key}-01`, { month: 'long', year: 'numeric' })
+      : `${grouping === 'week' ? 'Week of ' : ''}${formatBucket(key, { month: 'short', day: 'numeric', year: 'numeric' })}`;
+    bars.set(key, { key, label, title, onTime: 0, delayed: 0 });
   }
   for (const entry of entries) {
     if (entry.status !== 'Delivered') continue;
@@ -993,37 +1236,33 @@ export default function Reports({ assignments, completed, cancelled, trucks }: R
   }
   const reasons = [...reasonCounts].sort((a, b) => b[1] - a[1]);
 
-  const reports: { key: ReportKey; title: string; desc: string; icon: typeof TrendingUp; color: string; badge: string }[] = [
+  const reports: { key: ReportKey; title: string; desc: string; icon: typeof TrendingUp; badge: string }[] = [
     {
       key:   'weekly',
       title: 'Weekly Performance Report',
-      desc:  'Driver, truck, route, client, scheduled and actual times, and status.',
+      desc:  'Driver, truck, route, schedule and actual delivery performance.',
       icon:  TrendingUp,
-      color: 'bg-blue-600',
       badge: 'Weekly',
     },
     {
       key:   'monthly',
       title: 'Monthly Delivery Summary',
-      desc:  'Month-by-month breakdown of total deliveries, on-time rate, delays, and cancellations.',
+      desc:  'Monthly delivery volume, completion, delays and cancellations.',
       icon:  Package,
-      color: 'bg-green-600',
       badge: 'Monthly',
     },
     {
       key:   'delay',
       title: 'Delay & Issues Report',
-      desc:  'Detailed log of every delayed incident — cause, driver, route, issue type, and resolution status.',
+      desc:  'Delayed deliveries, causes, affected routes and resolution history.',
       icon:  AlertTriangle,
-      color: 'bg-red-600',
       badge: 'On demand',
     },
     {
       key:   'utilization',
       title: 'Fleet & Driver Utilization Report',
-      desc:  'Historical usage per truck and driver — times assigned, completed trips, cancellations, and when each was last used. Trucks / Drivers tabs.',
+      desc:  'Truck and driver utilization across historical assignments.',
       icon:  Gauge,
-      color: 'bg-indigo-600',
       badge: 'Historical',
     },
   ];
@@ -1037,45 +1276,38 @@ export default function Reports({ assignments, completed, cancelled, trucks }: R
         </p>
       </header>
 
-      <section className="space-y-4">
+      <section className="space-y-3">
         <div>
           <h3 className="text-lg font-semibold text-foreground">Reports</h3>
           <p className="text-sm text-muted-foreground">Preview and export detailed operational reports.</p>
         </div>
-      {/* Report Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-        {reports.map(({ key, title, desc, icon: Icon, color, badge }) => (
-          <div key={key} className="bg-white rounded-xl border border-border shadow-sm p-5 hover:shadow-md transition-shadow flex flex-col gap-4">
-            <div className="flex items-start gap-4">
-              <div className={`${color} p-3 rounded-xl flex-shrink-0`}>
-                <Icon className="w-5 h-5 text-white" />
+        <div className="grid w-full grid-cols-1 gap-4 lg:grid-cols-2">
+          {reports.map(({ key, title, desc, icon: Icon, badge }) => (
+            <div key={key} className="flex min-h-[184px] min-w-0 flex-col gap-2.5 rounded-xl border border-border bg-white p-4">
+              <div className="flex min-w-0 items-start gap-2.5">
+                <Icon className="mt-1 h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
+                <h3 className="min-w-0 flex-1 text-xl font-semibold leading-tight text-foreground lg:text-[22px]">{title}</h3>
+                <span className="shrink-0 whitespace-nowrap rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{badge}</span>
               </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <h3 className="font-semibold text-foreground leading-tight">{title}</h3>
-                </div>
-                <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded">{badge}</span>
+              <p className="text-sm leading-relaxed text-muted-foreground">{desc}</p>
+              <div className="mt-auto flex flex-wrap items-center justify-end gap-2">
+                <button
+                  onClick={() => setPreviewKey(key)}
+                  className="flex h-10 items-center gap-1.5 rounded-lg border border-border bg-white px-4 text-sm font-medium text-foreground transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                >
+                  <Eye className="h-3.5 w-3.5" /> Preview
+                </button>
+                <button
+                  onClick={() => handleExport(key)}
+                  title="Export CSV"
+                  className="flex h-10 items-center gap-1.5 rounded-lg bg-primary px-4 text-sm font-medium text-white transition-colors hover:bg-primary/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                >
+                  <FileDown className="h-3.5 w-3.5" /> Export
+                </button>
               </div>
             </div>
-            <p className="text-sm text-muted-foreground leading-relaxed">{desc}</p>
-            <div className="flex flex-wrap items-center justify-end mt-auto pt-2 border-t border-border gap-2">
-              <button
-                onClick={() => setPreviewKey(key)}
-                className="flex items-center gap-1.5 px-3 py-2 border border-border bg-white text-foreground rounded-lg text-sm hover:bg-accent transition-colors"
-              >
-                <Eye className="w-3.5 h-3.5" /> Preview
-              </button>
-              <button
-                onClick={() => handleExport(key)}
-                title="Export CSV"
-                className="flex items-center gap-1.5 px-3 py-2 border border-border bg-white text-foreground rounded-lg text-sm hover:bg-accent transition-colors"
-              >
-                <FileDown className="w-3.5 h-3.5" /> Export
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
       </section>
 
       <section className="rounded-xl border border-border bg-white p-4 sm:p-5 shadow-sm">
@@ -1134,24 +1366,40 @@ export default function Reports({ assignments, completed, cancelled, trucks }: R
             </div>
           ) : (
             <>
-              <div className="mt-5 h-64 w-full min-w-0" role="img" aria-label="Stacked chart of on-time and delayed deliveries">
+              <div className="mt-5 h-64 w-full min-w-0" role="img" aria-label="Line chart of on-time and delayed deliveries over time">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={trend} margin={{ top: 8, right: 8, left: -20, bottom: 8 }}>
-                    <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} interval="preserveStartEnd" minTickGap={20} />
-                    <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#64748b' }} />
-                    <Tooltip />
-                    <Bar dataKey="onTime" name="On-time" stackId="deliveries" fill="#22c55e" maxBarSize={44} />
-                    <Bar dataKey="delayed" name="Delayed" stackId="deliveries" fill="#ef4444" maxBarSize={44} />
-                  </BarChart>
+                  <LineChart data={trend} margin={{ top: 12, right: 12, left: -20, bottom: 8 }}>
+                    <CartesianGrid stroke="#e8eceb" strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} interval="preserveStartEnd" minTickGap={24} />
+                    <YAxis allowDecimals={false} domain={[0, 'auto']} tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} />
+                    <Tooltip cursor={{ stroke: '#cbd5e1', strokeWidth: 1, strokeDasharray: '3 3' }}
+                      content={({ active, payload }) => {
+                        const point = payload?.[0]?.payload as (typeof trend)[number] | undefined;
+                        if (!active || !point) return null;
+                        const total = point.onTime + point.delayed;
+                        return <div className="min-w-44 rounded-lg border border-border bg-white px-3 py-2.5 text-xs shadow-sm">
+                          <p className="mb-2 font-semibold text-foreground">{point.title}</p>
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2"><span className="h-[11px] w-[11px] rounded-[3px] bg-[#16A34A]" /><span className="text-muted-foreground">On-Time</span><strong className="ml-auto text-foreground">{point.onTime}</strong></div>
+                            <div className="flex items-center gap-2"><span className="h-[11px] w-[11px] rounded-[3px] bg-[#DC2626]" /><span className="text-muted-foreground">Delayed</span><strong className="ml-auto text-foreground">{point.delayed}</strong></div>
+                            <div className="flex justify-between gap-4 border-t border-border pt-1 text-foreground"><span>Total</span><strong>{total}</strong></div>
+                            <div className="flex justify-between gap-4 text-foreground"><span>On-Time Rate</span><strong>{total ? `${((point.onTime / total) * 100).toFixed(1)}%` : '—'}</strong></div>
+                          </div>
+                        </div>;
+                      }} />
+                    <Line type="monotone" dataKey="onTime" name="On-Time" stroke="#16A34A" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"
+                      dot={trend.length === 1 ? { r: 4, strokeWidth: 2, fill: '#fff' } : false} activeDot={{ r: 5, strokeWidth: 2, fill: '#fff' }} isAnimationActive={false} />
+                    <Line type="monotone" dataKey="delayed" name="Delayed" stroke="#DC2626" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"
+                      dot={trend.length === 1 ? { r: 4, strokeWidth: 2, fill: '#fff' } : false} activeDot={{ r: 5, strokeWidth: 2, fill: '#fff' }} isAnimationActive={false} />
+                  </LineChart>
                 </ResponsiveContainer>
               </div>
               <div className="mt-2 flex flex-wrap justify-center gap-4 text-xs text-muted-foreground">
-                <span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm bg-green-500" />On-time</span>
-                <span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm bg-red-500" />Delayed</span>
+                <span className="inline-flex items-center gap-1.5"><i className="h-[11px] w-[11px] rounded-[3px] bg-[#16A34A]" />On-Time</span>
+                <span className="inline-flex items-center gap-1.5"><i className="h-[11px] w-[11px] rounded-[3px] bg-[#DC2626]" />Delayed</span>
               </div>
-              <p className="mt-2 text-center text-xs text-muted-foreground">
-                Uses the existing report definition: a completed delivery with a submitted delay report is delayed.
+              <p className="mt-2 text-center text-[11px] text-muted-foreground">
+                A delivery with a submitted delay report is counted as delayed.
               </p>
             </>
           )}
@@ -1186,26 +1434,36 @@ export default function Reports({ assignments, completed, cancelled, trucks }: R
             {entries.length === 0 ? (
               <p className="py-12 text-center text-sm text-muted-foreground">No assignments for this period.</p>
             ) : (
-              <div className="mt-4 flex flex-col sm:flex-row items-center gap-4">
+              <div className="mt-4 flex flex-col items-center gap-5 sm:flex-row sm:items-center sm:gap-6">
                 <div className="relative h-48 w-48 shrink-0" role="img" aria-label="Delivery status donut chart">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie data={statusCounts.filter(item => item.count > 0)} dataKey="count" nameKey="status"
-                        cx="50%" cy="50%" innerRadius={62} outerRadius={88} stroke="#ffffff" strokeWidth={2}>
+                        cx="50%" cy="50%" innerRadius={54} outerRadius={88} stroke="#ffffff" strokeWidth={2}>
                         {statusCounts.filter(item => item.count > 0).map(item => <Cell key={item.status} fill={item.color} />)}
                       </Pie>
-                      <Tooltip />
+                      <Tooltip content={({ active, payload }) => {
+                        const item = payload?.[0]?.payload as (typeof statusCounts)[number] | undefined;
+                        if (!active || !item) return null;
+                        return <div className="rounded-lg border border-border bg-white px-3 py-2 text-xs shadow-sm">
+                          <div className="flex items-center gap-2">
+                            <span className="h-[11px] w-[11px] shrink-0 rounded-[3px]" style={{ backgroundColor: item.color }} />
+                            <span className="font-medium text-foreground">{item.status}</span>
+                          </div>
+                          <p className="mt-1 text-muted-foreground">{item.count} assignments · {Math.round(item.count / entries.length * 100)}%</p>
+                        </div>;
+                      }} />
                     </PieChart>
                   </ResponsiveContainer>
                   <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                    <span className="text-2xl font-bold text-foreground">{entries.length}</span>
+                    <span className="text-3xl font-semibold leading-none text-foreground">{entries.length}</span>
                     <span className="text-xs text-muted-foreground">assignments</span>
                   </div>
                 </div>
-                <div className="w-full min-w-0 space-y-2">
+                <div className="w-full min-w-0 space-y-2.5">
                   {statusCounts.map(item => (
                     <div key={item.status} className="flex items-center gap-2 text-xs sm:text-sm">
-                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />
+                      <span className="h-[11px] w-[11px] shrink-0 rounded-[3px]" style={{ backgroundColor: item.color }} />
                       <span className="min-w-0 flex-1 text-foreground">{item.status}</span>
                       <span className="shrink-0 font-medium text-foreground">{item.count}</span>
                       <span className="w-9 shrink-0 text-right text-muted-foreground">{Math.round(item.count / entries.length * 100)}%</span>

@@ -1,0 +1,98 @@
+@media print {
+  .delay-print-report .dir-summary,
+  .delay-print-report .dir-breakdown,
+  .delay-print-report .dir-incident {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .delay-print-report .dir-breakdown th:last-child,
+  .delay-print-report .dir-breakdown td:last-child {
+    width: 16%;
+    text-align: right;
+  }
+
+  .delay-print-report .dir-details {
+    font-size: 7.5pt;
+  }
+
+  .delay-print-report .dir-details thead {
+    display: table-header-group;
+  }
+
+  .delay-print-report .dir-details th,
+  .delay-print-report .dir-details td {
+    padding: 1.5mm 1mm;
+    overflow-wrap: anywhere;
+  }
+
+  .delay-print-report .dir-incident > td {
+    padding: 0;
+  }
+
+  .delay-print-report .dir-incident-main {
+    display: grid;
+    grid-template-columns: 10fr 15fr 14fr 11fr 22fr 17fr 11fr;
+  }
+
+  .delay-print-report .dir-incident-main > div {
+    min-width: 0;
+    padding: 1.5mm 1mm;
+    border-right: 1px solid #d9dee2;
+  }
+
+  .delay-print-report .dir-incident-main > div:last-child {
+    border-right: 0;
+  }
+
+  .delay-print-report .dir-col-date { width: 10%; }
+  .delay-print-report .dir-col-asn { width: 15%; }
+  .delay-print-report .dir-col-driver { width: 14%; }
+  .delay-print-report .dir-col-truck { width: 11%; }
+  .delay-print-report .dir-col-route { width: 22%; }
+  .delay-print-report .dir-col-type { width: 17%; }
+  .delay-print-report .dir-col-status { width: 11%; }
+
+  .delay-print-report .dir-asn {
+    font-weight: 700;
+  }
+
+  .delay-print-report .dir-incident-detail {
+    padding: 1.5mm 1mm;
+    border-top: 1px solid #d9dee2;
+    color: #59636b;
+    background: #fafbfb;
+    line-height: 1.45;
+  }
+
+  .delay-print-report .dir-incident-detail div + div {
+    margin-top: 0.6mm;
+  }
+
+  .delay-print-report .dir-incident-detail strong {
+    color: #34424a;
+  }
+
+  .delay-print-report .dir-incident-detail span {
+    padding: 0 1mm;
+  }
+
+  .delay-print-report .dir-notes p,
+  .delay-print-report .dir-empty {
+    color: #59636b;
+    font-size: 8pt;
+  }
+
+  .delay-print-report .dir-notes p {
+    margin: 2mm 0 0;
+  }
+
+  .delay-print-report .dir-empty {
+    margin: 6mm 0;
+  }
+
+  .delay-print-report .wpr-audit {
+    margin-top: 4mm;
+    padding-top: 2mm;
+  }
+}

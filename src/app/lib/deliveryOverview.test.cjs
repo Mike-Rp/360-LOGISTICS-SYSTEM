@@ -113,6 +113,22 @@ test('records without trustworthy activity time appear only in All Time', () => 
   assert.equal(totals(overview.buildOverviewBars(active, [], [], 'all', now))['Picked Up'], 1);
 });
 
+test('All Time groups activity by Manila month, retains empty months and undated records', () => {
+  const active = [
+    record('january', 'Assigned', '2026-01-31T15:59:00Z'),
+    record('april', 'In Transit', '2026-04-03T01:00:00Z'),
+    record('undated', 'Picked Up', undefined),
+  ];
+  const completed = [{ ...record('february', 'Delivered', '2026-01-31T16:00:00Z', docs('approved')), completedAt: 'Feb 1, 2026' }];
+  const bars = overview.buildOverviewBars(active, completed, [], 'all', now);
+  assert.deepEqual(bars.map(bar => bar.key), ['2026-01', '2026-02', '2026-03', '2026-04', 'undated']);
+  assert.equal(bars[0].counts.Assigned, 1);
+  assert.equal(bars[1].counts.Completed, 1);
+  assert.equal(bars[2].counts['In Transit'], 0);
+  assert.equal(bars[3].counts['In Transit'], 1);
+  assert.equal(bars[4].counts['Picked Up'], 1);
+});
+
 test('status photo evidence can date a workflow change when its notification is missing', () => {
   const active = [{
     ...record('picked', 'Picked Up', '2026-10-15T01:00:00Z'),

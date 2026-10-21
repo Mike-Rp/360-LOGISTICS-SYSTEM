@@ -1,0 +1,84 @@
+@media print {
+  .fleet-utilization-print-report .fdu-summary th,
+  .fleet-utilization-print-report .fdu-summary td {
+    width: 20%;
+  }
+
+  .fleet-utilization-print-report .fdu-summary th {
+    font-size: 7.5pt;
+  }
+
+  .fleet-utilization-print-report .fdu-summary td {
+    font-size: 16pt;
+  }
+
+  .fleet-utilization-print-report .fdu-summary-section,
+  .fleet-utilization-print-report .fdu-empty,
+  .fleet-utilization-print-report .fdu-table thead {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .fleet-utilization-print-report .fdu-table {
+    font-size: 7.3pt;
+  }
+
+  .fleet-utilization-print-report .fdu-table thead {
+    display: table-header-group;
+  }
+
+  .fleet-utilization-print-report .fdu-table tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .fleet-utilization-print-report .fdu-table th,
+  .fleet-utilization-print-report .fdu-table td {
+    padding: 1.5mm 1mm;
+    overflow-wrap: anywhere;
+  }
+
+  .fleet-utilization-print-report .fdu-identity {
+    font-weight: 700;
+  }
+
+  .fleet-utilization-print-report .fdu-truck-plate { width: 13%; }
+  .fleet-utilization-print-report .fdu-truck-class { width: 13%; }
+  .fleet-utilization-print-report .fdu-truck-assigned { width: 9%; }
+  .fleet-utilization-print-report .fdu-truck-completed { width: 10%; }
+  .fleet-utilization-print-report .fdu-truck-cancelled { width: 9%; }
+  .fleet-utilization-print-report .fdu-truck-rate { width: 9%; }
+  .fleet-utilization-print-report .fdu-truck-driver { width: 24%; }
+  .fleet-utilization-print-report .fdu-truck-date { width: 13%; }
+
+  .fleet-utilization-print-report .fdu-driver-name { width: 20%; }
+  .fleet-utilization-print-report .fdu-driver-assigned { width: 8%; }
+  .fleet-utilization-print-report .fdu-driver-completed { width: 10%; }
+  .fleet-utilization-print-report .fdu-driver-cancelled { width: 10%; }
+  .fleet-utilization-print-report .fdu-driver-rate { width: 9%; }
+  .fleet-utilization-print-report .fdu-driver-truck { width: 13%; }
+  .fleet-utilization-print-report .fdu-driver-route { width: 20%; }
+  .fleet-utilization-print-report .fdu-driver-date { width: 10%; }
+
+  .fleet-utilization-print-report .fdu-empty {
+    margin: 2mm 0 0;
+    color: #59636b;
+    font-size: 8pt;
+  }
+
+  .fleet-utilization-print-report .fdu-notes {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .fleet-utilization-print-report .fdu-notes p {
+    margin: 2mm 0 0;
+    color: #59636b;
+    font-size: 7.5pt;
+  }
+
+  .fleet-utilization-print-report .wpr-audit {
+    margin-top: 4mm;
+    padding-top: 2mm;
+  }
+}

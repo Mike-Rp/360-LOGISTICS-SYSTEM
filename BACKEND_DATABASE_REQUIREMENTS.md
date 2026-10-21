@@ -932,3 +932,69 @@ invitation where the CSR chooses the initial password. Keep that work in this
 entry rather than adding a duplicate requirement.
 
 ---
+
+## [REQ-007] Persistent verification for generated reports
+
+**Status:** Pending
+
+**Area:** Reports / formal Print-PDF output
+
+**Requested change:** Give a generated report a real persistent Report ID and a QR
+link to a verification page that can confirm its type, period, generator, and
+generation time.
+
+**Current limitation:** `Reports.tsx` builds previews and CSV downloads from
+current assignment data and uses browser `window.print()` for PDF. It does not
+save a generated-report record, assign a Report ID, or expose a verification
+route. Its Weekly preview currently includes all active and completed
+assignments, without a weekly date filter, so a seven-day reporting period
+cannot be asserted from the present query.
+
+**Required backend/data support:** Persist an immutable issued-report record
+with `report_id`, `report_type`, `generated_by_user_id`, `generated_by_name`,
+`generated_at`, `report_period_start`, and `report_period_end`. Define what
+report snapshot or digest is verified so later assignment edits do not make an
+old PDF appear to describe current data. Add an authorized issuance endpoint
+and a verification lookup/route that returns only safe public metadata. Create
+the QR only after a record has been issued successfully. Define the Weekly
+date-range selection/inclusion rule before storing a weekly period.
+
+**Migration required:** Yes, once the design is approved. No SQL or backend
+change is included in the local print-layout task.
+
+**Approval:** Pending. Do not infer backend approval from the UI request.
+
+---
+
+## [REQ-008] Incident resolution and measured delay data for reports
+
+**Status:** Pending
+
+**Area:** Delay & Issues Report / Driver incident records
+
+**Requested change:** Show a trustworthy incident resolution time, measured
+delay duration, and complete issue history in the operational report.
+
+**Current limitation:** `public.delay_reports` stores only `assignment_id`,
+`type` (`pickup` or `delivery`), `reason`, and a text `reported_at` supplied by
+the Driver. The current Driver value omits the year and timezone. There is no
+incident-level `resolved_at`, measured delay duration, or explicit resolution
+state. The report's existing Resolved/Ongoing labels use whether the containing
+assignment is completed, which is not proof of when the incident was resolved.
+The separate `Failed / Issue` assignment reason is not a `delay_reports` row
+and has no incident timestamp in this model.
+
+**Required backend/data support:** Define incident-level resolution semantics
+and persist a server-trusted report timestamp and resolution timestamp. Record
+the actual measured delay duration or define the persisted timestamps/events
+from which it can be calculated. If `Failed / Issue` events belong in this
+report, define how they are persisted and identified alongside delay reports.
+Preserve historical text timestamps without inventing missing year or duration.
+
+**Migration required:** Yes, if these fields and the unified incident history
+are approved. No schema or backend changes are included in the current local
+report UI task.
+
+**Approval:** Pending. Do not infer backend approval from the UI request.
+
+---

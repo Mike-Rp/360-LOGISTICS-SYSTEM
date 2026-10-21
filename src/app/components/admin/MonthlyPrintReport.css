@@ -1,0 +1,89 @@
+@media print {
+  .monthly-print-report .mds-summary-secondary {
+    margin-top: 2mm;
+  }
+
+  .monthly-print-report .mds-summary-secondary th,
+  .monthly-print-report .mds-summary-secondary td {
+    width: 33.333%;
+  }
+
+  .monthly-print-report .mds-activity p {
+    margin: 0 0 2mm;
+    color: #59636b;
+    font-size: 8pt;
+  }
+
+  .monthly-print-report .mds-activity th:first-child,
+  .monthly-print-report .mds-activity td:first-child {
+    width: 19%;
+  }
+
+  .monthly-print-report .mds-activity th:last-child,
+  .monthly-print-report .mds-activity td:last-child {
+    width: 13%;
+    text-align: right;
+  }
+
+  .monthly-print-report .mds-activity td {
+    padding-top: 1.2mm;
+    padding-bottom: 1.2mm;
+  }
+
+  .monthly-print-report .mds-bar-track {
+    display: block;
+    height: 2.5mm;
+    background: #f3f5f6;
+  }
+
+  .monthly-print-report .mds-bar {
+    display: block;
+    height: 100%;
+    background: #238a4a;
+  }
+
+  .monthly-print-report .mds-breakdown {
+    font-size: 7.5pt;
+  }
+
+  .monthly-print-report .mds-breakdown h2 span {
+    margin-left: 2mm;
+    color: #59636b;
+    font-size: 8pt;
+    font-weight: 400;
+    letter-spacing: normal;
+    text-transform: none;
+  }
+
+  .monthly-print-report .mds-breakdown thead {
+    display: table-header-group;
+  }
+
+  .monthly-print-report .mds-breakdown tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .monthly-print-report .mds-breakdown th,
+  .monthly-print-report .mds-breakdown td {
+    padding-left: 1mm;
+    padding-right: 1mm;
+    overflow-wrap: anywhere;
+  }
+
+  .monthly-print-report .mds-breakdown th:first-child,
+  .monthly-print-report .mds-breakdown td:first-child {
+    width: 20%;
+  }
+
+  .monthly-print-report .mds-activity,
+  .monthly-print-report .mds-summary {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .monthly-print-report .wpr-audit {
+    margin-top: 4mm;
+    padding-top: 2mm;
+  }
+}

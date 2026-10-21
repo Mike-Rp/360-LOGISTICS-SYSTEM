@@ -87,9 +87,32 @@ export function buildOverviewBars(
 ): OverviewBar[] {
   const items = getOverviewItems(assignments, completed, cancelled, notifications, activityLog);
   if (period === 'all') {
-    const bar = makeBar('all', 'All', 'time', 'All time');
-    items.forEach(item => { bar.counts[item.status] += 1; });
-    return [bar];
+    const dated = items.flatMap(item => item.activityAt === null ? [] : [{
+      date: manilaParts(new Date(item.activityAt)), status: item.status,
+    }]);
+    const monthKeys = dated.map(item => `${item.date.year}-${String(item.date.month).padStart(2, '0')}`).sort();
+    const bars: OverviewBar[] = [];
+    if (monthKeys.length) {
+      const first = new Date(`${monthKeys[0]}-01T00:00:00Z`);
+      const last = monthKeys[monthKeys.length - 1];
+      for (const cursor = new Date(first); cursor.toISOString().slice(0, 7) <= last; cursor.setUTCMonth(cursor.getUTCMonth() + 1)) {
+        const year = cursor.getUTCFullYear();
+        const month = cursor.getUTCMonth() + 1;
+        const name = MONTH_NAMES[month - 1];
+        bars.push(makeBar(`${year}-${String(month).padStart(2, '0')}`, name, String(year), `${name} ${year}`));
+      }
+    }
+    const byKey = new Map(bars.map(bar => [bar.key, bar]));
+    for (const item of dated) {
+      byKey.get(`${item.date.year}-${String(item.date.month).padStart(2, '0')}`)!.counts[item.status] += 1;
+    }
+    const undated = items.filter(item => item.activityAt === null);
+    if (undated.length) {
+      const bar = makeBar('undated', 'No', 'date', 'Undated activity');
+      undated.forEach(item => { bar.counts[item.status] += 1; });
+      bars.push(bar);
+    }
+    return bars.length ? bars : [makeBar('empty', 'All', 'time', 'All time')];
   }
 
   const current = manilaParts(now);
