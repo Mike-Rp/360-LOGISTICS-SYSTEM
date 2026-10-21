@@ -18,4 +18,5 @@ test('workspace audit actions target the existing shipment, document, and summar
     '/documents?assignment=ASN73945&document=Proof+of+Delivery');
   assert.equal(adminHref('Deliveries', { assignmentId: 'ASN43090', summary: true }, 'completed'),
     '/deliveries?assignment=ASN43090&summary=true&tab=completed');
+  assert.equal(adminHref('Deliveries', undefined, 'completed'), '/deliveries?tab=completed');
 });

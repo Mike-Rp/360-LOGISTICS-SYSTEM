@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import {
-  User, ChevronDown, Bell, BellOff, CalendarDays, Search, ArrowLeft, Settings, HelpCircle, LogOut,
+  User, ChevronDown, Bell, CalendarDays, Search, ArrowLeft, Settings, HelpCircle, LogOut,
   Truck, CheckCheck, X, Users,
   FileText, AlertTriangle, AlertCircle,
 } from 'lucide-react';
@@ -17,7 +17,6 @@ interface Props {
   onLogout: () => void;
   onOpenSettings: () => void;
   onOpenHelp: () => void;
-  notifEnabled: boolean;
   isOperationManager: boolean;
   adminEmail?: string | null;
   adminName?: string;
@@ -49,7 +48,7 @@ function fmtTimestamp(ts: string): string {
 }
 
 export default function Header({
-  notifications, setNotifications, onOpenNotification, onLogout, onOpenSettings, onOpenHelp, notifEnabled,
+  notifications, setNotifications, onOpenNotification, onLogout, onOpenSettings, onOpenHelp,
   isOperationManager, adminEmail, adminName, onOpenWorkspaceSettings,
   searchPlaceholder, searchValue, onSearchChange,
 }: Props) {
@@ -151,14 +150,11 @@ export default function Header({
           <PopoverTrigger asChild>
             <button
               onClick={() => setAccountOpen(false)}
-              title={notifEnabled ? 'Notifications' : 'Notifications muted'}
+              title="Notifications"
               className="relative w-9 h-9 shrink-0 flex items-center justify-center rounded-full hover:bg-accent transition-colors"
             >
-              {notifEnabled
-                ? <Bell className="w-5 h-5 text-muted-foreground" />
-                : <BellOff className="w-5 h-5 text-muted-foreground/50" />
-              }
-              {notifEnabled && unreadCount > 0 && (
+              <Bell className="w-5 h-5 text-muted-foreground" />
+              {unreadCount > 0 && (
                 <span className="absolute -top-1 -right-1 min-w-[20px] h-[20px] bg-green-500 text-white text-[12px] font-bold rounded-full flex items-center justify-center px-1 leading-none">
                   {unreadCount > 99 ? '99+' : unreadCount}
                 </span>

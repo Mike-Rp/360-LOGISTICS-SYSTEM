@@ -29,7 +29,7 @@ interface Props {
   activityLog: AdminActivityEntry[];
   adminName?: string;
   isViewOnly: boolean;
-  onNavigate: (page: Page) => void;
+  onNavigate: (page: Page, tab?: 'completed') => void;
   onDispatch: () => void;     // opens Monitor's existing Dispatch Truck form
 }
 

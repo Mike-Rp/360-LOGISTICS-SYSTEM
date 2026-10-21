@@ -7,7 +7,7 @@ import CountUp from './CountUp';
 interface Props {
   assignments: Assignment[];
   completed: CompletedTask[];
-  onNavigate: (page: 'Deliveries' | 'Documents') => void;
+  onNavigate: (page: 'Deliveries' | 'Documents', tab?: 'completed') => void;
 }
 
 /* Same rule as KPICards.tsx countDelayed() — copied unchanged so the number matches
@@ -65,7 +65,7 @@ export default function DashboardStatCards({ assignments, completed, onNavigate 
     {
       label: 'Completed Deliveries', value: completed.length, icon: CheckCircle,
       detail: completed.length > 0 ? `All time · ${countCompletedToday(completed)} today` : 'No completions yet',
-      headerLink: () => onNavigate('Deliveries'),
+      headerLink: () => onNavigate('Deliveries', 'completed'),
     },
     {
       label: 'Delayed Deliveries', value: delayed, icon: AlertTriangle, alert: delayed > 0,
@@ -86,7 +86,7 @@ export default function DashboardStatCards({ assignments, completed, onNavigate 
             <Icon className={`w-4 h-4 flex-shrink-0 ${alert ? 'text-amber-600' : 'text-foreground'}`} />
             <p className="text-sm font-medium text-foreground">{label}</p>
             {headerLink && (
-              <a href={adminHref('Deliveries')} onClick={(event) => followAdminLink(event, headerLink)}
+              <a href={adminHref('Deliveries', undefined, 'completed')} onClick={(event) => followAdminLink(event, headerLink)}
                 className="ml-auto inline-flex shrink-0 items-center gap-1 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
                 View all <ArrowRight className="w-3.5 h-3.5" />
               </a>

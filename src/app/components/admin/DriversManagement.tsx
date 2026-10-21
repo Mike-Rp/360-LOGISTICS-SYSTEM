@@ -2146,6 +2146,7 @@ export default function DriversManagement({
   };
 
   const sq = search.trim().toLowerCase();
+  const focusedAssignmentId = notificationTarget?.assignmentId ?? null;
   /* The assignment is the source of truth for Dispatch. A missing or archived
      master record must not hide an otherwise active shipment that Deliveries
      still shows; the card can render its saved driver name and truck plate. */
@@ -2156,16 +2157,31 @@ export default function DriversManagement({
   const matchingClassifications = classificationFilter
     ? reviewAssignments.filter((a) => trucks.find((t) => t.id === a.truckId)?.classification === classificationFilter)
     : reviewAssignments;
-  const visibleAssignments = sortNewestFirst(sq
+  const normalVisibleAssignments = sortNewestFirst(sq
     ? matchingClassifications.filter((a) =>
         [a.truckPlate, a.id, a.driverName, a.destination, a.destinationArea ?? '', a.company, a.taskStatus].some((f) =>
           f.toLowerCase().includes(sq)
         )
       )
     : matchingClassifications, (assignment) => assignment.id);
+  const visibleAssignments = focusedAssignmentId
+    ? assignments.filter((assignment) => assignment.id === focusedAssignmentId)
+    : normalVisibleAssignments;
   const activePage = usePagination(visibleAssignments, MONITOR_PAGE_SIZE);
+  const normalPage = useRef(activePage.page);
+  const previousFocusId = useRef(focusedAssignmentId);
+  useLayoutEffect(() => {
+    if (!focusedAssignmentId) {
+      if (previousFocusId.current) activePage.setPage(normalPage.current);
+      else normalPage.current = activePage.page;
+    }
+    previousFocusId.current = focusedAssignmentId;
+  }, [focusedAssignmentId, activePage.page, activePage.setPage]);
   const newAssignmentId = useLocalAddedHighlight('assignment', () => activePage.setPage(1));
-  useLayoutEffect(() => { activePage.setPage(1); }, [search, reviewQueueOpen, activePage.setPage]);
+  useLayoutEffect(() => {
+    if (focusedAssignmentId) normalPage.current = 1;
+    activePage.setPage(1);
+  }, [search, reviewQueueOpen, activePage.setPage]);
   useEffect(() => {
     if (!notificationTarget) return;
     setReviewTarget(null);
@@ -2182,12 +2198,16 @@ export default function DriversManagement({
       if (notificationTarget.review) setReviewTarget({ assignmentId: assignment.id, docType: notificationTarget.docType });
       if (notificationTarget.activityKey) setActivityTarget({ assignmentId: assignment.id, key: notificationTarget.activityKey });
       setCompletedOpen(false);
-      setClassificationFilter('');
-      if (search) onSearchChange('');
       activePage.setPage(1);
     }
-    onNotificationTargetHandled?.();
   }, [notificationTarget]);
+  const clearAssignmentFocus = () => {
+    setViewDetailsId(null);
+    setReviewTarget(null);
+    setActivityTarget(null);
+    setMissingTarget(false);
+    onNotificationTargetHandled?.();
+  };
   const today = new Date();
   const yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
@@ -2203,7 +2223,7 @@ export default function DriversManagement({
     setCompletedOpen(false);
     pushAdminNavigation('Deliveries', { assignmentId }, 'completed');
   };
-  const activePageArea = useStablePageHeight(activePage.page, visibleAssignments.length, MONITOR_PAGE_SIZE, `${search}|${classificationFilter}`);
+  const activePageArea = useStablePageHeight(activePage.page, visibleAssignments.length, MONITOR_PAGE_SIZE, `${search}|${classificationFilter}|${focusedAssignmentId ?? ''}`);
 
   const viewDetailsAssign = viewDetailsId
     ? assignments.find((a) => a.id === viewDetailsId) ?? completed.find((a) => a.id === viewDetailsId)
@@ -2365,12 +2385,21 @@ export default function DriversManagement({
         </div>
       </div>
 
-      {reviewQueueOpen && (
+      {focusedAssignmentId && (
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+          <p className="text-muted-foreground">Showing assignment <span className="font-semibold text-foreground">{focusedAssignmentId}</span></p>
+          <button type="button" onClick={clearAssignmentFocus}
+            className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-border bg-white px-2.5 text-xs font-medium text-foreground hover:bg-muted/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+            <X className="h-3.5 w-3.5" aria-hidden="true" /> Show all assignments
+          </button>
+        </div>
+      )}
+      {reviewQueueOpen && !focusedAssignmentId && (
         <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
           <p className="text-muted-foreground">{reviewAssignments.length} assignment{reviewAssignments.length === 1 ? '' : 's'} requiring review</p>
           <button type="button" onClick={() => pushAdminNavigation('Monitor')}
-            className="min-h-10 text-primary hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
-            Show all assignments
+            className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-border bg-white px-2.5 text-xs font-medium text-foreground hover:bg-muted/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+            <X className="h-3.5 w-3.5" aria-hidden="true" /> Clear review filter
           </button>
         </div>
       )}

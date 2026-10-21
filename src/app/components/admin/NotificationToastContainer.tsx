@@ -108,6 +108,10 @@ export default function NotificationToastContainer({ notifications, ready, enabl
   const [queue, setQueue] = useState<NotificationToastQueue>(EMPTY_QUEUE);
 
   useEffect(() => {
+    if (!enabled) setQueue(EMPTY_QUEUE);
+  }, [enabled]);
+
+  useEffect(() => {
     if (!ready) {
       initialized.current = false;
       knownIds.current.clear();

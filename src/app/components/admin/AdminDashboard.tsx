@@ -135,8 +135,8 @@ export default function AdminDashboard({
     };
   }, []);
 
-  const navigateToModule = (page: NavItem) => {
-    pushAdminNavigation(page);
+  const navigateToModule = (page: NavItem, tab?: 'completed') => {
+    pushAdminNavigation(page, undefined, tab);
     setActiveNav(page);
   };
 
@@ -192,7 +192,7 @@ export default function AdminDashboard({
 
   /* Display name is stored the same way SettingsPanel's profile section already
      persists it — read once at mount, this component remounts on login/logout. */
-  const adminName = localStorage.getItem('360_display_name') ?? undefined;
+  const [adminName, setAdminName] = useState(() => localStorage.getItem('360_display_name') ?? undefined);
 
   /* ── Notifications preference (persisted in localStorage) ── */
   const [notifEnabled, setNotifEnabled] = useState(
@@ -303,7 +303,6 @@ export default function AdminDashboard({
           onLogout={onLogout}
           onOpenSettings={() => setSettingsOpen(true)}
           onOpenHelp={() => setHelpOpen(true)}
-          notifEnabled={notifEnabled}
           isOperationManager={isOperationManager}
           adminEmail={adminEmail}
           adminName={adminName}
@@ -328,6 +327,9 @@ export default function AdminDashboard({
       <SettingsPanel
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
+        accountName={adminName}
+        accountEmail={adminEmail}
+        onProfileSaved={setAdminName}
         notifEnabled={notifEnabled}
         setNotifEnabled={setNotifEnabled}
         soundEnabled={soundEnabled}

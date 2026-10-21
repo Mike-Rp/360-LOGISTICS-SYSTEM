@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  X, User, KeyRound, Bell, BellOff, Eye, EyeOff,
-  CheckCircle2, Camera, Pencil,
+  X, KeyRound, Bell, Eye, EyeOff,
+  CheckCircle2, Camera, Pencil, MoreHorizontal, ChevronDown, Trash2,
 } from 'lucide-react';
 import { changeOwnPassword, PasswordError } from '../../lib/db';
 import { playNotificationSound } from '../../lib/notificationSound';
 import { useModalFocus } from './useModalFocus';
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '../ui/dropdown-menu';
 
 /* ── Section separator ── */
 const Divider = ({ label }: { label: string }) => (
@@ -17,9 +18,9 @@ const Divider = ({ label }: { label: string }) => (
 );
 
 /* ── Field row ── */
-const Field = ({ label, children }: { label: string; children: React.ReactNode }) => (
+const Field = ({ label, htmlFor, children }: { label: string; htmlFor?: string; children: React.ReactNode }) => (
   <div className="space-y-1.5">
-    <label className="text-xs font-medium text-muted-foreground">{label}</label>
+    <label htmlFor={htmlFor} className="text-xs font-medium text-muted-foreground">{label}</label>
     {children}
   </div>
 );
@@ -30,13 +31,17 @@ const inputCls = (err?: boolean) =>
 interface Props {
   open: boolean;
   onClose: () => void;
+  accountName?: string;
+  accountEmail: string | null;
+  onProfileSaved: (name: string) => void;
   notifEnabled: boolean;
   setNotifEnabled: (v: boolean) => void;
   soundEnabled: boolean;
   setSoundEnabled: (v: boolean) => void;
 }
 
-export default function SettingsPanel({ open, onClose, notifEnabled, setNotifEnabled, soundEnabled, setSoundEnabled }: Props) {
+export default function SettingsPanel({ open, onClose, accountName, accountEmail, onProfileSaved, notifEnabled, setNotifEnabled, soundEnabled, setSoundEnabled }: Props) {
+  const [openSection, setOpenSection] = useState<'security' | 'notifications' | null>(null);
   /* ── Persist notifications preference ── */
   useEffect(() => {
     localStorage.setItem('360_notif_enabled', String(notifEnabled));
@@ -44,7 +49,7 @@ export default function SettingsPanel({ open, onClose, notifEnabled, setNotifEna
 
   /* ── Profile state (persisted in localStorage) ── */
   const [savedProfile, setSavedProfile] = useState(() => ({
-    name: localStorage.getItem('360_display_name') ?? 'Admin User',
+    name: localStorage.getItem('360_display_name') ?? accountName ?? '',
     avatar: localStorage.getItem('360_avatar'),
   }));
   const [displayName, setDisplayName]   = useState(savedProfile.name);
@@ -71,7 +76,7 @@ export default function SettingsPanel({ open, onClose, notifEnabled, setNotifEna
   useEffect(() => {
     if (open) {
       const profile = {
-        name: localStorage.getItem('360_display_name') ?? 'Admin User',
+        name: localStorage.getItem('360_display_name') ?? accountName ?? '',
         avatar: localStorage.getItem('360_avatar'),
       };
       setSavedProfile(profile);
@@ -80,13 +85,14 @@ export default function SettingsPanel({ open, onClose, notifEnabled, setNotifEna
       setAvatarUrl(profile.avatar);
       setEditingName(false);
       setPhotoBusy(false);
+      setOpenSection(null);
       clearProfileFeedback();
     }
     return () => {
       photoRequest.current += 1;
       if (savedTimer.current !== null) clearTimeout(savedTimer.current);
     };
-  }, [open]);
+  }, [open, accountEmail]);
 
   /* Focus moves into the modal on open, Tab stays inside, returns to the opener on close */
   const modalRef = useRef<HTMLDivElement>(null);
@@ -105,7 +111,7 @@ export default function SettingsPanel({ open, onClose, notifEnabled, setNotifEna
 
   /* ── Close on Esc ── */
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented) onClose(); };
     if (open) document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
   }, [open, onClose]);
@@ -118,16 +124,14 @@ export default function SettingsPanel({ open, onClose, notifEnabled, setNotifEna
     return () => { document.body.style.overflow = previousOverflow; };
   }, [open]);
 
-  const handleSaveName = () => {
-    if (!nameInput.trim()) return;
-    const trimmed = nameInput.trim();
-    setDisplayName(trimmed);
-    setNameInput(trimmed);
-    setEditingName(false);
-  };
-
   const profileName = editingName ? nameInput.trim() : displayName;
   const profileDirty = profileName !== savedProfile.name || avatarUrl !== savedProfile.avatar;
+  const photoDirty = avatarUrl !== savedProfile.avatar;
+  const cancelNameEdit = () => {
+    setNameInput(savedProfile.name);
+    setEditingName(false);
+    clearProfileFeedback();
+  };
 
   const handleSaveProfile = () => {
     if (!profileDirty || photoBusy) return;
@@ -157,6 +161,7 @@ export default function SettingsPanel({ open, onClose, notifEnabled, setNotifEna
       return;
     }
     setSavedProfile({ name: profileName, avatar: avatarUrl });
+    onProfileSaved(profileName);
     setDisplayName(profileName);
     setNameInput(profileName);
     setEditingName(false);
@@ -244,145 +249,115 @@ export default function SettingsPanel({ open, onClose, notifEnabled, setNotifEna
       />
 
       {/* Centred modal — the wrapper ignores clicks so they fall through to the backdrop */}
-      <div className="absolute inset-0 z-10 flex items-center justify-center p-3 sm:p-6 pointer-events-none">
+      <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none sm:p-6">
       <div
         ref={modalRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-title"
-        className="pointer-events-auto w-full max-w-[560px] h-[calc(100dvh-24px)] sm:h-auto sm:max-h-[85vh] bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+        className="pointer-events-auto flex h-[100dvh] w-full flex-col overflow-hidden bg-white shadow-2xl sm:h-[min(85dvh,720px)] sm:max-w-[760px] sm:rounded-2xl"
       >
 
         {/* ── Panel header ── */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-gradient-to-r from-[#0d9488]/8 to-transparent flex-shrink-0">
+        <div className="flex shrink-0 items-center justify-between border-b border-border bg-white px-4 py-4 sm:px-6">
           <div className="flex min-w-0 items-center gap-3">
             <div className="w-8 h-8 flex-shrink-0 rounded-lg bg-[#0d9488]/15 flex items-center justify-center">
               <Pencil className="w-4 h-4 text-[#0d9488]" />
             </div>
             <div className="min-w-0">
               <h2 id="settings-title" className="text-base font-semibold text-foreground leading-tight">Settings</h2>
-              <p className="text-xs text-muted-foreground">Manage your profile and preferences</p>
+              <p className="text-xs text-muted-foreground">Manage your account settings</p>
             </div>
           </div>
           <button
             onClick={onClose}
             aria-label="Close settings"
-            className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+            className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* ── Scrollable body ── */}
-        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 sm:px-6 py-5 space-y-7">
+        {/* One scroll area keeps the header accessible on small screens. */}
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] sm:px-8 sm:py-7">
 
           {/* ── Profile ── */}
           <section>
             <Divider label="Profile" />
 
-            {/* Avatar */}
-            <div className="flex items-center gap-4 mb-5">
-              <div className="relative group flex-shrink-0">
-                <div className="w-16 h-16 rounded-full overflow-hidden bg-gradient-to-br from-[#0d9488] to-[#059669] flex items-center justify-center shadow-md">
+            <div className="relative mb-5 flex min-w-0 flex-col gap-4 rounded-2xl border border-border bg-white p-5 pr-16 sm:flex-row sm:items-center sm:gap-6 sm:p-6 sm:pr-16">
+              <div className="flex-shrink-0">
+                <div className="flex h-28 w-28 items-center justify-center overflow-hidden rounded-[18px] border border-green-900/10 bg-[#03624c] shadow-sm sm:h-32 sm:w-32">
                   {avatarUrl ? (
-                    <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+                    <img src={avatarUrl} alt="Profile" className="h-full w-full object-cover" />
                   ) : (
-                    <span className="text-white text-lg font-bold tracking-wide">{initials}</span>
+                    <span className="text-3xl font-bold tracking-wide text-white">{initials}</span>
                   )}
                 </div>
-                <button
-                  onClick={() => fileRef.current?.click()}
-                  className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-primary transition-opacity flex items-center justify-center"
-                  title="Change photo"
-                >
-                  <Camera className="w-5 h-5 text-white" />
-                </button>
                 <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
               </div>
               <div className="min-w-0">
-                <p className="font-semibold text-foreground leading-tight truncate">{profileName || savedProfile.name}</p>
-                <p className="text-xs text-muted-foreground mt-0.5 truncate">admin@360logistics.com</p>
-                <button
-                  onClick={() => fileRef.current?.click()}
-                  className="mt-1.5 min-h-9 text-xs text-primary hover:text-primary/80 font-medium flex items-center gap-1 transition-colors focus-visible:outline-2 focus-visible:outline-primary"
-                >
-                  <Camera className="w-3 h-3" /> Change photo
-                </button>
-                {avatarUrl && (
-                  <button
-                    onClick={() => { photoRequest.current += 1; setPhotoBusy(false); clearProfileFeedback(); setAvatarUrl(null); }}
-                    className="min-h-9 text-xs text-muted-foreground hover:text-foreground transition-colors focus-visible:outline-2 focus-visible:outline-primary"
-                  >
-                    Remove photo
-                  </button>
-                )}
+                <p className="break-words text-2xl font-semibold leading-tight text-foreground sm:text-3xl">{displayName || savedProfile.name || 'Account'}</p>
+                <p className="mt-2 break-all text-base text-muted-foreground">{accountEmail ?? 'Email unavailable'}</p>
               </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button type="button" aria-label="Profile actions" className="absolute right-4 top-4 flex h-11 w-11 items-center justify-center rounded-lg border border-border text-foreground transition-colors hover:border-green-700/40 hover:bg-green-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+                    <MoreHorizontal className="h-5 w-5" aria-hidden="true" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="z-[70] min-w-44 rounded-lg bg-white p-1 shadow-lg">
+                  <DropdownMenuItem onSelect={() => fileRef.current?.click()}><Camera aria-hidden="true" />Change Photo</DropdownMenuItem>
+                  <DropdownMenuItem disabled={!avatarUrl} onSelect={() => { photoRequest.current += 1; setPhotoBusy(false); clearProfileFeedback(); setAvatarUrl(null); }}><Trash2 aria-hidden="true" />Remove Photo</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => { clearProfileFeedback(); setNameInput(displayName); setEditingName(true); }}><Pencil aria-hidden="true" />Edit Display Name</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
 
-            {/* Display name */}
-            <Field label="Display Name">
-              {editingName ? (
-                <div className="flex flex-wrap sm:flex-nowrap gap-2">
+            {editingName && <div className="rounded-xl border border-green-700/20 bg-green-50/30 p-4 sm:p-5">
+              <Field label="Display Name" htmlFor="settings-display-name">
+                <div className="mt-2">
                   <input
+                    id="settings-display-name"
                     autoFocus
                     value={nameInput}
                     onChange={(e) => { clearProfileFeedback(); setNameInput(e.target.value); }}
-                    onKeyDown={(e) => { if (e.key === 'Enter') handleSaveName(); if (e.key === 'Escape') { setEditingName(false); setNameInput(displayName); } }}
-                    className={`${inputCls()} min-w-0 flex-1 basis-full sm:basis-auto`}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleSaveProfile(); }}
+                    className={inputCls()}
                     placeholder="Your display name"
                   />
-                  <button
-                    onClick={handleSaveName}
-                    className="flex-shrink-0 px-3.5 py-2.5 bg-primary text-white text-xs font-medium rounded-xl hover:bg-primary/90 transition-colors"
-                  >
-                    Done
-                  </button>
-                  <button
-                    onClick={() => { setEditingName(false); setNameInput(displayName); }}
-                    aria-label="Cancel name edit"
-                    className="flex-shrink-0 px-3 py-2.5 border border-border text-xs text-muted-foreground rounded-xl hover:bg-accent transition-colors"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
                 </div>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <div className="min-w-0 flex-1 break-words px-3.5 py-2.5 bg-[#f9fafb] border border-border rounded-xl text-sm text-foreground">
-                    {displayName}
-                  </div>
-                  <button
-                    onClick={() => { setEditingName(true); setNameInput(displayName); }}
-                    className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2.5 border border-border text-xs text-muted-foreground rounded-xl hover:bg-accent hover:text-foreground transition-colors"
-                  >
-                    <Pencil className="w-3.5 h-3.5" /> Edit
-                  </button>
-                </div>
-              )}
-            </Field>
+              </Field>
+              <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <button type="button" onClick={cancelNameEdit} className="min-h-11 rounded-xl border border-border px-4 text-sm font-medium text-foreground hover:bg-muted/40 focus-visible:outline-2 focus-visible:outline-primary">Cancel</button>
+                <button type="button" onClick={handleSaveProfile} disabled={!profileDirty || photoBusy} className="min-h-11 rounded-xl bg-primary px-4 text-sm font-medium text-white hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Save Changes</button>
+              </div>
+            </div>}
             {profileError && <p role="alert" className="mt-2 text-xs text-red-500 break-words">{profileError}</p>}
-            <button
-              onClick={handleSaveProfile}
-              disabled={!profileDirty || photoBusy}
-              aria-busy={photoBusy}
-              className="mt-4 grid min-h-11 w-36 items-center justify-items-center px-4 py-2.5 bg-primary text-white text-sm font-medium rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-            >
-              <span aria-hidden={profileSaved} className={`col-start-1 row-start-1 transition-opacity duration-150 motion-reduce:transition-none ${profileSaved ? 'opacity-0' : 'opacity-100'}`}>Save Changes</span>
-              <span aria-hidden={!profileSaved} className={`col-start-1 row-start-1 flex items-center gap-1.5 transition-opacity duration-150 motion-reduce:transition-none ${profileSaved ? 'opacity-100' : 'opacity-0'}`}><CheckCircle2 className="w-4 h-4" /> Saved</span>
-            </button>
-            <span className="sr-only" role="status">{profileSaved ? 'Profile saved' : ''}</span>
+            {!editingName && photoDirty && <div className="mt-3 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button type="button" onClick={() => { setAvatarUrl(savedProfile.avatar); clearProfileFeedback(); }} className="min-h-11 rounded-xl border border-border px-4 text-sm font-medium text-foreground hover:bg-muted/40 focus-visible:outline-2 focus-visible:outline-primary">Cancel</button>
+              <button type="button" onClick={handleSaveProfile} disabled={photoBusy} className="min-h-11 rounded-xl bg-primary px-4 text-sm font-medium text-white hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Save Changes</button>
+            </div>}
+            {profileSaved && <p role="status" className="mt-3 flex items-center gap-1.5 text-sm text-green-700"><CheckCircle2 className="h-4 w-4" aria-hidden="true" /> Profile saved</p>}
           </section>
 
           {/* ── Password ── */}
-          <section>
-            <Divider label="Security" />
-            <div className="space-y-3">
-              <Field label="Current Password">
+          <section className={`mt-5 overflow-hidden rounded-xl border bg-white transition-colors motion-reduce:transition-none ${openSection === 'security' ? 'border-green-700/40' : 'border-border'}`}>
+            <button type="button" aria-expanded={openSection === 'security'} aria-controls="settings-security-content" onClick={() => setOpenSection(openSection === 'security' ? null : 'security')}
+              className="flex w-full items-center gap-3 px-4 py-4 text-left hover:bg-green-50/40 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary sm:px-5">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-green-50 text-green-800"><KeyRound className="h-5 w-5" aria-hidden="true" /></span>
+              <span className="min-w-0 flex-1"><span className="block text-sm font-semibold uppercase tracking-wide text-foreground">Security</span><span className="mt-1 block text-sm text-muted-foreground">Manage your password and account security.</span></span>
+              <ChevronDown className={`h-5 w-5 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${openSection === 'security' ? 'rotate-180' : ''}`} aria-hidden="true" />
+            </button>
+            {openSection === 'security' && <div id="settings-security-content" className="space-y-3 border-t border-border px-4 py-5 sm:px-5">
+              <Field label="Current Password" htmlFor="settings-current-password">
                 <div className="relative">
                   <input
+                    id="settings-current-password"
                     type={showCur ? 'text' : 'password'}
                     value={curPass}
                     onChange={(e) => { setCurPass(e.target.value); setPassError(''); }}
-                    placeholder="••••••••"
+                    placeholder="Enter current password"
                     className={`${inputCls(!!passError && !curPass)} pr-12`}
                   />
                   <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => setShowCur((v) => !v)} aria-label={showCur ? 'Hide password' : 'Show password'}
@@ -391,13 +366,14 @@ export default function SettingsPanel({ open, onClose, notifEnabled, setNotifEna
                   </button>
                 </div>
               </Field>
-              <Field label="New Password">
+              <Field label="New Password" htmlFor="settings-new-password">
                 <div className="relative">
                   <input
+                    id="settings-new-password"
                     type={showNew ? 'text' : 'password'}
                     value={newPass}
                     onChange={(e) => { setNewPass(e.target.value); setPassError(''); }}
-                    placeholder="Min. 8 characters"
+                    placeholder="Enter new password"
                     className={`${inputCls(!!passError)} pr-12`}
                   />
                   <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => setShowNew((v) => !v)} aria-label={showNew ? 'Hide password' : 'Show password'}
@@ -406,13 +382,14 @@ export default function SettingsPanel({ open, onClose, notifEnabled, setNotifEna
                   </button>
                 </div>
               </Field>
-              <Field label="Confirm New Password">
+              <Field label="Confirm New Password" htmlFor="settings-confirm-password">
                 <div className="relative">
                   <input
+                    id="settings-confirm-password"
                     type={showConf ? 'text' : 'password'}
                     value={confPass}
                     onChange={(e) => { setConfPass(e.target.value); setPassError(''); }}
-                    placeholder="Repeat new password"
+                    placeholder="Confirm new password"
                     className={`${inputCls(!!passError && confPass !== newPass)} pr-12`}
                   />
                   <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => setShowConf((v) => !v)} aria-label={showConf ? 'Hide password' : 'Show password'}
@@ -430,67 +407,58 @@ export default function SettingsPanel({ open, onClose, notifEnabled, setNotifEna
               <button
                 onClick={handleSavePassword}
                 disabled={passBusy}
-                className="flex items-center gap-2 px-4 py-2.5 bg-primary text-white text-sm font-medium rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-primary sm:w-auto"
               >
                 <KeyRound className="w-4 h-4" /> {passBusy ? 'Updating…' : 'Update Password'}
               </button>
-            </div>
+            </div>}
           </section>
 
           {/* ── Notifications ── */}
-          <section>
-            <Divider label="Preferences" />
-            <div
-              className={`flex items-center justify-between gap-3 py-3 px-4 rounded-xl border transition-colors ${notifEnabled ? 'bg-[#f0fdf9] border-[#99f6e4]' : 'bg-[#f9fafb] border-border'}`}
-            >
-              <div className="flex min-w-0 items-center gap-3">
-                {notifEnabled
-                  ? <Bell className="w-4 h-4 flex-shrink-0 text-[#0d9488]" />
-                  : <BellOff className="w-4 h-4 flex-shrink-0 text-muted-foreground" />
-                }
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-foreground">Enable notifications</p>
-                  <p className="text-xs text-muted-foreground">
-                    {notifEnabled ? 'Driver updates, document alerts' : 'Notifications are muted'}
-                  </p>
-                </div>
+          <section className={`mt-3 overflow-hidden rounded-xl border bg-white transition-colors motion-reduce:transition-none ${openSection === 'notifications' ? 'border-green-700/40' : 'border-border'}`}>
+            <button type="button" aria-expanded={openSection === 'notifications'} aria-controls="settings-notifications-content" onClick={() => setOpenSection(openSection === 'notifications' ? null : 'notifications')}
+              className="flex w-full items-center gap-3 px-4 py-4 text-left hover:bg-green-50/40 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary sm:px-5">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-green-50 text-green-800"><Bell className="h-5 w-5" aria-hidden="true" /></span>
+              <span className="min-w-0 flex-1"><span className="block text-sm font-semibold uppercase tracking-wide text-foreground">Notifications</span><span className="mt-1 block text-sm text-muted-foreground">Manage pop-up and sound notifications.</span></span>
+              <ChevronDown className={`h-5 w-5 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${openSection === 'notifications' ? 'rotate-180' : ''}`} aria-hidden="true" />
+            </button>
+            {openSection === 'notifications' && <div id="settings-notifications-content" className="border-t border-border px-4 pb-5 sm:px-5">
+            <div className="flex items-center justify-between gap-3 border-b border-border py-4">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Pop-up Notifications</p>
+                <p className="mt-1 text-sm text-foreground">Show an on-screen pop-up when a new important notification arrives.</p>
               </div>
-              <button
+              <button type="button" aria-label="Pop-up Notifications"
                 onClick={() => setNotifEnabled(!notifEnabled)}
                 role="switch"
                 aria-checked={notifEnabled}
-                className={`relative w-10 h-6 rounded-full transition-colors duration-200 flex-shrink-0 ${notifEnabled ? 'bg-[#0d9488]' : 'bg-gray-300'}`}
+                className="relative flex h-11 w-12 flex-shrink-0 items-center focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
               >
-                <span className={`absolute top-[4px] left-0 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200 ${notifEnabled ? 'translate-x-[20px]' : 'translate-x-[4px]'}`} />
+                <span className={`absolute inset-x-0 top-1/2 h-7 -translate-y-1/2 rounded-full transition-colors ${notifEnabled ? 'bg-green-700' : 'bg-gray-300'}`} />
+                <span className={`absolute left-1 top-1/2 h-5 w-5 -translate-y-1/2 rounded-full bg-white shadow transition-transform duration-200 ${notifEnabled ? 'translate-x-5' : ''}`} />
               </button>
             </div>
-            <div className="mt-4 border-t border-border pt-4">
-              <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">Notifications</p>
+            <div className="pt-4">
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-foreground">Notification Sound</p>
-                  <p className="text-xs text-muted-foreground">Play a sound when a new notification arrives.</p>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Notification Sound</p>
+                  <p className="mt-1 text-sm text-foreground">Play a sound when a new notification arrives.</p>
                 </div>
                 <button type="button" role="switch" aria-label="Notification Sound" aria-checked={soundEnabled}
                   onClick={() => setSoundEnabled(!soundEnabled)}
-                  className={`relative w-10 h-6 rounded-full transition-colors flex-shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0d9488] ${soundEnabled ? 'bg-[#0d9488]' : 'bg-gray-300'}`}>
-                  <span className={`absolute top-[4px] left-0 w-4 h-4 bg-white rounded-full shadow transition-transform ${soundEnabled ? 'translate-x-[20px]' : 'translate-x-[4px]'}`} />
+                  className="relative flex h-11 w-12 flex-shrink-0 items-center focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+                  <span className={`absolute inset-x-0 top-1/2 h-7 -translate-y-1/2 rounded-full transition-colors ${soundEnabled ? 'bg-green-700' : 'bg-gray-300'}`} />
+                  <span className={`absolute left-1 top-1/2 h-5 w-5 -translate-y-1/2 rounded-full bg-white shadow transition-transform ${soundEnabled ? 'translate-x-5' : ''}`} />
                 </button>
               </div>
               <button type="button" onClick={() => { void playNotificationSound(true); }}
-                className="mt-3 min-h-8 rounded-lg border border-border bg-white px-3 text-xs font-medium text-foreground hover:bg-muted/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0d9488]">
+                className="mt-4 min-h-10 rounded-lg border border-border bg-white px-3 text-xs font-medium text-foreground hover:bg-muted/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
                 Test Sound
               </button>
             </div>
+            </div>}
           </section>
 
-        </div>
-
-        {/* ── Footer ── */}
-        <div className="px-6 py-4 border-t border-border bg-muted/20 flex-shrink-0">
-          <p className="text-[12px] text-muted-foreground text-center">
-            Preferences are saved automatically.
-          </p>
         </div>
       </div>
       </div>
