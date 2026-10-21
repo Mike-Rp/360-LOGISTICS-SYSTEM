@@ -1,21 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  X, KeyRound, Bell, Eye, EyeOff,
+  X, KeyRound, Bell, Eye, EyeOff, UserRound,
   CheckCircle2, Camera, Pencil, MoreHorizontal, ChevronDown, Trash2,
 } from 'lucide-react';
 import { changeOwnPassword, PasswordError } from '../../lib/db';
 import { playNotificationSound } from '../../lib/notificationSound';
 import { useModalFocus } from './useModalFocus';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '../ui/dropdown-menu';
-
-/* ── Section separator ── */
-const Divider = ({ label }: { label: string }) => (
-  <div className="flex items-center gap-3 mb-4">
-    <span className="text-xs font-semibold text-muted-foreground uppercase tracking-widest whitespace-nowrap">{label}</span>
-    <div className="flex-1 h-px bg-border" />
-  </div>
-);
+import type { AdminRole } from '../../data/assignmentTypes';
+import AccountRoleBadge from './AccountRoleBadge';
 
 /* ── Field row ── */
 const Field = ({ label, htmlFor, children }: { label: string; htmlFor?: string; children: React.ReactNode }) => (
@@ -33,6 +27,7 @@ interface Props {
   onClose: () => void;
   accountName?: string;
   accountEmail: string | null;
+  accountRole: AdminRole | null;
   onProfileSaved: (name: string) => void;
   notifEnabled: boolean;
   setNotifEnabled: (v: boolean) => void;
@@ -40,7 +35,7 @@ interface Props {
   setSoundEnabled: (v: boolean) => void;
 }
 
-export default function SettingsPanel({ open, onClose, accountName, accountEmail, onProfileSaved, notifEnabled, setNotifEnabled, soundEnabled, setSoundEnabled }: Props) {
+export default function SettingsPanel({ open, onClose, accountName, accountEmail, accountRole, onProfileSaved, notifEnabled, setNotifEnabled, soundEnabled, setSoundEnabled }: Props) {
   const [openSection, setOpenSection] = useState<'security' | 'notifications' | null>(null);
   /* ── Persist notifications preference ── */
   useEffect(() => {
@@ -249,13 +244,13 @@ export default function SettingsPanel({ open, onClose, accountName, accountEmail
       />
 
       {/* Centred modal — the wrapper ignores clicks so they fall through to the backdrop */}
-      <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none sm:p-6">
+      <div className="absolute inset-0 z-10 flex items-end justify-center pointer-events-none sm:items-center sm:p-6">
       <div
         ref={modalRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-title"
-        className="pointer-events-auto flex h-[100dvh] w-full flex-col overflow-hidden bg-white shadow-2xl sm:h-[min(85dvh,720px)] sm:max-w-[760px] sm:rounded-2xl"
+        className="pointer-events-auto flex max-h-[100dvh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:max-h-[min(85dvh,720px)] sm:max-w-[720px] sm:rounded-2xl"
       >
 
         {/* ── Panel header ── */}
@@ -279,15 +274,13 @@ export default function SettingsPanel({ open, onClose, accountName, accountEmail
         </div>
 
         {/* One scroll area keeps the header accessible on small screens. */}
-        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] sm:px-8 sm:py-7">
+        <div className="min-h-0 min-w-0 overflow-y-auto overscroll-contain px-4 py-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] sm:px-8 sm:py-7">
 
           {/* ── Profile ── */}
-          <section>
-            <Divider label="Profile" />
-
-            <div className="relative mb-5 flex min-w-0 flex-col gap-4 rounded-2xl border border-border bg-white p-5 pr-16 sm:flex-row sm:items-center sm:gap-6 sm:p-6 sm:pr-16">
+          <section className="pb-6">
+            <div className="relative flex min-w-0 flex-col gap-4 pr-12 sm:flex-row sm:items-center sm:gap-6">
               <div className="flex-shrink-0">
-                <div className="flex h-28 w-28 items-center justify-center overflow-hidden rounded-[18px] border border-green-900/10 bg-[#03624c] shadow-sm sm:h-32 sm:w-32">
+                <div className="flex h-[104px] w-[104px] items-center justify-center overflow-hidden rounded-[18px] border border-green-700/30 bg-[#03624c] shadow-sm sm:h-[116px] sm:w-[116px]">
                   {avatarUrl ? (
                     <img src={avatarUrl} alt="Profile" className="h-full w-full object-cover" />
                   ) : (
@@ -296,13 +289,17 @@ export default function SettingsPanel({ open, onClose, accountName, accountEmail
                 </div>
                 <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
               </div>
-              <div className="min-w-0">
-                <p className="break-words text-2xl font-semibold leading-tight text-foreground sm:text-3xl">{displayName || savedProfile.name || 'Account'}</p>
-                <p className="mt-2 break-all text-base text-muted-foreground">{accountEmail ?? 'Email unavailable'}</p>
+              <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                  <p className="min-w-0 break-words text-2xl font-semibold leading-tight text-foreground sm:text-[28px]">{displayName || savedProfile.name || 'Account'}</p>
+                  <AccountRoleBadge role={accountRole} />
+                </div>
+                <p className="mt-2 break-all text-sm text-slate-600 sm:text-base">{accountEmail ?? 'Email unavailable'}</p>
+                <p className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground"><UserRound className="h-3.5 w-3.5 text-green-800" aria-hidden="true" />Account profile</p>
               </div>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <button type="button" aria-label="Profile actions" className="absolute right-4 top-4 flex h-11 w-11 items-center justify-center rounded-lg border border-border text-foreground transition-colors hover:border-green-700/40 hover:bg-green-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+                  <button type="button" aria-label="Profile actions" className="absolute right-0 top-0 flex h-11 w-11 items-center justify-center rounded-lg border border-border text-foreground transition-colors hover:border-green-700/40 hover:bg-green-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
                     <MoreHorizontal className="h-5 w-5" aria-hidden="true" />
                   </button>
                 </DropdownMenuTrigger>
@@ -314,7 +311,7 @@ export default function SettingsPanel({ open, onClose, accountName, accountEmail
               </DropdownMenu>
             </div>
 
-            {editingName && <div className="rounded-xl border border-green-700/20 bg-green-50/30 p-4 sm:p-5">
+            {editingName && <div className="mt-4 rounded-xl border border-green-700/20 bg-green-50/30 p-4 sm:mt-5 sm:p-5">
               <Field label="Display Name" htmlFor="settings-display-name">
                 <div className="mt-2">
                   <input
@@ -342,14 +339,14 @@ export default function SettingsPanel({ open, onClose, accountName, accountEmail
           </section>
 
           {/* ── Password ── */}
-          <section className={`mt-5 overflow-hidden rounded-xl border bg-white transition-colors motion-reduce:transition-none ${openSection === 'security' ? 'border-green-700/40' : 'border-border'}`}>
+          <section className="border-t border-border">
             <button type="button" aria-expanded={openSection === 'security'} aria-controls="settings-security-content" onClick={() => setOpenSection(openSection === 'security' ? null : 'security')}
-              className="flex w-full items-center gap-3 px-4 py-4 text-left hover:bg-green-50/40 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary sm:px-5">
+              className={`flex w-full items-center gap-3 rounded-lg px-2 py-4 text-left transition-colors hover:bg-green-50/40 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary motion-reduce:transition-none ${openSection === 'security' ? 'bg-green-50/40' : ''}`}>
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-green-50 text-green-800"><KeyRound className="h-5 w-5" aria-hidden="true" /></span>
-              <span className="min-w-0 flex-1"><span className="block text-sm font-semibold uppercase tracking-wide text-foreground">Security</span><span className="mt-1 block text-sm text-muted-foreground">Manage your password and account security.</span></span>
+              <span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-foreground">Security</span><span className="mt-1 block text-sm text-muted-foreground">Manage your password and account security.</span></span>
               <ChevronDown className={`h-5 w-5 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${openSection === 'security' ? 'rotate-180' : ''}`} aria-hidden="true" />
             </button>
-            {openSection === 'security' && <div id="settings-security-content" className="space-y-3 border-t border-border px-4 py-5 sm:px-5">
+            {openSection === 'security' && <div id="settings-security-content" className="space-y-3 px-2 pb-5 pt-2 sm:px-4">
               <Field label="Current Password" htmlFor="settings-current-password">
                 <div className="relative">
                   <input
@@ -404,25 +401,28 @@ export default function SettingsPanel({ open, onClose, accountName, accountEmail
                   <CheckCircle2 className="w-3.5 h-3.5" /> Password updated successfully
                 </p>
               )}
-              <button
-                onClick={handleSavePassword}
-                disabled={passBusy}
-                className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-primary sm:w-auto"
-              >
-                <KeyRound className="w-4 h-4" /> {passBusy ? 'Updating…' : 'Update Password'}
-              </button>
+              <div className="flex flex-col gap-3 pt-1 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs text-muted-foreground">Use at least 8 characters.</p>
+                <button
+                  onClick={handleSavePassword}
+                  disabled={passBusy}
+                  className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-primary sm:w-auto"
+                >
+                  <KeyRound className="w-4 h-4" /> {passBusy ? 'Updating…' : 'Update Password'}
+                </button>
+              </div>
             </div>}
           </section>
 
           {/* ── Notifications ── */}
-          <section className={`mt-3 overflow-hidden rounded-xl border bg-white transition-colors motion-reduce:transition-none ${openSection === 'notifications' ? 'border-green-700/40' : 'border-border'}`}>
+          <section className="border-y border-border">
             <button type="button" aria-expanded={openSection === 'notifications'} aria-controls="settings-notifications-content" onClick={() => setOpenSection(openSection === 'notifications' ? null : 'notifications')}
-              className="flex w-full items-center gap-3 px-4 py-4 text-left hover:bg-green-50/40 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary sm:px-5">
+              className={`flex w-full items-center gap-3 rounded-lg px-2 py-4 text-left transition-colors hover:bg-green-50/40 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary motion-reduce:transition-none ${openSection === 'notifications' ? 'bg-green-50/40' : ''}`}>
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-green-50 text-green-800"><Bell className="h-5 w-5" aria-hidden="true" /></span>
-              <span className="min-w-0 flex-1"><span className="block text-sm font-semibold uppercase tracking-wide text-foreground">Notifications</span><span className="mt-1 block text-sm text-muted-foreground">Manage pop-up and sound notifications.</span></span>
+              <span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-foreground">Notifications</span><span className="mt-1 block text-sm text-muted-foreground">Manage pop-up and sound notifications.</span></span>
               <ChevronDown className={`h-5 w-5 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${openSection === 'notifications' ? 'rotate-180' : ''}`} aria-hidden="true" />
             </button>
-            {openSection === 'notifications' && <div id="settings-notifications-content" className="border-t border-border px-4 pb-5 sm:px-5">
+            {openSection === 'notifications' && <div id="settings-notifications-content" className="px-2 pb-5 sm:px-4">
             <div className="flex items-center justify-between gap-3 border-b border-border py-4">
               <div className="min-w-0">
                 <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Pop-up Notifications</p>

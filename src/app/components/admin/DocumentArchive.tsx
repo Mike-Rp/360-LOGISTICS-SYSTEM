@@ -383,6 +383,8 @@ export default function DocumentArchive({ assignments, completed, cancelled = []
     });
 
   const focusedId = notificationTarget?.assignmentId ?? linkedAssignmentId;
+  const displayedFilter: DocFilter = focusedId ? 'all' : filter;
+  const displayedPeriod: ArchiveDatePeriod = focusedId ? 'all' : period;
   const q = search.trim().toLowerCase();
 
   const { groups, counts } = useMemo(() => {
@@ -444,10 +446,22 @@ export default function DocumentArchive({ assignments, completed, cancelled = []
   useLayoutEffect(() => {
     if (previousSearch.current !== search) {
       normalPage.current = 1;
-      if (!focusedId) setPage(1);
+      if (focusedId) {
+        setLinkedAssignmentId(null);
+        setHighlightAssignment(null);
+        setHighlightDoc(null);
+        setOpenIds(previous => {
+          if (!previous.has(focusedId)) return previous;
+          const next = new Set(previous);
+          next.delete(focusedId);
+          return next;
+        });
+        onNotificationTargetHandled?.();
+      }
+      setPage(1);
     }
     previousSearch.current = search;
-  }, [search, setPage, focusedId]);
+  }, [search, setPage, focusedId, onNotificationTargetHandled]);
   const pageArea = useStablePageHeight(currentPage, visibleGroups.length, 10, `${search}|${filter}|${period}|${focusedId ?? ''}`);
   const targetIndex = visibleGroups.findIndex(group => group.assignmentId === notificationTarget?.assignmentId);
 
@@ -562,14 +576,14 @@ export default function DocumentArchive({ assignments, completed, cancelled = []
         ] as { key: DocFilter; label: string; badge: string; badgeOn: string }[]).map(({ key, label, badge, badgeOn }) => (
           <button key={key} onClick={() => selectStatusFilter(key)}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium border transition-all ${
-              filter === key
+              displayedFilter === key
                 ? 'bg-primary text-white border-primary'
                 : 'bg-white text-foreground border-border hover:bg-gray-50'
             }`}
           >
             {label}
             <span className={`text-xs rounded-full px-1.5 min-w-[18px] text-center ${
-              filter === key ? badgeOn : badge
+              displayedFilter === key ? badgeOn : badge
             }`}>
               {counts[key]}
             </span>
@@ -578,7 +592,7 @@ export default function DocumentArchive({ assignments, completed, cancelled = []
         </div>
         <div className="flex min-w-0 items-center gap-1.5 rounded-lg border border-border bg-white px-2 py-1.5 sm:ml-auto">
           <Filter aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          <select aria-label="Document Archive date filter" value={period}
+          <select aria-label="Document Archive date filter" value={displayedPeriod}
             onChange={event => selectDateFilter(event.target.value as ArchiveDatePeriod)}
             className="min-h-8 min-w-0 flex-1 cursor-pointer bg-transparent pr-1 text-sm text-foreground focus-visible:outline-2 focus-visible:outline-primary">
             {DATE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
@@ -685,7 +699,7 @@ export default function DocumentArchive({ assignments, completed, cancelled = []
           {/* Footer */}
           <PaginationFooter page={currentPage} totalItems={visibleGroups.length} onPageChange={setPage}
             singular="assignment" plural="assignments" className="border-t border-border bg-muted/20">
-            {filter !== 'all' && (
+            {displayedFilter !== 'all' && (
               <>
                 <span className="text-xs text-muted-foreground"><span className="capitalize">{filter}</span> filter active</span>
                 <button onClick={() => selectStatusFilter('all')} className="text-xs text-primary hover:underline font-medium">

@@ -1227,6 +1227,7 @@ function HistoryDetailsSheet({ driverId, driverName, assignmentId, onClose, onCh
           close: t('history.closePreview'), dateUnavailable: t('history.previewDateUnavailable'),
           download: t('history.downloadFile'), downloading: t('history.downloadingFile'),
           downloadError: t('history.downloadError'), previewUnavailable: t('history.previewUnavailable'),
+          zoomIn: t('history.zoomIn'), zoomOut: t('history.zoomOut'), fit: t('history.fitImage'),
         }} />}
     </div>
   );

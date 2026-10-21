@@ -171,17 +171,17 @@ function AddMemberModal({ onClose, onAdded }: {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-foreground mb-1.5">
-              Password <span className="text-xs text-muted-foreground">(set your own, or use a suggestion)</span>
-            </label>
-            <div className="flex items-center gap-3">
-              <div className="flex-1 relative">
+            <label htmlFor="member-temporary-password" className="block text-sm font-medium text-foreground mb-1.5">Temporary Password</label>
+            <p className="mb-2 text-xs text-muted-foreground">Create a temporary password for the new member. They can change it after signing in.</p>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="relative min-w-0 flex-1">
                 <Shield className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
                 <input
+                  id="member-temporary-password"
                   type={showPass ? 'text' : 'password'}
                   value={password}
                   onChange={(e) => { setPassword(e.target.value); setError(''); }}
-                  placeholder="Enter a password"
+                  placeholder="Enter temporary password"
                   className="w-full pl-10 pr-12 py-3 rounded-xl border border-border bg-white text-sm font-mono tracking-wide focus:outline-none focus:ring-2 focus:ring-primary/30"
                 />
                 <button
@@ -195,8 +195,9 @@ function AddMemberModal({ onClose, onAdded }: {
                 </button>
               </div>
               <button
+                type="button"
                 onClick={() => { setPassword(generatePassword()); setShowPass(true); }}
-                className="flex items-center gap-2 px-4 py-3 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors text-sm font-medium whitespace-nowrap"
+                className="flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-primary px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-primary/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
               >
                 <RefreshCw className="w-4 h-4" /> Suggest
               </button>
@@ -232,7 +233,7 @@ function AddMemberModal({ onClose, onAdded }: {
               <Shield className="w-3.5 h-3.5" /> Login Credentials
             </p>
             <p className="text-xs text-amber-600">Email: <strong>{created.email}</strong></p>
-            <p className="text-xs text-amber-600">Password: <strong className="font-mono tracking-wide">{created.password}</strong></p>
+            <p className="text-xs text-amber-600">Temporary Password: <strong className="font-mono tracking-wide">{created.password}</strong></p>
             <p className="text-xs text-amber-600">Role: <strong>CSR</strong></p>
           </div>
           <button onClick={onClose} className="w-full px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors text-sm font-medium">

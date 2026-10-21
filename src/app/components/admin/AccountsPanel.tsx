@@ -2,7 +2,7 @@ import { useState, useEffect, useLayoutEffect } from 'react';
 import {
   Users, Truck, Plus, Eye, EyeOff, RefreshCw,
   CheckCircle2, Shield, KeyRound, Phone,
-  Package, Weight, Trash2, AlertTriangle, Archive,
+  Package, Weight, Trash2, AlertTriangle, Archive, ChevronDown,
 } from 'lucide-react';
 import type { LocalDriver, LocalTruck, AdminActivityInput, Assignment } from '../../data/assignmentTypes';
 import { availabilityConfig } from '../../data/assignmentTypes';
@@ -149,6 +149,10 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
   const [availabilityFilter, setAvailabilityFilter] = useState<AvailabilityFilter>('all');
   const [truckView,  setTruckView]  = useState<'active' | 'archived'>('active');
   const [truckStatusFilter, setTruckStatusFilter] = useState<AvailabilityFilter>('all');
+  const [truckClassificationFilter, setTruckClassificationFilter] = useState('');
+  const truckClassifications = [...new Set([...trucks, ...archivedTrucks]
+    .map(truck => truck.classification?.trim()).filter((value): value is string => !!value))]
+    .sort((a, b) => a.localeCompare(b));
   const query = search.trim().toLowerCase();
   const matches = (fields: (string | undefined)[]) => !query || fields.some((field) => field?.toLowerCase().includes(query));
   const availableCount = drivers.filter((driver) => isAvailable(driver.status)).length;
@@ -162,9 +166,12 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
   const visibleArchivedDrivers = sortNewestFirst(tab === 'Drivers' && driverView === 'archived' ? archivedDrivers.filter((driver) => matches([driver.name, driver.id, driver.phone])) : archivedDrivers, (driver) => driver.id, 'driver');
   const visibleTrucks = tab === 'Trucks' && truckView === 'active' ? trucks.filter((truck) =>
     matches([truck.plateNumber, truck.id, truck.classification, truck.capacity]) &&
+    (!truckClassificationFilter || truck.classification?.trim() === truckClassificationFilter) &&
     (truckStatusFilter === 'all' || truck.status === (truckStatusFilter === 'available' ? 'Available' : 'Assigned'))
   ) : trucks;
-  const visibleArchivedTrucks = tab === 'Trucks' && truckView === 'archived' ? archivedTrucks.filter((truck) => matches([truck.plateNumber, truck.id, truck.classification, truck.capacity])) : archivedTrucks;
+  const visibleArchivedTrucks = tab === 'Trucks' && truckView === 'archived' ? archivedTrucks.filter((truck) =>
+    matches([truck.plateNumber, truck.id, truck.classification, truck.capacity]) &&
+    (!truckClassificationFilter || truck.classification?.trim() === truckClassificationFilter)) : archivedTrucks;
   const activeDriversPage = usePagination(visibleDrivers);
   const archivedDriversPage = usePagination(visibleArchivedDrivers);
   const activeTrucksPage = usePagination(visibleTrucks);
@@ -178,8 +185,8 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
   }, [search]);
   const activeDriversArea = useStablePageHeight(activeDriversPage.page, visibleDrivers.length, 10, `${tab}|${driverView}|${availabilityFilter}|${search}`);
   const archivedDriversArea = useStablePageHeight(archivedDriversPage.page, visibleArchivedDrivers.length, 10, `${tab}|${driverView}|${search}`);
-  const activeTrucksArea = useStablePageHeight(activeTrucksPage.page, visibleTrucks.length, 10, `${tab}|${truckView}|${truckStatusFilter}|${search}`);
-  const archivedTrucksArea = useStablePageHeight(archivedTrucksPage.page, visibleArchivedTrucks.length, 10, `${tab}|${truckView}|${search}`);
+  const activeTrucksArea = useStablePageHeight(activeTrucksPage.page, visibleTrucks.length, 10, `${tab}|${truckView}|${truckStatusFilter}|${truckClassificationFilter}|${search}`);
+  const archivedTrucksArea = useStablePageHeight(archivedTrucksPage.page, visibleArchivedTrucks.length, 10, `${tab}|${truckView}|${truckClassificationFilter}|${search}`);
   const resetPages = () => {
     activeDriversPage.setPage(1);
     archivedDriversPage.setPage(1);
@@ -531,6 +538,17 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
               <AvailabilityFilters value={truckStatusFilter} label="Truck availability"
                 allCount={trucks.length} availableCount={availableTruckCount} onDeliveryCount={onDeliveryTruckCount}
                 onChange={(value) => { setTruckStatusFilter(value); activeTrucksPage.setPage(1); }} />
+            </>}
+            <div className="relative w-full min-w-0 sm:w-52">
+              <select aria-label="Truck classification" value={truckClassificationFilter}
+                onChange={(event) => { setTruckClassificationFilter(event.target.value); activeTrucksPage.setPage(1); archivedTrucksPage.setPage(1); }}
+                className="min-h-10 w-full appearance-none rounded-xl border border-border bg-white py-2 pl-3 pr-9 text-sm text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+                <option value="">All Classifications</option>
+                {truckClassifications.map(classification => <option key={classification} value={classification}>{classification}</option>)}
+              </select>
+              <ChevronDown aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            </div>
+            {truckView === 'active' && <>
               {canManageFleetAccounts && <button onClick={() => setShowAddTruck(true)}
                 className="ml-auto flex min-h-10 w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 bg-secondary text-white rounded-lg hover:bg-secondary/90 transition-colors text-sm">
                 <Plus className="w-4 h-4" /> Register Truck
@@ -543,8 +561,8 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
             visibleArchivedTrucks.length === 0 ? (
               <div className="bg-white rounded-2xl border border-dashed border-border p-12 text-center">
                 <Archive className="w-10 h-10 mx-auto mb-3 text-muted-foreground/40" />
-                <p className="font-medium text-foreground">{query ? 'No accounts found' : 'No archived trucks'}</p>
-                <p className="text-sm text-muted-foreground mt-1">{query ? 'Try a different search term.' : 'Archived trucks appear here with the date they were archived.'}</p>
+                <p className="font-medium text-foreground">{query || truckClassificationFilter ? 'No archived trucks match these filters' : 'No archived trucks'}</p>
+                <p className="text-sm text-muted-foreground mt-1">{query || truckClassificationFilter ? 'Try a different search term or classification.' : 'Archived trucks appear here with the date they were archived.'}</p>
               </div>
             ) : (
               <div className="bg-white rounded-2xl border border-border shadow-sm divide-y divide-border">
@@ -577,9 +595,9 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
               <div className="w-16 h-16 bg-muted/50 rounded-full flex items-center justify-center mx-auto mb-4">
                 <Truck className="w-8 h-8 text-muted-foreground/40" />
               </div>
-              <p className="font-medium text-foreground mb-1">{truckStatusFilter === 'available' ? (query ? 'No available trucks match your search.' : 'No available trucks found.') : truckStatusFilter === 'onDelivery' ? (query ? 'No trucks on delivery match your search.' : 'No trucks are currently on delivery.') : query ? 'No accounts found' : 'No Trucks Registered Yet'}</p>
-              <p className="text-sm text-muted-foreground mb-5">{query ? 'Try a different search term.' : truckStatusFilter === 'all' ? canManageFleetAccounts ? 'Register trucks so they can be assigned to deliveries.' : 'Trucks will appear here when registered by OPM.' : 'Choose All to see every active truck.'}</p>
-              {!query && truckStatusFilter === 'all' && canManageFleetAccounts && (
+              <p className="font-medium text-foreground mb-1">{truckClassificationFilter ? 'No trucks match this classification.' : truckStatusFilter === 'available' ? (query ? 'No available trucks match your search.' : 'No available trucks found.') : truckStatusFilter === 'onDelivery' ? (query ? 'No trucks on delivery match your search.' : 'No trucks are currently on delivery.') : query ? 'No accounts found' : 'No Trucks Registered Yet'}</p>
+              <p className="text-sm text-muted-foreground mb-5">{query || truckClassificationFilter ? 'Try a different search term or filter.' : truckStatusFilter === 'all' ? canManageFleetAccounts ? 'Register trucks so they can be assigned to deliveries.' : 'Trucks will appear here when registered by OPM.' : 'Choose All to see every active truck.'}</p>
+              {!query && !truckClassificationFilter && truckStatusFilter === 'all' && canManageFleetAccounts && (
                 <button onClick={() => setShowAddTruck(true)}
                   className="px-5 py-2.5 bg-secondary text-white rounded-lg text-sm hover:bg-secondary/90 transition-colors">
                   + Register Truck

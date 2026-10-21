@@ -4,7 +4,8 @@ import {
   Truck, CheckCheck, X, Users,
   FileText, AlertTriangle, AlertCircle,
 } from 'lucide-react';
-import type { AppNotification } from '../../data/assignmentTypes';
+import type { AdminRole, AppNotification } from '../../data/assignmentTypes';
+import AccountRoleBadge from './AccountRoleBadge';
 import { Popover, PopoverTrigger, PopoverContent } from '../ui/popover';
 import { adminHref, followAdminLink } from '../../lib/adminNavigation';
 import { notificationDestination } from '../../lib/notificationEvents';
@@ -18,6 +19,7 @@ interface Props {
   onOpenSettings: () => void;
   onOpenHelp: () => void;
   isOperationManager: boolean;
+  adminRole: AdminRole | null;
   adminEmail?: string | null;
   adminName?: string;
   onOpenWorkspaceSettings?: () => void;
@@ -49,7 +51,7 @@ function fmtTimestamp(ts: string): string {
 
 export default function Header({
   notifications, setNotifications, onOpenNotification, onLogout, onOpenSettings, onOpenHelp,
-  isOperationManager, adminEmail, adminName, onOpenWorkspaceSettings,
+  isOperationManager, adminRole, adminEmail, adminName, onOpenWorkspaceSettings,
   searchPlaceholder, searchValue, onSearchChange,
 }: Props) {
   const [bellOpen,    setBellOpen]    = useState(false);
@@ -255,13 +257,16 @@ export default function Header({
             <div className="absolute right-0 top-full mt-2 w-[min(288px,calc(100vw-1rem))] bg-white border border-border rounded-2xl shadow-xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
 
               {/* User info */}
-              <div className="flex items-center gap-3 px-4 py-4">
+              <div className="flex min-w-0 items-center gap-3 px-4 py-4">
                 <div className="w-10 h-10 bg-black rounded-full flex items-center justify-center flex-shrink-0">
                   <User className="w-5 h-5 text-white" />
                 </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-foreground leading-tight">{adminName ?? 'Admin User'}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5 truncate">{adminEmail ?? '—'}</p>
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <p className="min-w-0 flex-1 truncate text-sm font-semibold leading-tight text-foreground" title={adminName ?? 'Admin User'}>{adminName ?? 'Admin User'}</p>
+                    <AccountRoleBadge role={adminRole} />
+                  </div>
+                  <p className="mt-0.5 truncate text-xs text-muted-foreground" title={adminEmail ?? undefined}>{adminEmail ?? '—'}</p>
                 </div>
               </div>
 

@@ -304,6 +304,7 @@ export default function AdminDashboard({
           onOpenSettings={() => setSettingsOpen(true)}
           onOpenHelp={() => setHelpOpen(true)}
           isOperationManager={isOperationManager}
+          adminRole={adminRole}
           adminEmail={adminEmail}
           adminName={adminName}
           onOpenWorkspaceSettings={() => setWorkspaceOpen(true)}
@@ -329,6 +330,7 @@ export default function AdminDashboard({
         onClose={() => setSettingsOpen(false)}
         accountName={adminName}
         accountEmail={adminEmail}
+        accountRole={adminRole}
         onProfileSaved={setAdminName}
         notifEnabled={notifEnabled}
         setNotifEnabled={setNotifEnabled}

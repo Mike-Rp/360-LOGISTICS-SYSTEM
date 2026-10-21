@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { Download, X } from 'lucide-react';
 import { splitDisplayDateTime } from '../../lib/displayDateTime';
+import ZoomableImage from './ZoomableImage';
 
 /** Viewer for the signed Storage URLs saved with photos and documents. */
 export default function UploadedFilePreviewModal({ url, title, kind, timestamp, assignmentId, onClose, labels }: {
@@ -14,6 +15,7 @@ export default function UploadedFilePreviewModal({ url, title, kind, timestamp, 
   labels?: Partial<{
     close: string; dateUnavailable: string; download: string; downloading: string;
     downloadError: string; previewUnavailable: string;
+    zoomIn: string; zoomOut: string; fit: string;
   }>;
 }) {
   const storedPath = url.startsWith('data:') ? '' : new URL(url, window.location.href).pathname;
@@ -23,6 +25,8 @@ export default function UploadedFilePreviewModal({ url, title, kind, timestamp, 
   const isPdf = url.startsWith('data:application/pdf') || /\.pdf$/i.test(storedPath);
   const isImage = kind === 'image' || /^data:image\//i.test(url) || /\.(png|jpe?g|webp|gif|bmp)$/i.test(storedPath);
   const stamp = splitDisplayDateTime(timestamp);
+
+  useEffect(() => { setImageFailed(false); }, [url]);
 
   const download = async () => {
     if (downloading) return;
@@ -71,8 +75,8 @@ export default function UploadedFilePreviewModal({ url, title, kind, timestamp, 
         </div>
         <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-slate-50 p-3 sm:p-5">
           {isPdf ? <iframe src={url} className="h-full min-h-0 w-full rounded-lg border border-border bg-white" title={title} />
-            : isImage && !imageFailed ? <img src={url} alt={kind === 'image' ? `${title} photo` : title}
-                onError={() => setImageFailed(true)} className="max-h-full max-w-full object-contain" />
+            : isImage && !imageFailed ? <ZoomableImage key={url} url={url} alt={kind === 'image' ? `${title} photo` : title}
+                onError={() => setImageFailed(true)} labels={labels} />
               : <p className="text-sm text-muted-foreground">{labels?.previewUnavailable ?? 'Preview unavailable'}</p>}
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-border bg-white px-4 py-3 pb-[max(12px,env(safe-area-inset-bottom))] sm:px-5">
