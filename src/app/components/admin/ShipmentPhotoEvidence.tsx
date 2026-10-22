@@ -23,6 +23,10 @@ export function OperationalPhotoItem({ groupTitle, label, photo, required = true
   </div>;
 
   const timestamp = splitDisplayDateTime(photo.timestamp);
+  const recordedLocation = photo.location && !['Location unavailable', 'Location not supported'].includes(photo.location)
+    ? photo.location : null;
+  const deviceLocation = recordedLocation || (photo.coords
+    ? `${photo.coords.lat.toFixed(5)}, ${photo.coords.lng.toFixed(5)}` : null);
   return <div className="min-w-0">
     <button type="button" onClick={() => onPreview(photo.url, `${groupTitle} · ${label}`, photo.timestamp)}
       className="group relative block w-full overflow-hidden rounded-md bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
@@ -39,6 +43,9 @@ export function OperationalPhotoItem({ groupTitle, label, photo, required = true
       <span className="whitespace-nowrap text-muted-foreground">{timestamp.date}</span>
       {timestamp.time && <span className="whitespace-nowrap text-foreground/65">{timestamp.time}</span>}
     </div>}
+    {deviceLocation && <p className="mt-1 break-words text-xs text-muted-foreground">
+      Recorded location: {deviceLocation}
+    </p>}
   </div>;
 }
 

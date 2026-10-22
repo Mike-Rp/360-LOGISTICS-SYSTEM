@@ -2,8 +2,8 @@ import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import {
   LogOut, Package, CheckCircle2, XCircle, Camera, WifiOff,
   Clock, Truck, AlertTriangle, FileText, Building2,
-  ChevronRight, ChevronLeft, Lock, ArrowDown,
-  RefreshCw, RotateCcw, X, Phone, Bell, Menu, History, Languages, MapPin,
+  ChevronRight, ChevronLeft, Lock, ArrowDown, ArrowUp,
+  RefreshCw, RotateCcw, X, Phone, Bell, Menu, History, Languages, MapPin, Images, CalendarDays,
 } from 'lucide-react';
 import type { Assignment, CompletedTask, TaskStatus, StatusPhoto, DocStatus } from '../../data/assignmentTypes';
 import { statusColors } from '../../data/statusColors';
@@ -18,6 +18,8 @@ import { MILESTONE_NOTIFICATIONS } from '../../lib/notificationEvents';
 import { BLOCKING_ISSUE_REASONS, hasOpenBlockingIssue } from '../../lib/issueWorkflow';
 import { newNotificationIds, notificationSoundEnabled, playNotificationSound, setNotificationSoundEnabled } from '../../lib/notificationSound';
 import { observeDriverCompletion, type DriverCompletionSnapshot } from './driverCompletion';
+import { getRequiredPhotoProgress } from './driverPhotoGuidance';
+import { galleryPhotoMetadata, gpsAccuracyLevel, savedPhotoMetadata } from './driverPhotoEvidence';
 import UploadedFilePreviewModal from '../admin/UploadedFilePreviewModal';
 
 /* ── Types ── */
@@ -459,9 +461,10 @@ function ElapsedTime({ start }: { start?: string | null }) {
   return <p className="mt-1">{t('workflow.elapsed')}: {elapsedClock(start, now) ?? '—'}</p>;
 }
 
-function OperationalPhotos({ assignment, keys, title, help, required, onSelect }: {
+function OperationalPhotos({ assignment, keys, title, help, required, onSelect, highlightKey }: {
   assignment: Assignment; keys: readonly OperationalPhotoKey[]; title: string; help?: string;
   required: boolean; onSelect: (key: OperationalPhotoKey) => void;
+  highlightKey?: OperationalPhotoKey | null;
 }) {
   const { t } = useDriverI18n();
   const count = keys.filter((key) => !!assignment.statusPhotos?.[key]?.url).length;
@@ -470,7 +473,7 @@ function OperationalPhotos({ assignment, keys, title, help, required, onSelect }
     return suffix === 'front' ? t('workflow.front') : suffix === 'left' ? t('workflow.left')
       : suffix === 'right' ? t('workflow.right') : suffix === 'rear' ? t('workflow.rear') : title;
   };
-  return <section className="min-w-0 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+  return <section data-driver-photo-section={keys[0]} className={`min-w-0 rounded-2xl border bg-white p-4 shadow-sm transition-colors duration-700 motion-reduce:transition-none ${highlightKey === keys[0] ? 'border-green-500 bg-green-50' : 'border-gray-200'}`}>
     <div className="flex flex-wrap items-start justify-between gap-2">
       <div className="min-w-0">
         <h3 className="text-base font-bold text-gray-900">{title} <span className="text-sm font-semibold text-gray-500">— {t(required ? 'workflow.required' : 'workflow.optional')}</span></h3>
@@ -482,9 +485,9 @@ function OperationalPhotos({ assignment, keys, title, help, required, onSelect }
       {keys.map((key) => {
         const saved = assignment.statusPhotos?.[key];
         const label = angle(key);
-        return <button key={key} type="button" onClick={() => onSelect(key)}
+        return <button key={key} type="button" data-driver-photo-key={key} onClick={() => onSelect(key)}
           aria-label={saved ? t('workflow.replacePhoto', { angle: label }) : t('workflow.photoSlot', { angle: label, requirement: t(required ? 'workflow.required' : 'workflow.optional') })}
-          className="min-w-0 overflow-hidden rounded-xl border-2 border-dashed border-gray-200 bg-gray-50 text-left focus-visible:outline-2 focus-visible:outline-green-700">
+          className={`min-w-0 overflow-hidden rounded-xl border-2 border-dashed bg-gray-50 text-left transition-colors duration-700 motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-green-700 ${highlightKey === key ? 'border-green-600 ring-2 ring-green-200' : 'border-gray-200'}`}>
           {saved ? <img src={saved.url} alt={label} className="h-28 w-full object-cover" />
             : <div className="flex h-28 items-center justify-center"><Camera className="h-9 w-9 text-gray-400" aria-hidden="true" /></div>}
           <div className="flex items-center justify-between gap-1 px-3 py-2">
@@ -502,10 +505,107 @@ function OperationalPhotos({ assignment, keys, title, help, required, onSelect }
 /* ════════════════════════════════════════════════════════════
    PHOTO CAPTURE SHEET (redesigned — receipt-style meta)
    ════════════════════════════════════════════════════════════ */
-function PhotoSheet({ status, title, instruction, qualityCheck, onConfirm, onCancel }: {
+function DriverBottomSheet({ label, onBackdrop, children }: { label: string; onBackdrop: () => void; children: React.ReactNode }) {
+  const [viewport, setViewport] = useState<{ top: number; height: number } | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const visual = window.visualViewport;
+    if (!visual) return;
+    const keepInputVisible = () => {
+      const focused = document.activeElement;
+      if (focused instanceof HTMLElement && panelRef.current?.contains(focused)
+        && (focused.tagName === 'INPUT' || focused.tagName === 'TEXTAREA')) {
+        window.requestAnimationFrame(() => focused.scrollIntoView({ block: 'nearest' }));
+      }
+    };
+    const update = () => setViewport({ top: visual.offsetTop, height: visual.height });
+    const onResize = () => { update(); keepInputVisible(); };
+    update();
+    visual.addEventListener('resize', onResize);
+    visual.addEventListener('scroll', update);
+    return () => {
+      visual.removeEventListener('resize', onResize);
+      visual.removeEventListener('scroll', update);
+    };
+  }, []);
+  return <div className="fixed inset-x-0 z-50 flex items-end" style={{ top: viewport?.top ?? 0, height: viewport?.height ?? '100dvh' }}>
+    <div className="absolute inset-0 bg-black/60" onClick={onBackdrop} />
+    <div ref={panelRef} role="dialog" aria-modal="true" aria-label={label} className="relative flex max-h-[min(92%,720px)] w-full min-h-0 flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl motion-safe:animate-in motion-safe:slide-in-from-bottom motion-safe:duration-300">
+      {children}
+    </div>
+  </div>;
+}
+
+type DevicePhotoLocation = { location: string; coords: { lat: number; lng: number }; accuracy: number | null };
+
+async function readFreshPhotoLocation(): Promise<DevicePhotoLocation> {
+  if (!navigator.geolocation) throw new Error('geolocation_unavailable');
+  const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+    navigator.geolocation.getCurrentPosition(resolve, reject, {
+      enableHighAccuracy: true, maximumAge: 0, timeout: 12000,
+    });
+  });
+  const { latitude, longitude, accuracy } = position.coords;
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) throw new Error('geolocation_invalid');
+  let location = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=16&addressdetails=1`,
+      { headers: { 'Accept-Language': 'en' } },
+    );
+    if (res.ok) {
+      const data = await res.json();
+      const addr = data.address ?? {};
+      const parts = [addr.road || addr.amenity || addr.building,
+        addr.suburb || addr.village || addr.neighbourhood,
+        addr.city || addr.town || addr.municipality].filter(Boolean);
+      if (parts.length) location = parts.join(', ');
+    }
+  } catch { /* The measured coordinates remain available without an address. */ }
+  return { location, coords: { lat: latitude, lng: longitude },
+    accuracy: Number.isFinite(accuracy) && accuracy >= 0 ? accuracy : null };
+}
+
+function PhotoDetails({ photo, source, accuracy }: { photo: StatusPhoto; source: 'camera' | 'gallery' | 'unknown'; accuracy?: number | null }) {
+  const { t } = useDriverI18n();
+  const accuracyLevel = gpsAccuracyLevel(accuracy);
+  const locationText = photo.location && photo.location !== 'Location unavailable' && photo.location !== 'Location not supported'
+    ? photo.location : null;
+  const locationAvailable = !!photo.coords || !!locationText;
+  return <section className="rounded-xl border border-gray-200 bg-white px-4 py-3">
+    <h4 className="text-sm font-bold text-gray-900">{t('photo.details')}</h4>
+    <div className="mt-3 flex items-start gap-3">
+      <CalendarDays className="mt-0.5 h-4 w-4 shrink-0 text-gray-500" aria-hidden="true" />
+      <div className="min-w-0">
+        <p className="text-xs font-semibold text-gray-500">{source === 'gallery' ? t('photo.uploadedAt')
+          : source === 'camera' ? t('photo.appObservedAt') : t('photo.recordedAt')}</p>
+        <p className="mt-0.5 text-sm font-semibold text-gray-900">{photo.timestamp ? manilaStamp(photo.timestamp) : t('photo.pendingUpload')}</p>
+      </div>
+    </div>
+    <div className="mt-3 flex items-start gap-3 border-t border-gray-100 pt-3">
+      <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-gray-500" aria-hidden="true" />
+      <div className="min-w-0">
+        <p className="text-xs font-semibold text-gray-500">{source === 'gallery' ? t('photo.deviceLocationAtUpload')
+          : source === 'camera' ? t('photo.deviceLocation') : photo.coords ? t('photo.photoGpsLocation') : t('photo.recordedLocation')}</p>
+        {locationAvailable && <p className="mt-0.5 break-words text-sm font-semibold text-gray-900">{locationText || `${photo.coords!.lat.toFixed(5)}, ${photo.coords!.lng.toFixed(5)}`}</p>}
+        {!locationAvailable && <p className="mt-0.5 text-sm text-gray-600">{t('photo.locationUnavailable')}</p>}
+        {photo.coords && accuracyLevel && <p className="mt-1 text-xs text-gray-500">
+          {t(`photo.accuracy.${accuracyLevel}`, { meters: Math.round(accuracy!) })}
+        </p>}
+      </div>
+    </div>
+    <div className="mt-3 border-t border-gray-100 pt-3 text-xs text-gray-600">
+      <span className="font-semibold">{t('photo.source')}: </span>
+      {source === 'unknown' ? t('photo.sourceUnavailable') : t(source === 'camera' ? 'photo.sourceCamera' : 'photo.sourceGallery')}
+    </div>
+  </section>;
+}
+
+function PhotoSheet({ status, title, instruction, qualityCheck, existingPhoto, onConfirm, onCancel }: {
   status: TaskStatus | null; title?: string; instruction?: string;
   qualityCheck?: 'truck' | 'cargo';
-  onConfirm: (photo: StatusPhoto) => Promise<void>; onCancel: () => void;
+  existingPhoto?: StatusPhoto | null;
+  onConfirm: (photo: StatusPhoto, source: 'camera' | 'gallery') => Promise<void>; onCancel: () => void;
 }) {
   const { t, status: statusText } = useDriverI18n();
   const [photo,      setPhoto]      = useState<string | null>(null);
@@ -515,7 +615,12 @@ function PhotoSheet({ status, title, instruction, qualityCheck, onConfirm, onCan
   const [saveError,  setSaveError]  = useState('');
   const [checking,   setChecking]   = useState(false);
   const [qualityError, setQualityError] = useState<PhotoCheckFailure | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+  const [source, setSource] = useState<'camera' | 'gallery' | null>(null);
+  const [replacing, setReplacing] = useState(false);
+  const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
+  const [locationError, setLocationError] = useState(false);
   const attemptRef = useRef(0);
 
   useEffect(() => {
@@ -523,15 +628,39 @@ function PhotoSheet({ status, title, instruction, qualityCheck, onConfirm, onCan
     return () => { attemptRef.current++; };
   }, [qualityCheck]);
 
-  const handleFile = (file: File) => {
+  const requestDeviceLocation = (imageUrl: string, stamp: string, attempt: number) => {
+    const isCurrent = () => attempt === attemptRef.current;
+    setLocLoading(true);
+    setLocationError(false);
+    void readFreshPhotoLocation().then(({ location, coords, accuracy }) => {
+      if (isCurrent()) {
+        setGpsAccuracy(accuracy);
+        setMeta({ url: imageUrl, timestamp: stamp, location, coords });
+        setLocLoading(false);
+      }
+    }).catch(() => {
+      if (isCurrent()) {
+        setGpsAccuracy(null);
+        setMeta({ url: imageUrl, timestamp: stamp, location: '' });
+        setLocationError(true);
+        setLocLoading(false);
+      }
+    });
+  };
+
+  const handleFile = (file: File, selectedSource: 'camera' | 'gallery') => {
     const attempt = ++attemptRef.current;
     const isCurrent = () => attempt === attemptRef.current;
+    setSource(selectedSource);
+    setGpsAccuracy(null);
+    setLocationError(false);
     setSaveError('');
     setQualityError(null);
     setPhoto(null);
     setMeta(null);
     setLocLoading(false);
     setChecking(!!qualityCheck);
+    const observedAt = new Date().toISOString();
     const reader = new FileReader();
     reader.onload = async () => {
       let compressed: string;
@@ -542,9 +671,6 @@ function PhotoSheet({ status, title, instruction, qualityCheck, onConfirm, onCan
       }
       if (!isCurrent()) return;
       setPhoto(compressed);
-      const ts = new Date().toLocaleString('en-US', {
-        month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit',
-      });
       if (qualityCheck) {
         let result: Awaited<ReturnType<typeof checkPhoto>>;
         try { result = await checkPhoto(compressed, { requireTruck: qualityCheck === 'truck' }); }
@@ -557,50 +683,11 @@ function PhotoSheet({ status, title, instruction, qualityCheck, onConfirm, onCan
         }
         setChecking(false);
       }
-      setLocLoading(true);
-      if ('geolocation' in navigator) {
-        navigator.geolocation.getCurrentPosition(
-          async (pos) => {
-            const { latitude, longitude } = pos.coords;
-            let locationLabel = `${latitude.toFixed(5)}° N, ${longitude.toFixed(5)}° E`;
-            try {
-              const res = await fetch(
-                `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=16&addressdetails=1`,
-                { headers: { 'Accept-Language': 'en' } }
-              );
-              if (res.ok) {
-                const data = await res.json();
-                const addr = data.address ?? {};
-                const parts: string[] = [];
-                const road = addr.road || addr.amenity || addr.building;
-                const area = addr.suburb || addr.village || addr.neighbourhood;
-                const city = addr.city || addr.town || addr.municipality;
-                if (road) parts.push(road);
-                if (area) parts.push(area);
-                if (city) parts.push(city);
-                if (parts.length) locationLabel = parts.join(', ');
-                else if (data.display_name) locationLabel = data.display_name.split(',').slice(0, 3).join(', ');
-              }
-            } catch { /* fallback to coords */ }
-            if (isCurrent()) {
-              setMeta({ url: compressed, timestamp: ts, location: locationLabel, coords: { lat: latitude, lng: longitude } });
-              setLocLoading(false);
-            }
-          },
-          () => {
-            if (isCurrent()) {
-              setMeta({ url: compressed, timestamp: ts, location: 'Location unavailable' });
-              setLocLoading(false);
-            }
-          },
-          { timeout: 10000 }
-        );
-      } else {
-        if (isCurrent()) {
-          setMeta({ url: compressed, timestamp: ts, location: 'Location not supported' });
-          setLocLoading(false);
-        }
-      }
+      if (selectedSource === 'gallery') {
+        // The selected image's original time and place are not verified by this app.
+        // Do not write current device GPS into its persisted capture fields.
+        setMeta(galleryPhotoMetadata(compressed));
+      } else requestDeviceLocation(compressed, observedAt, attempt);
     };
     reader.onerror = () => {
       if (isCurrent()) { setChecking(false); setSaveError(t('photo.saveError')); }
@@ -609,11 +696,31 @@ function PhotoSheet({ status, title, instruction, qualityCheck, onConfirm, onCan
   };
 
   const canConfirm = !!photo && !!meta && meta.url === photo && !checking && !qualityError && !locLoading && !saving;
-  const confirmPhoto = async () => {
-    if (!canConfirm || !meta) return;
+  const confirmPhoto = async (continueWithoutLocation = false) => {
+    if (!canConfirm || !meta || !source) return;
     setSaving(true);
     setSaveError('');
-    try { await onConfirm(meta); }
+    let submission = meta;
+    try {
+      if (source === 'gallery' && !continueWithoutLocation) {
+        setLocLoading(true);
+        setLocationError(false);
+        try {
+          const { location, coords, accuracy } = await readFreshPhotoLocation();
+          submission = { ...meta, location, coords };
+          setMeta(submission);
+          setGpsAccuracy(accuracy);
+        } catch {
+          setLocationError(true);
+          return;
+        } finally { setLocLoading(false); }
+      }
+      if (source === 'gallery' && continueWithoutLocation) {
+        submission = { ...meta, location: '', coords: undefined };
+        setGpsAccuracy(null);
+      }
+      await onConfirm(submission, source);
+    }
     catch (err) {
       console.error('[status photo] save failed:', err);
       setSaveError(status === 'Delivered' ? t('photo.deliveryError') : t('photo.saveError'));
@@ -622,8 +729,12 @@ function PhotoSheet({ status, title, instruction, qualityCheck, onConfirm, onCan
   const cancelPhoto = () => { if (!saving) { attemptRef.current++; onCancel(); } };
   const retakePhoto = () => {
     attemptRef.current++;
+    setReplacing(true);
     setPhoto(null);
     setMeta(null);
+    setSource(null);
+    setGpsAccuracy(null);
+    setLocationError(false);
     setChecking(false);
     setLocLoading(false);
     setQualityError(null);
@@ -632,9 +743,7 @@ function PhotoSheet({ status, title, instruction, qualityCheck, onConfirm, onCan
   const qualityMessage = qualityError ? t(`photo.${qualityError}`) : null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end">
-      <div className="absolute inset-0 bg-black/60" onClick={cancelPhoto} />
-      <div className="relative bg-white w-full rounded-t-3xl shadow-2xl animate-in slide-in-from-bottom duration-300 max-h-[90vh] flex flex-col">
+    <DriverBottomSheet label={title ?? (status === 'Delivered' ? t('photo.deliveryRequired') : t('photo.take'))} onBackdrop={cancelPhoto}>
         <div className="w-10 h-1 bg-gray-300 rounded-full mx-auto mt-3 mb-1 flex-shrink-0" />
 
         {/* Header */}
@@ -649,38 +758,54 @@ function PhotoSheet({ status, title, instruction, qualityCheck, onConfirm, onCan
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5 space-y-4">
           <input
-            ref={inputRef} type="file" accept="image/*" capture="environment" disabled={saving || checking} className="hidden"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }}
+            ref={cameraInputRef} type="file" accept="image/*" capture="environment" disabled={saving || checking} className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f, 'camera'); e.target.value = ''; }}
+          />
+          <input
+            ref={galleryInputRef} type="file" accept="image/*" disabled={saving || checking} className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f, 'gallery'); e.target.value = ''; }}
           />
 
-          {!photo ? (
-            <button
-              onClick={() => inputRef.current?.click()} disabled={checking}
-              className="w-full border-2 border-dashed border-gray-200 rounded-2xl py-16 flex flex-col items-center gap-4 bg-gray-50 active:bg-gray-100 transition-colors"
-            >
-              <div className="w-24 h-24 bg-green-100 rounded-full flex items-center justify-center">
-                <Camera className="w-12 h-12 text-green-600" />
+          {!photo && existingPhoto && !replacing ? (
+            <>
+              <img src={existingPhoto.url} alt={title ?? t('photo.captured')} className="max-h-52 w-full rounded-xl bg-gray-50 object-contain" />
+              <PhotoDetails photo={existingPhoto} source="unknown" />
+              <button type="button" onClick={retakePhoto} disabled={saving}
+                className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 active:bg-gray-100 focus-visible:outline-2 focus-visible:outline-green-700 disabled:opacity-50">
+                <RotateCcw className="h-4 w-4" aria-hidden="true" />{t('photo.retake')}
+              </button>
+            </>
+          ) : !photo ? (
+            <div className="space-y-3 text-center">
+              <Camera className="mx-auto h-9 w-9 text-green-700" aria-hidden="true" />
+              <div>
+                <p className="text-lg font-bold text-gray-900">{t('photo.addPhoto', { title: title ?? t('photo.take') })}</p>
+                <p className="mt-1 text-sm text-gray-600">{t('photo.chooseSource')}</p>
               </div>
-              <div className="text-center">
-                <p className="text-xl font-bold text-foreground">{checking ? t('photo.checking') : t('photo.openCamera')}</p>
-                {!checking && <p className="text-base text-gray-400 mt-1">{t('photo.gallery')}</p>}
-              </div>
-            </button>
+              <button type="button" onClick={() => cameraInputRef.current?.click()} disabled={checking}
+                className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-green-700 px-4 py-3 text-base font-bold text-white hover:bg-green-800 focus-visible:outline-2 focus-visible:outline-green-700 disabled:opacity-50">
+                <Camera className="h-5 w-5" aria-hidden="true" />{t('photo.openCamera')}
+              </button>
+              <button type="button" onClick={() => galleryInputRef.current?.click()} disabled={checking}
+                className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-gray-300 bg-white px-4 py-3 text-base font-semibold text-gray-800 hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-green-700 disabled:opacity-50">
+                <Images className="h-5 w-5" aria-hidden="true" />{t('photo.uploadGallery')}
+              </button>
+            </div>
           ) : (
             <>
               {/* Photo preview */}
               <div className="rounded-2xl overflow-hidden border border-gray-200 bg-black">
-                <img src={photo} alt={t('photo.captured')} className="w-full max-h-60 object-cover" />
+                <img src={photo} alt={t('photo.captured')} className="w-full max-h-60 object-contain" />
               </div>
 
               {/* Retake */}
               <button
                 onClick={retakePhoto} disabled={saving}
-                className="flex items-center gap-2 text-base text-gray-500 font-semibold py-1 disabled:opacity-50"
+                className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 active:bg-gray-100 focus-visible:outline-2 focus-visible:outline-green-700 disabled:opacity-50"
               >
-                <RotateCcw className="w-4 h-4" /> {t('photo.retake')}
+                <RotateCcw className="w-4 h-4" aria-hidden="true" /> {t('photo.retake')}
               </button>
 
               {/* Receipt-style meta */}
@@ -694,29 +819,25 @@ function PhotoSheet({ status, title, instruction, qualityCheck, onConfirm, onCan
                   <div className="w-5 h-5 border-2 border-green-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
                   <span className="text-base text-gray-500">{t('photo.gettingLocationLong')}</span>
                 </div>
-              ) : meta && (
-                <div className="bg-green-50 border border-green-200 rounded-2xl px-5 py-5 space-y-4">
-                  <div>
-                    <p className="text-xs font-bold text-green-600 uppercase tracking-widest">{t('photo.dateTime')}</p>
-                    <p className="text-lg font-bold text-foreground mt-1">{meta.timestamp}</p>
-                  </div>
-                  <div className="h-px bg-green-200" />
-                  <div>
-                    <p className="text-xs font-bold text-green-600 uppercase tracking-widest">{t('photo.location')}</p>
-                    <p className="text-lg font-bold text-foreground mt-1 break-words leading-snug">{meta.location === 'Location unavailable' ? t('photo.locationUnavailable') : meta.location === 'Location not supported' ? t('photo.locationUnsupported') : meta.location}</p>
-                  </div>
-                </div>
-              )}
+              ) : meta && <>
+                <PhotoDetails photo={meta} source={source ?? 'unknown'} accuracy={gpsAccuracy} />
+                {source === 'camera' && <button type="button" onClick={() => requestDeviceLocation(meta.url, meta.timestamp, attemptRef.current)}
+                  className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-green-700">
+                  <RefreshCw className="h-4 w-4" aria-hidden="true" />{t(locationError ? 'photo.retryLocation' : 'photo.refreshLocation')}
+                </button>}
+              </>}
             </>
           )}
 
           {qualityMessage && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{qualityMessage}</p>}
+          {locationError && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{t('photo.locationError')}</p>}
           {saveError && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{saveError}</p>}
 
-          {/* Confirm button */}
+        </div>
+        {photo && <div className="shrink-0 border-t border-gray-100 bg-white px-5 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
           <button
             disabled={!canConfirm}
-            onClick={confirmPhoto}
+            onClick={() => void confirmPhoto()}
             className={`w-full py-5 rounded-2xl font-bold text-xl transition-all ${
               canConfirm
                 ? 'bg-green-700 text-white active:bg-green-800 shadow-md'
@@ -727,12 +848,16 @@ function PhotoSheet({ status, title, instruction, qualityCheck, onConfirm, onCan
              !photo       ? t('photo.takeFirst')  :
              locLoading   ? t('photo.gettingLocation') :
              saving       ? t('photo.saving') :
+             source === 'gallery' && locationError ? t('photo.retryLocation') :
              status === 'Delivered' ? t('photo.confirmDelivered') : t('photo.confirm')}
           </button>
-        </div>
-        <div className="h-4 flex-shrink-0" />
-      </div>
-    </div>
+          {source === 'gallery' && locationError && <button type="button" disabled={saving}
+            onClick={() => void confirmPhoto(true)}
+            className="mt-2 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-4 text-sm font-semibold text-gray-700 hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-green-700">
+            {t('photo.continueWithoutLocation')}
+          </button>}
+        </div>}
+    </DriverBottomSheet>
   );
 }
 
@@ -752,15 +877,13 @@ function ReasonSheet({ title, subtitle, reasons, variant, onSubmit, onCancel }: 
   const btn     = variant === 'amber' ? 'bg-amber-500' : 'bg-red-600';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end">
-      <div className="absolute inset-0 bg-black/60" onClick={onCancel} />
-      <div className="relative bg-white w-full rounded-t-3xl shadow-2xl animate-in slide-in-from-bottom duration-300">
-        <div className="w-10 h-1 bg-gray-300 rounded-full mx-auto mt-3 mb-1" />
-        <div className="px-5 py-4 border-b border-gray-100">
+    <DriverBottomSheet label={title} onBackdrop={onCancel}>
+        <div className="w-10 h-1 shrink-0 bg-gray-300 rounded-full mx-auto mt-3 mb-1" />
+        <div className="shrink-0 px-5 py-4 border-b border-gray-100">
           <h3 className="text-xl font-bold text-foreground">{title}</h3>
           <p className="text-sm text-gray-400 mt-0.5">{subtitle}</p>
         </div>
-        <div className="px-5 py-4 space-y-3">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4 space-y-3">
           <select value={selected} onChange={(e) => setSelected(e.target.value)}
             className="w-full px-4 py-4 bg-gray-50 border border-gray-200 rounded-2xl text-base focus:outline-none focus:ring-2 focus:ring-primary/30">
             <option value="">{t('reason.choose')}</option>
@@ -772,7 +895,7 @@ function ReasonSheet({ title, subtitle, reasons, variant, onSubmit, onCancel }: 
               className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-base resize-none focus:outline-none focus:ring-2 focus:ring-primary/30" />
           )}
         </div>
-        <div className="px-5 pb-6 flex gap-3">
+        <div className="shrink-0 border-t border-gray-100 bg-white px-5 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] flex gap-3">
           <button onClick={onCancel} className="flex-1 py-4 border border-gray-200 rounded-2xl text-base font-semibold text-gray-600">
             {t('common.cancel')}
           </button>
@@ -781,9 +904,7 @@ function ReasonSheet({ title, subtitle, reasons, variant, onSubmit, onCancel }: 
             {t('common.submit')}
           </button>
         </div>
-        <div className="h-4" />
-      </div>
-    </div>
+    </DriverBottomSheet>
   );
 }
 
@@ -1293,6 +1414,15 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   const [languageNotice, setLanguageNotice] = useState<DriverLanguage | null>(null);
   const [statusNotice, setStatusNotice] = useState<TaskStatus | null>(null);
   const [focusedDocType, setFocusedDocType] = useState<string | null>(null);
+  const taskScrollRef = useRef<HTMLDivElement>(null);
+  const taskHeaderRef = useRef<HTMLElement>(null);
+  const stickyActionRef = useRef<HTMLDivElement>(null);
+  const photoHighlightTimer = useRef<number | null>(null);
+  const scrollHideTimer = useRef<number | null>(null);
+  const [highlightPhotoKey, setHighlightPhotoKey] = useState<OperationalPhotoKey | null>(null);
+  const [autoGuideAssignmentId, setAutoGuideAssignmentId] = useState<string | null>(null);
+  const [scrollTopVisible, setScrollTopVisible] = useState(false);
+  const [stickyActionHeight, setStickyActionHeight] = useState(0);
   const completionSnapshot = useRef<DriverCompletionSnapshot | null>(null);
   const reviewNotificationSnapshot = useRef<{ assignmentId: string | null; ids: Set<string> } | null>(null);
   const issueSnapshot = useRef<{ assignmentId: string | null; open: boolean } | null>(null);
@@ -1307,6 +1437,60 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   }, []);
   const closeHistoryDetail = useCallback(() => setSelectedHistoryId(null), []);
   const closeDrawer = useCallback(() => setActiveDrawer(null), []);
+
+  const scrollToPhoto = useCallback((key: OperationalPhotoKey, section = false) => {
+    const content = taskScrollRef.current;
+    if (!content) return;
+    const target = content.querySelector<HTMLElement>(section
+      ? `[data-driver-photo-section="${key}"]` : `[data-driver-photo-key="${key}"]`);
+    if (!target) return;
+    const scroller = content.scrollHeight > content.clientHeight + 1 ? content : window;
+    const rect = target.getBoundingClientRect();
+    const visual = window.visualViewport;
+    const visibleTop = Math.max(taskHeaderRef.current?.getBoundingClientRect().bottom ?? 0, visual?.offsetTop ?? 0) + 12;
+    const visibleBottom = (visual ? visual.offsetTop + visual.height : window.innerHeight) - (stickyActionRef.current?.getBoundingClientRect().height ?? 0) - 12;
+    const delta = section ? rect.top - visibleTop
+      : rect.top < visibleTop || rect.bottom > visibleBottom
+        ? (rect.top + rect.bottom) / 2 - (visibleTop + visibleBottom) / 2 : 0;
+    if (Math.abs(delta) > 8) scroller.scrollBy({ top: delta, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+    setHighlightPhotoKey(key);
+    if (photoHighlightTimer.current) window.clearTimeout(photoHighlightTimer.current);
+    photoHighlightTimer.current = window.setTimeout(() => setHighlightPhotoKey(null), 1800);
+  }, []);
+
+  useEffect(() => () => {
+    if (photoHighlightTimer.current) window.clearTimeout(photoHighlightTimer.current);
+    if (scrollHideTimer.current) window.clearTimeout(scrollHideTimer.current);
+  }, []);
+
+  useEffect(() => {
+    if (screen !== 'task') { setScrollTopVisible(false); return; }
+    const content = taskScrollRef.current;
+    if (!content) return;
+    const onScroll = () => {
+      const position = Math.max(content.scrollTop, window.scrollY);
+      setScrollTopVisible(position > 400);
+      if (scrollHideTimer.current) window.clearTimeout(scrollHideTimer.current);
+      if (position > 400) scrollHideTimer.current = window.setTimeout(() => setScrollTopVisible(false), 3000);
+    };
+    content.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+    return () => {
+      content.removeEventListener('scroll', onScroll);
+      window.removeEventListener('scroll', onScroll);
+      if (scrollHideTimer.current) window.clearTimeout(scrollHideTimer.current);
+    };
+  }, [screen, data?.assignment?.id]);
+
+  useEffect(() => {
+    const action = stickyActionRef.current;
+    if (!action || screen !== 'task') { setStickyActionHeight(0); return; }
+    const observer = new ResizeObserver(() => setStickyActionHeight(action.getBoundingClientRect().height));
+    observer.observe(action);
+    setStickyActionHeight(action.getBoundingClientRect().height);
+    return () => observer.disconnect();
+  }, [screen, data?.assignment?.id, data?.assignment?.taskStatus, data?.assignment?.operationalStage]);
 
   useEffect(() => {
     if (screen !== 'history' || !historyHighlightId) return;
@@ -1478,7 +1662,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   }, [data?.assignment?.id, data?.assignment?.driverAcknowledgedAt]);
 
   /* ── Handlers ── */
-  const handlePhotoConfirmed = async (photo: StatusPhoto) => {
+  const handlePhotoConfirmed = async (photo: StatusPhoto, source: 'camera' | 'gallery') => {
     if (!photoTarget || !data?.assignment) return;
     const status = photoTarget;
     const assignment = data.assignment;
@@ -1489,7 +1673,8 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
       // Every operational status requires a real Storage upload before its status changes.
       const storedUrl = await uploadImage(photo.url, path);
       if (!sessionActiveRef.current) return;
-      const updates = { taskStatus: status, statusPhotos: { ...(assignment.statusPhotos ?? {}), [status]: { ...photo, url: storedUrl } } };
+      const stored = savedPhotoMetadata(photo, source, storedUrl, new Date().toISOString());
+      const updates = { taskStatus: status, statusPhotos: { ...(assignment.statusPhotos ?? {}), [status]: stored } };
       await driverUpdate(driverName, assignment.id, updates);
       if (!sessionActiveRef.current) return;
       setData((prev) => prev?.assignment?.id === assignment.id
@@ -1519,7 +1704,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
     }
   };
 
-  const handleOperationalPhotoConfirmed = async (photo: StatusPhoto) => {
+  const handleOperationalPhotoConfirmed = async (photo: StatusPhoto, source: 'camera' | 'gallery') => {
     const assignment = data?.assignment;
     const category = operationalPhotoTarget;
     if (!assignment || !category) return;
@@ -1528,7 +1713,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
     try {
       const url = await uploadImage(photo.url, `photos/${assignment.id}/${category}_${Date.now()}.jpg`);
       if (!sessionActiveRef.current) return;
-      const stored = { ...photo, url };
+      const stored = savedPhotoMetadata(photo, source, url, new Date().toISOString());
       await driverUpdate(driverName, assignment.id, { statusPhotos: { [category]: stored } });
       if (!sessionActiveRef.current) return;
       // The slot counts only after Storage and its status_photos row both saved.
@@ -1593,7 +1778,12 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
       if (!sessionActiveRef.current) return false;
       setActionError('');
       // Let the shared slider show its short success state before changing screens.
-      return () => { if (sessionActiveRef.current) setData(fresh); };
+      return () => {
+        if (!sessionActiveRef.current) return;
+        if (phase === 'assigned' && fresh.assignment?.id === assignment.id
+          && getDriverPhase(fresh.assignment) === 'pickup') setAutoGuideAssignmentId(assignment.id);
+        setData(fresh);
+      };
     } catch (error) {
       if (!await onCheckSession() || !sessionActiveRef.current) return false;
       console.error('[driver workflow] transition failed:', error);
@@ -1710,6 +1900,15 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   const postDelivery = isDelivered || displayStatus === 'Awaiting Documents' || displayStatus === 'Under Review'
     || displayStatus === 'Needs Correction' || displayStatus === 'Completed';
 
+  useEffect(() => {
+    if (!autoGuideAssignmentId || screen !== 'task' || a?.id !== autoGuideAssignmentId || phase !== 'pickup') return;
+    const frame = window.requestAnimationFrame(() => {
+      scrollToPhoto('pickup_front', true);
+      setAutoGuideAssignmentId(null);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [autoGuideAssignmentId, screen, a?.id, phase, scrollToPhoto]);
+
   /* Normalized docs (all 6 required, merged with actual data) */
   const normalizedDocs: NormDoc[] = useMemo(() => {
     if (!a) return [];
@@ -1722,7 +1921,8 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   const uploadedCt = normalizedDocs.filter((d) => d.uploaded).length;
   const approvedCt = normalizedDocs.filter((d) => d.docStatus === 'approved' && d.uploaded).length;
 
-  /* Driver-facing notifications (derived from doc statuses) */
+  /* Current document review summaries are useful shortcuts, but they are not
+     persisted Driver notification records and have no read state. */
   const driverNotifs = useMemo((): DriverNotif[] => {
     const notifs: DriverNotif[] = [];
     normalizedDocs.forEach((doc) => {
@@ -1874,14 +2074,18 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
 
   const DriverDrawers = activeDrawer === 'notifications' ? (
     <DriverDrawer title={t('notifications.title')} onClose={closeDrawer}>
-      {driverNotifs.length ? <>
-        <p className="text-sm text-gray-500 mb-4">{t('notifications.subtitle')}</p>
+      <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+        <p className="text-sm font-semibold text-amber-950">{t('notifications.unavailable')}</p>
+        <p className="mt-1 text-sm leading-relaxed text-amber-900">{t('notifications.unavailableDescription')}</p>
+      </div>
+      {driverNotifs.length > 0 && <section aria-label={t('notifications.documentReview')} className="mt-5">
+        <h3 className="mb-3 text-sm font-bold text-gray-700">{t('notifications.documentReview')}</h3>
         <div className="grid min-w-0 grid-cols-1 gap-3">
           {notificationRows.map((notification, index) => <DriverNotificationRow key={notification.id} notification={notification} index={index}
             onOpen={notification.type === 'rejection' ? () => openDocumentFromNotification(notification.docType) : undefined} />)}
         </div>
         <DriverPageControls page={shownNotificationPage} pages={notificationPages} onPage={setNotificationPage} />
-      </> : <div className="bg-gray-50 rounded-2xl border border-gray-200 px-5 py-8 text-center text-gray-500">{t('notifications.empty')}</div>}
+      </section>}
     </DriverDrawer>
   ) : activeDrawer === 'menu' ? (
     <DriverDrawer title={t('menu.title')} onClose={closeDrawer} compact>
@@ -1974,11 +2178,10 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
             </div>
             <div className="grid grid-cols-2 gap-2.5 mt-3">
               <button type="button" onClick={() => { setNotificationPage(1); setActiveDrawer('notifications'); }} aria-haspopup="dialog"
-                aria-label={`${t('notifications.title')}${rejectedNotifs.length > 0 ? `, ${rejectedNotifs.length === 1 ? t('notifications.correctionOne') : t('notifications.correctionMany', { count: rejectedNotifs.length })}` : ''}`}
+                aria-label={t('notifications.title')}
                 className="min-w-0 min-h-12 px-2 rounded-xl border border-gray-200 bg-white text-gray-700 text-sm sm:text-base font-semibold flex items-center justify-center gap-3 focus-visible:outline-2 focus-visible:outline-green-700">
                 <span className="relative shrink-0" aria-hidden="true">
                   <Bell className="w-5 h-5" />
-                  {rejectedNotifs.length > 0 && <span className="absolute -top-2 -right-2 min-w-5 h-5 px-1 rounded-full bg-red-600 text-white text-xs flex items-center justify-center">{rejectedNotifs.length}</span>}
                 </span>
                 <span className="min-w-0 leading-tight">{t('notifications.title')}</span>
               </button>
@@ -2185,6 +2388,15 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   const photosIncomplete = !!a && requiredPhotoKeys.some((key) => !a.statusPhotos?.[key]?.url);
   const pickupTruckPhotosIncomplete = phase === 'pickup' && !!a && OPERATIONAL_PHOTOS.pickup
     .some((key) => !a.statusPhotos?.[key]?.url);
+  const guideKeys = phase === 'pickup' ? OPERATIONAL_PHOTOS.pickup : requiredPhotoKeys;
+  const photoProgress = getRequiredPhotoProgress(guideKeys, a?.statusPhotos);
+  const nextPhotoKey = (phase === 'pickup' && !photoProgress.nextMissing && !a?.statusPhotos?.loading_before?.url
+    ? 'loading_before' : photoProgress.nextMissing) as OperationalPhotoKey | null;
+  const photoLabel = (key: OperationalPhotoKey) => key.endsWith('_front') ? t('workflow.front')
+    : key.endsWith('_left') ? t('workflow.left') : key.endsWith('_right') ? t('workflow.right')
+      : key.endsWith('_rear') ? t('workflow.rear') : key === 'loading_before' ? t('workflow.beforeLoading')
+        : key === 'loading_after' ? t('workflow.afterLoading')
+          : key === 'unloading_before' ? t('workflow.beforeUnloading') : t('workflow.afterUnloading');
   const operationalPhotoName = operationalPhotoTarget?.endsWith('_front') ? t('workflow.front')
     : operationalPhotoTarget?.endsWith('_left') ? t('workflow.left')
     : operationalPhotoTarget?.endsWith('_right') ? t('workflow.right')
@@ -2198,7 +2410,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
     <div className="min-h-screen bg-gray-50 flex flex-col">
 
       {/* ── Task Header ── */}
-      <header className="sticky top-0 z-20 border-b border-gray-200 bg-white shadow-sm">
+      <header ref={taskHeaderRef} className="sticky top-0 z-20 border-b border-gray-200 bg-white shadow-sm">
         <div className="mx-auto max-w-2xl px-4 py-3">
           <div className="flex items-center justify-between gap-2">
             <button type="button" onClick={() => setScreen('dashboard')}
@@ -2218,7 +2430,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
       {updating && <div className="h-1 bg-primary/20"><div className="h-full w-1/2 bg-primary animate-pulse rounded-full" /></div>}
 
       {/* ── Scrollable content ── */}
-      <div className="mx-auto w-full max-w-2xl flex-1 space-y-5 overflow-y-auto px-4 py-5 pb-36">
+      <div ref={taskScrollRef} style={{ paddingBottom: Math.max(144, stickyActionHeight + 24) }} className="mx-auto w-full max-w-2xl flex-1 space-y-5 overflow-y-auto px-4 py-5">
 
         {/* No assignment edge case */}
         {!a && (
@@ -2332,10 +2544,10 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
             {phase === 'pickup' && <>
               <OperationalPhotos assignment={a} keys={OPERATIONAL_PHOTOS.pickup}
                 title={t('workflow.truckPhotos')} help={t('workflow.pickupPhotosHelp')}
-                required onSelect={setOperationalPhotoTarget} />
+                required onSelect={setOperationalPhotoTarget} highlightKey={highlightPhotoKey} />
               <OperationalPhotos assignment={a} keys={['loading_before']}
                 title={t('workflow.beforeLoading')} help={t('workflow.beforeLoadingHelp')}
-                required onSelect={setOperationalPhotoTarget} />
+                required onSelect={setOperationalPhotoTarget} highlightKey={highlightPhotoKey} />
             </>}
             {phase === 'loading' && <>
               <div className="rounded-2xl border border-gray-200 bg-white p-4 text-sm text-gray-700">
@@ -2345,7 +2557,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
               </div>
               <OperationalPhotos assignment={a} keys={['loading_after']}
                 title={t('workflow.afterLoading')} help={t('workflow.afterLoadingHelp')}
-                required onSelect={setOperationalPhotoTarget} />
+                required onSelect={setOperationalPhotoTarget} highlightKey={highlightPhotoKey} />
             </>}
             {phase === 'pretrip' && <>
               {a.loadingCompletedAt && <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-900">
@@ -2355,7 +2567,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
               <p className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800">{t('workflow.parked')}</p>
               <OperationalPhotos assignment={a} keys={OPERATIONAL_PHOTOS.pretrip}
                 title={t('workflow.truckPhotos')} help={t('workflow.pretripPhotosHelp')}
-                required onSelect={setOperationalPhotoTarget} />
+                required onSelect={setOperationalPhotoTarget} highlightKey={highlightPhotoKey} />
             </>}
             {phase === 'trip_pending' && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">{t('workflow.departurePending')}</p>}
             {phase === 'legacy_picked_up' && <p className="rounded-xl border border-gray-200 bg-white p-4 text-sm text-gray-700">{t('workflow.legacyPickup')}</p>}
@@ -2369,7 +2581,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
                 <p className="mt-1">{t('workflow.arrivedAt', { time: manilaStamp(a.destinationArrivedAt ?? undefined) })}</p>
               </div>
               <OperationalPhotos assignment={a} keys={['unloading_before']}
-                title={t('workflow.beforeUnloading')} required onSelect={setOperationalPhotoTarget} />
+                title={t('workflow.beforeUnloading')} required onSelect={setOperationalPhotoTarget} highlightKey={highlightPhotoKey} />
             </>}
             {phase === 'unloading' && <>
               <div className="rounded-2xl border border-gray-200 bg-white p-4 text-sm text-gray-700">
@@ -2378,7 +2590,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
                 <ElapsedTime start={a.unloadingStartedAt} />
               </div>
               <OperationalPhotos assignment={a} keys={['unloading_after']}
-                title={t('workflow.afterUnloading')} required onSelect={setOperationalPhotoTarget} />
+                title={t('workflow.afterUnloading')} required onSelect={setOperationalPhotoTarget} highlightKey={highlightPhotoKey} />
             </>}
             {phase === 'delivery_pending' && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">{t('workflow.deliveryPending')}</p>}
 
@@ -2461,14 +2673,23 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
 
       {/* ── Sticky bottom action ── */}
       {a && !isTerminal && workflowAction && (
-        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-4 pt-4 pb-6 shadow-[0_-4px_20px_rgba(0,0,0,0.10)] z-20">
+        <div ref={stickyActionRef} className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-4 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] shadow-[0_-4px_20px_rgba(0,0,0,0.10)] z-20">
           <div className="mx-auto max-w-2xl">
-            {(photosIncomplete || blockSlider) && <p className="mb-3 text-sm font-semibold text-amber-800">
-              {issueOpen ? t('task.pauseExplanation') : blockSlider ? t('slide.reportDelay') : t(phase === 'loading' ? 'workflow.completeLoadingPhoto'
-                : phase === 'arrived' ? 'workflow.completeBeforeUnloadingPhoto'
-                  : phase === 'unloading' ? 'workflow.completeAfterUnloadingPhoto'
-                    : phase === 'pickup' && !pickupTruckPhotosIncomplete ? 'workflow.completeBeforeLoadingPhoto' : 'workflow.completeFour')}
+            {blockSlider && <p className="mb-3 text-sm font-semibold text-amber-800">
+              {issueOpen ? t('task.pauseExplanation') : t('slide.reportDelay')}
             </p>}
+            {photosIncomplete && nextPhotoKey && <button type="button" onClick={() => scrollToPhoto(nextPhotoKey)}
+              className="mb-3 flex min-h-14 w-full items-center gap-3 rounded-xl border border-gray-200 bg-white px-3 py-2 text-left text-gray-800 transition-colors hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-green-700">
+              <Camera className="h-5 w-5 shrink-0 text-gray-600" aria-hidden="true" />
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-bold">{phase === 'pickup'
+                  ? t(pickupTruckPhotosIncomplete ? 'workflow.requiredPickupPhotos' : 'workflow.truckPhotosComplete')
+                  : phase === 'pretrip' ? t('workflow.requiredPretripPhotos') : t('workflow.nextRequiredPhoto')}</span>
+                <span className="block text-xs text-gray-600">{t('workflow.photoNext', { photo: photoLabel(nextPhotoKey) })}</span>
+              </span>
+              {(phase === 'pickup' || phase === 'pretrip') && <span className="shrink-0 text-sm font-semibold">{photoProgress.captured}/{photoProgress.total}</span>}
+              <ArrowDown className="h-4 w-4 shrink-0 text-gray-500" aria-hidden="true" />
+            </button>}
             <SlideToConfirm
               label={t(workflowAction)}
               completedLabel={completedAction ? t(completedAction) : undefined}
@@ -2486,9 +2707,22 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
         </div>
       )}
 
+      <button type="button" aria-label={t('workflow.scrollTop')}
+        onClick={() => {
+          const content = taskScrollRef.current;
+          const scroller = content && content.scrollHeight > content.clientHeight + 1 ? content : window;
+          scroller.scrollTo({ top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+        }}
+        style={{ bottom: stickyActionHeight ? stickyActionHeight + 12 : undefined }}
+        className={`fixed left-1/2 z-30 flex h-12 w-12 -translate-x-1/2 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-800 shadow-md transition-opacity duration-200 focus-visible:outline-2 focus-visible:outline-green-700 ${stickyActionHeight ? '' : 'bottom-[max(1rem,env(safe-area-inset-bottom))]'} ${scrollTopVisible && !photoTarget && !operationalPhotoTarget && !delaySheet && !issueSheet && !logoutDlg && !activeDrawer && !selectedHistoryId && !completionNotice ? 'opacity-100' : 'pointer-events-none opacity-0'}`}>
+        <ArrowUp className="h-5 w-5" aria-hidden="true" />
+      </button>
+
       {/* ── Sheets / Modals ── */}
-      {photoTarget  && <PhotoSheet    status={photoTarget}  onConfirm={handlePhotoConfirmed} onCancel={() => setPhotoTarget(null)} />}
+      {photoTarget  && <PhotoSheet status={photoTarget} existingPhoto={a?.statusPhotos?.[photoTarget]}
+        onConfirm={handlePhotoConfirmed} onCancel={() => setPhotoTarget(null)} />}
       {operationalPhotoTarget && <PhotoSheet status={null}
+        existingPhoto={a?.statusPhotos?.[operationalPhotoTarget]}
         qualityCheck={OPERATIONAL_PHOTOS.pickup.includes(operationalPhotoTarget as typeof OPERATIONAL_PHOTOS.pickup[number])
           || OPERATIONAL_PHOTOS.pretrip.includes(operationalPhotoTarget as typeof OPERATIONAL_PHOTOS.pretrip[number]) ? 'truck' : 'cargo'}
         title={operationalPhotoName}

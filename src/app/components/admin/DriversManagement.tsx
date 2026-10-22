@@ -26,6 +26,7 @@ import { OPERATIONAL_STEPS, OPERATIONAL_PHOTO_GROUPS, getAdminOperationalProgres
 import { sortCompletedNewestFirst } from '../../lib/completedOrdering';
 import { statusColors } from '../../data/statusColors';
 import { assignmentDisplayStatusConfig, canCompleteAssignment, getAssignmentDisplayStatus, getAssignmentDocumentProgress, getDocumentAgingState, type AssignmentDisplayStatus } from '../../lib/assignmentWorkflow';
+import { DISPATCH_STATUS_OPTIONS, matchesDispatchStatus, type DispatchStatus } from '../../lib/dispatchStatusFilter';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
 import { sortNewestFirst, markLocalRecordAdded, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
 import { ADMIN_NAVIGATION_EVENT, pushAdminNavigation } from '../../lib/adminNavigation';
@@ -1892,6 +1893,7 @@ export default function DriversManagement({
   const [missingTarget, setMissingTarget] = useState(false);
   const [editId,         setEditId]         = useState<string | null>(null);
   const [classificationFilter, setClassificationFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState<DispatchStatus | ''>('');
   const [completedOpen, setCompletedOpen] = useState(false);
   const [reviewQueueOpen, setReviewQueueOpen] = useState(reviewQueueRequested);
 
@@ -1908,6 +1910,7 @@ export default function DriversManagement({
   useLayoutEffect(() => {
     if (!reviewQueueOpen) return;
     setClassificationFilter('');
+    setStatusFilter('');
     if (search) onSearchChange('');
     setCompletedOpen(false);
     setViewDetailsId(null);
@@ -2157,13 +2160,16 @@ export default function DriversManagement({
   const matchingClassifications = classificationFilter
     ? reviewAssignments.filter((a) => trucks.find((t) => t.id === a.truckId)?.classification === classificationFilter)
     : reviewAssignments;
+  const matchingStatuses = statusFilter
+    ? matchingClassifications.filter((assignment) => matchesDispatchStatus(assignment, statusFilter))
+    : matchingClassifications;
   const normalVisibleAssignments = sortNewestFirst(sq
-    ? matchingClassifications.filter((a) =>
+    ? matchingStatuses.filter((a) =>
         [a.truckPlate, a.id, a.driverName, a.destination, a.destinationArea ?? '', a.company, a.taskStatus].some((f) =>
           f.toLowerCase().includes(sq)
         )
       )
-    : matchingClassifications, (assignment) => assignment.id);
+    : matchingStatuses, (assignment) => assignment.id);
   const visibleAssignments = focusedAssignmentId
     ? assignments.filter((assignment) => assignment.id === focusedAssignmentId)
     : normalVisibleAssignments;
@@ -2223,7 +2229,7 @@ export default function DriversManagement({
     setCompletedOpen(false);
     pushAdminNavigation('Deliveries', { assignmentId }, 'completed');
   };
-  const activePageArea = useStablePageHeight(activePage.page, visibleAssignments.length, MONITOR_PAGE_SIZE, `${search}|${classificationFilter}|${focusedAssignmentId ?? ''}`);
+  const activePageArea = useStablePageHeight(activePage.page, visibleAssignments.length, MONITOR_PAGE_SIZE, `${search}|${statusFilter}|${classificationFilter}|${focusedAssignmentId ?? ''}`);
 
   const viewDetailsAssign = viewDetailsId
     ? assignments.find((a) => a.id === viewDetailsId) ?? completed.find((a) => a.id === viewDetailsId)
@@ -2364,10 +2370,28 @@ export default function DriversManagement({
           </div>
           <div className="relative w-full min-w-0 xl:w-48">
             <select
+              aria-label="Assignment Status"
+              value={focusedAssignmentId ? '' : statusFilter}
+              onChange={(e) => {
+                if (focusedAssignmentId) clearAssignmentFocus();
+                setStatusFilter(e.target.value as DispatchStatus | '');
+                activePage.setPage(1);
+              }}
+              className={`h-12 w-full min-w-0 appearance-none rounded-xl border bg-white py-2 pl-3 pr-10 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-primary ${statusFilter && !focusedAssignmentId ? 'border-primary' : 'border-border'}`}
+            >
+              <option value="">All Statuses</option>
+              {DISPATCH_STATUS_OPTIONS.map((status) => (
+                <option key={status} value={status}>{status}</option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          </div>
+          <div className="relative w-full min-w-0 xl:w-48">
+            <select
               aria-label="Truck Classification"
-              value={classificationFilter}
-              onChange={(e) => { setClassificationFilter(e.target.value); activePage.setPage(1); }}
-              className={`h-12 w-full min-w-0 appearance-none rounded-xl border bg-white py-2 pl-3 pr-10 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-primary ${classificationFilter ? 'border-primary' : 'border-border'}`}
+              value={focusedAssignmentId ? '' : classificationFilter}
+              onChange={(e) => { if (focusedAssignmentId) clearAssignmentFocus(); setClassificationFilter(e.target.value); activePage.setPage(1); }}
+              className={`h-12 w-full min-w-0 appearance-none rounded-xl border bg-white py-2 pl-3 pr-10 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-primary ${classificationFilter && !focusedAssignmentId ? 'border-primary' : 'border-border'}`}
             >
               <option value="">All Classifications</option>
               {TRUCK_CLASSIFICATIONS.map((classification) => (
@@ -2405,7 +2429,7 @@ export default function DriversManagement({
       )}
 
       {/* ── Main Board ── */}
-      {validAssignments.length === 0 && !classificationFilter && !reviewQueueOpen ? (
+      {validAssignments.length === 0 && !statusFilter && !classificationFilter && !reviewQueueOpen ? (
         <div className="bg-white rounded-2xl border border-dashed border-border p-16 text-center">
           <ClipboardList className="w-14 h-14 mx-auto mb-4 text-muted-foreground/30" />
           <p className="font-semibold text-foreground mb-1">No Active Assignments</p>
@@ -2422,10 +2446,13 @@ export default function DriversManagement({
       ) : visibleAssignments.length === 0 ? (
         <div className="bg-white rounded-2xl border border-dashed border-border p-16 text-center">
           <Search className="w-12 h-12 mx-auto mb-3 text-muted-foreground/30" />
-          {reviewQueueOpen && !classificationFilter && !sq ? (
+          {reviewQueueOpen && !statusFilter && !classificationFilter && !sq ? (
             <p role="status" className="font-semibold text-foreground">No documents waiting for review.</p>
-          ) : classificationFilter ? (
-            <p className="font-semibold text-foreground">No trucks found for this classification.</p>
+          ) : statusFilter || classificationFilter ? (
+            <>
+              <p className="font-semibold text-foreground mb-1">No matching assignments</p>
+              <p className="text-sm text-muted-foreground">No assignments match the selected filters.</p>
+            </>
           ) : (
             <>
               <p className="font-semibold text-foreground mb-1">No results for "{search}"</p>

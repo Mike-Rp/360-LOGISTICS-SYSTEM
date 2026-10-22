@@ -185,6 +185,226 @@ superseded by the two-part version — do not run both.
 
 ---
 
+## DRIVER OPERATIONAL PHOTO EVIDENCE — BACKEND REQUIREMENTS
+
+**BACKEND REQUIRED — PENDING IMPLEMENTATION.** This extends the existing REQ-002
+operational photo model; it does not change the current photo or stage gates.
+
+### Current contract and gap
+
+`public.status_photos` has one row per `(assignment_id text, status text)` and
+stores `url text`, `taken_at text`, `location text`, `lat double precision`, and
+`lng double precision`. The frontend writes the row after uploading to the
+private `make-ee4d169c-media` bucket. `taken_at` is currently a client label
+created when a file is selected; it is not verified shutter time. The table
+does not store GPS accuracy, source provenance, a server upload timestamp, or
+a group reference location. There is no reliable way to reconstruct these
+values from existing rows. A Gallery selection must not be described as a
+fresh camera capture or assigned the device's current location as the image's
+original location.
+
+### Data and operations
+
+- Extend `public.status_photos` with nullable reported GPS accuracy in meters
+  (`double precision`, nonnegative when present), a constrained source value
+  (for example `camera`, `gallery`, `unknown`), a server stamped upload instant
+  (`timestamptz`), and separate nullable original capture instant/coordinates
+  only when their provenance is verified. Keep legacy `taken_at` and
+  `location` readable during migration. Existing `lat`/`lng` must retain their
+  documented meaning; do not silently reinterpret them as group coordinates.
+- Persist one independently measured reference per assignment/photo group
+  (`pickup`, `loading`, `pretrip`, `unloading`) using a dedicated table keyed by
+  `assignment_id text` (FK to `public.assignments.id`) and group key, or an
+  equivalent guarded model. Store measured latitude/longitude, reported
+  accuracy, observation time, optional derived display address, and the actor
+  who recorded/refreshed it. A fresh group reference may help presentation;
+  it must never overwrite each photo's measured coordinates.
+- Provide guarded operations to fetch/create/refresh a group reference and
+  upload/replace a photo with its metadata. Return explicit source, upload
+  time, verified capture time if available, per-photo coordinates/accuracy,
+  and group coordinates/accuracy/observed time to the existing assignment
+  fetch paths. The frontend can then show a group reference and photo GPS as
+  distinct facts and refresh a stale/poor reference without altering photos.
+- Continue using the private media bucket and signed URLs. Validate the
+  assignment/slot and caller server side. A Driver may write only evidence for
+  their own active assignment; CSR/OPM access stays within existing roles.
+  Replacement must preserve the last valid photo until the new object and row
+  save succeed. Restrict object paths to the assignment/slot or another
+  server validated namespace; do not expose the whole bucket publicly.
+- If any slot requires live camera evidence, enforce that policy server side.
+  A browser `capture` hint or client supplied `source` value alone cannot
+  prove camera provenance. Define an accepted verification mechanism before
+  rejecting Gallery for a slot. Keep current stage/photo validation rules
+  unchanged until that decision is made.
+
+### Migration and backend tests
+
+Use an additive migration. Leave historical accuracy, source, original capture
+time, and group references null/unknown unless a trustworthy audit source
+exists. Never infer them from `taken_at` text, current device GPS, dispatch
+coordinates, or reverse geocoding. Test authorized reads/writes, cross-driver
+and cross-assignment denial, concurrent photo replacement, failed upload
+rollback, server upload timestamp, source handling, accuracy bounds, group
+refresh/staleness, and legacy rows with unavailable provenance. Frontend
+group-reference display and durable per-photo accuracy/source history remain
+blocked until this contract is implemented.
+
+---
+
+## DRIVER PHOTO UPLOAD METADATA — REQ09
+
+**BACKEND REQUIRED — PENDING IMPLEMENTATION.** This narrows the operational
+photo evidence requirements above to the Camera/Gallery submission contract.
+
+### Existing backend support
+
+`public.status_photos` is keyed by `(assignment_id text, status text)` and has
+`url text`, `taken_at text`, `location text`, `lat double precision`, and
+`lng double precision`. The Driver uploads an image to the private
+`make-ee4d169c-media` bucket through `uploadImage`, then `driverUpdate`
+upserts the slot row. Both Driver and staff fetch those same rows. Thus a
+client-observed Camera event time, a client-observed Gallery upload-success
+time, and a fresh device location can be written through today's fields.
+The frontend now requests Gallery GPS at confirmation and stamps its legacy
+`taken_at` only after Storage upload succeeds. This is a **client-clock**
+upload-success time, not a server-confirmed commit time. For Camera,
+`taken_at` is when the app received the captured file, not verified shutter
+time. `lat`/`lng` are device readings at submission, not original Gallery
+image coordinates. Current CSR/OPM reads already receive these legacy fields.
+
+### Missing capabilities and required behavior
+
+- Add a server-stamped `uploaded_at timestamptz` for each successful photo
+  replacement/insert. Return it to Driver and CSR/OPM. The stamp must be tied
+  to the committed photo row, not to picker opening or a failed Storage upload.
+- Add a nullable `capture_observed_at timestamptz` for Camera file-return time.
+  This is distinct from `uploaded_at`; do not call it verified shutter time.
+- Add a constrained `source` (`camera`, `gallery`, `unknown`) and nullable
+  nonnegative `gps_accuracy_m double precision` on `public.status_photos`.
+  The browser's camera capture hint is not proof of original image provenance;
+  define the trust level of the stored source accordingly.
+- Preserve `lat`/`lng` as individual device GPS at submission. Record the
+  observation time and clarify whether `location` is a reverse-geocoded device
+  reading. Do not equate it with original Gallery EXIF location or the separate
+  photo-group reference from the prior section. No EXIF extraction is required
+  for upload-event evidence.
+- Expose an authorized atomic metadata-save or photo-finalization operation
+  for the existing assignment/slot, ideally coordinated with the private
+  Storage object. Reject cross-assignment writes. On failed replacement,
+  retain the prior row/object; avoid duplicate records and orphaned objects.
+  Preserve existing photo quality, GPS, and stage gates.
+
+### Frontend contract, migration, and tests
+
+Return the saved `status_photos` slot with its `url`, `source`,
+`capture_observed_at`, `uploaded_at`, `lat`, `lng`, `gps_accuracy_m`,
+`location`, and device-location observation time through the existing Driver
+and staff assignment fetches. Update `src/app/lib/db.ts` mapping and
+`StatusPhoto` only once these fields exist. Photo Details can then label
+Camera and Gallery times/locations consistently after reload and in CSR/OPM
+views. Until then, saved source and accuracy must display as unavailable;
+the client must not infer them from filename, GPS, or `taken_at`.
+
+Use an additive migration. Leave unknown historical source, accuracy, and
+capture-event time null. Do not backfill a server upload instant from a
+yearless label or current time. Test Camera and Gallery saves with and without
+GPS, server timestamp on successful commit, failed replacement retaining old
+evidence, concurrent replacement of one slot, legacy rows, staff read access,
+and denial of other drivers' assignments.
+
+---
+
+## DRIVER NOTIFICATIONS — REQ10
+
+**BACKEND REQUIRED — PENDING IMPLEMENTATION.** The Driver drawer cannot truthfully
+show a persisted notification feed, unread count, or Mark as Read actions with
+the current table, policies, and client helpers. The current Driver UI derives
+document review summaries from its active assignment's document statuses;
+these are useful shortcuts, but are not notification rows and have no read
+state or trustworthy event time.
+
+### A. Existing implementation
+
+`public.notifications` has `id text` PK, `type` constrained to `doc_upload`,
+`status_update`, `delay_report`, `issue_report`, `message`, `assignment_id text`,
+`driver_name`, `truck_plate`, optional `doc_type`/`status_update`/`reason`,
+`read boolean default false`, `time_label`, `navigate_to`, and
+`created_at timestamptz default now()`. It has no recipient Driver ID. Its
+`notifs_select` policy is staff-only; `notifs_update` allows `can_write()`
+staff only. Drivers can insert a row for an assignment they own but cannot
+read or mark any row. `loadAdminData()` fetches the staff feed;
+`markNotificationsRead(ids)` writes its `read` flag as a staff action.
+`loadDriverData(driverId)` fetches assignment, documents, photos, and delays,
+but no notification rows. Driver login has the stable `drivers.id` and backend
+`my_driver_id()` derives that identity from the authenticated user. Current
+Driver document-review sound is based on status transitions, not persisted
+notification IDs.
+
+`dispatch_assignment` writes `task_assigned` activity, not a Driver
+notification. Staff cancellation currently inserts a staff `status_update`
+notification via `notifyAssignmentCancelled`; document rejection changes a
+document row and activity but has no Driver-targeted notification. Issue
+resolution does not create a Driver notification in the inspected path.
+
+### B. Recipient, payload, and event creation
+
+Extend the **existing** `public.notifications` architecture with a nullable
+`recipient_driver_id text` FK to `public.drivers(id)` for Driver-targeted
+rows. Keep current staff rows distinguishable (null recipient or an explicit
+audience) and ensure `loadAdminData()` does not treat Driver rows as staff
+cards. Do not derive ownership from `driver_name`, truck plate, or a mutable
+assignment relationship after reassignment. Return `id`, recipient ID,
+event type, `message`/title data, `assignment_id`, optional `doc_type`,
+`created_at`, `read`, and any `read_at` chosen for audit. Use the full
+`created_at` instant for Manila grouping; `time_label` is display-only.
+
+Create one idempotent Driver notification for actual supported events:
+successful assignment dispatch (inside or after the guarded operation with
+reliable retry), authorized assignment cancellation, document rejection, and
+issue resolution once that backend workflow exists. Link each row to the
+correct Driver at event time. Decide whether document approval is also a
+Driver event; current UI shows that review status but no persisted event.
+Extend the `type` constraint or add a clear event subtype for the chosen
+Driver events. Never create rows from polling or inferred frontend changes.
+Keep the existing staff notification/business rules intact.
+
+### C. Read state and authorization
+
+Permit a Driver to **select only** rows with
+`recipient_driver_id = public.my_driver_id()` and an active valid session.
+Provide guarded operations such as `mark_driver_notification_read(p_id text)`
+and `mark_all_driver_notifications_read()` that change only `read` (and
+`read_at`, if added) for that caller's rows. Return affected IDs/count and
+updated state. Do not grant a Driver unrestricted UPDATE of notification
+message, recipient, type, or assignment fields. Staff read/update behavior
+must continue as before. The frontend needs a scoped fetch ordered by
+`created_at desc` (including read and unread rows) and an unread count from
+the same authorized dataset. A persisted read flag must survive polling,
+refresh, and sign-in; opening the drawer alone must not mark rows read.
+
+### D. Frontend integration and tests
+
+After deployment, add Driver-scoped fetch and read helpers in
+`src/app/lib/db.ts` and include the feed in the existing Driver poll rather
+than adding an interval. Gate results by Driver ID and the existing poll
+sequence/session checks. Seed observed notification IDs on first successful
+load; play the shared sound once for a later batch of new IDs when enabled.
+Only show Mark as Read / Mark All as Read after the corresponding backend write
+succeeds; derive the bell badge from persisted unread rows. Group by the
+existing `Asia/Manila` Today/Yesterday/Earlier helper and route actions only
+from an explicit assignment/document target. Keep document review status
+shortcuts independent of notification read state.
+
+Backend tests: recipient assignment and cross-driver isolation; event creation
+and idempotency for each supported event; correct assignment/doc payload;
+ordered fetch and unread count; marking one and all without deleting rows;
+read persistence after refresh; denial of another Driver's read/update;
+staff feed separation; concurrent duplicate read calls; and old/replaced
+session denial. Frontend functional tests remain blocked until these reads,
+writes, and persisted event rows exist.
+
+---
+
 ## [REQ-002] Persisted Driver Pickup, Loading, Arrival, and Unloading Workflow
 
 **Status:** In Progress
