@@ -13,10 +13,10 @@ import DocumentsSummaryCard from './DocumentsSummaryCard';
 import { OperationalEvidence } from './ShipmentPhotoEvidence';
 import UploadedFilePreviewModal from './UploadedFilePreviewModal';
 
-function SummaryField({ label, value }: { label: string; value?: string | null }) {
+function SummaryField({ label, value, emphasized = false }: { label: string; value?: string | null; emphasized?: boolean }) {
   return <div className="min-w-0">
     <dt className="text-[13px] font-medium text-muted-foreground">{label}</dt>
-    <dd className="mt-0.5 break-words text-sm font-medium text-foreground">{value || '—'}</dd>
+    <dd className={`mt-0.5 break-words [overflow-wrap:anywhere] text-sm text-foreground ${emphasized ? 'font-bold' : 'font-medium'}`}>{value || '—'}</dd>
   </div>;
 }
 
@@ -68,16 +68,20 @@ export default function CompletedDeliverySummary({ assignment, truck, onClose }:
             <section aria-labelledby="completed-shipment-heading" className="rounded-xl border border-border bg-white p-4">
               <h3 id="completed-shipment-heading" className="mb-4 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Shipment Details</h3>
               <dl className="grid grid-cols-1 gap-x-4 gap-y-3 min-[430px]:grid-cols-2">
-                <SummaryField label="Truck plate" value={assignment.truckPlate} />
+                <SummaryField label="Truck Plate" value={assignment.truckPlate} />
                 <SummaryField label="Classification" value={truck?.classification} />
-                <SummaryField label="Driver" value={assignment.driverName} />
+                <SummaryField label="Driver" value={assignment.driverName} emphasized />
                 <SummaryField label="Client" value={assignment.company} />
-                <div className="min-[430px]:col-span-2"><SummaryField label="Route" value={getAssignmentRoute(assignment)} /></div>
+              </dl>
+              <dl className="mt-4 space-y-4 border-t border-border pt-4">
+                <SummaryField label="Route" value={getAssignmentRoute(assignment)} />
                 <SummaryField label="Pickup Location" value={assignment.pickupLocation} />
-                <SummaryField label="Destination" value={assignment.destinationArea} />
-                <div className="min-[430px]:col-span-2"><SummaryField label="Delivery Location" value={getDeliveryLocation(assignment)} /></div>
-                <SummaryDateTimeField label="Pickup date / time" value={[assignment.pickedUpDate, assignment.pickupTime].filter(Boolean).join(' · ')} />
-                <SummaryDateTimeField label="Delivered date / time" value={deliveredAt} />
+                <SummaryField label="Delivery Location" value={getDeliveryLocation(assignment)} />
+              </dl>
+              <dl className="mt-4 grid grid-cols-1 gap-x-4 gap-y-3 border-t border-border pt-4 min-[390px]:grid-cols-2">
+                <SummaryDateTimeField label="Scheduled Pickup" value={[assignment.pickedUpDate, assignment.pickupTime].filter(Boolean).join(' · ')} />
+                <SummaryDateTimeField label="Picked Up At" value={assignment.departedAt} />
+                <SummaryDateTimeField label="Delivered At" value={deliveredAt} />
               </dl>
             </section>
 

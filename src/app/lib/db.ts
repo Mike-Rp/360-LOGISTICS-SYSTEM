@@ -396,9 +396,15 @@ export async function loadAdminData(): Promise<AdminData & ArchivedData> {
   const delaysBy = groupBy(delayRows, 'assignment_id');
   const build = (r: Row) => assignmentFromRow(r, docsBy.get(r.id) ?? [], photosBy.get(r.id) ?? [], delaysBy.get(r.id) ?? []);
 
+  const completionActivityByAssignment = new Map<string, Row>();
+  for (const entry of actRows) {
+    if (entry.type === 'task_completed' && entry.assignment_id && !completionActivityByAssignment.has(entry.assignment_id)) {
+      completionActivityByAssignment.set(entry.assignment_id, entry);
+    }
+  }
   const assignments = asnRows.filter((r) => r.state === 'active').map(build);
   const completed: CompletedTask[] = asnRows.filter((r) => r.state === 'completed')
-    .map((r) => ({ ...build(r), completedAt: r.completed_at ?? '' }));
+    .map((r) => ({ ...build(r), completedAt: r.completed_at ?? '', completedEventAt: completionActivityByAssignment.get(r.id)?.ts ?? null }));
   const cancelActivityByAssignment = new Map<string, Row>();
   for (const entry of actRows) {
     if (entry.type === 'task_cancelled' && entry.assignment_id && !cancelActivityByAssignment.has(entry.assignment_id)) {

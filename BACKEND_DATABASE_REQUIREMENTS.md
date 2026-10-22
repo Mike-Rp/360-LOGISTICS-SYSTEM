@@ -48,6 +48,7 @@ and their SQL test files passed (each test rolls itself back).
 | REQ-009 Single active session (newest login wins) | `20261021000001` | `single_active_session` 15/15 | Implemented |
 | REQ-010 Store file paths, 1-hour links | `20261021000003` | `store_file_paths` 4/4 | Implemented |
 | REQ-011 Dispatch / complete as one database action | `20261021000004` | `dispatch_complete` 12/12 | Implemented |
+| REQ-012 Per-account profile persistence | Pending | Pending | Pending |
 
 ### Still needed (backend / database)
 
@@ -80,6 +81,9 @@ and their SQL test files passed (each test rolls itself back).
 11. **Data review** (no change made) — one active assignment is Delivered with
     no `departed_at`, and one was cancelled after loading (before the REQ-003
     cutoff existed).
+12. **REQ-012 profile persistence** — self-service name updates and private,
+    account-owned avatar storage. Frontend profile editing is blocked until this
+    has been implemented and verified.
 
 ## [REQ-001] Separate Destination and Delivery Location
 
@@ -1274,5 +1278,161 @@ Frontend: `db.ts` (`dispatchAssignment`, `completeAssignment`, new error codes),
 including the all-or-nothing check; TypeScript and 74 Node tests pass.
 Tested on localhost by the user (2026-10-21): no problems found. Later: block
 direct inserts/completions outside these functions.
+
+---
+
+## [REQ-012] REQ — PER-ACCOUNT PROFILE PERSISTENCE
+
+**Status:** Pending
+
+**Blocker:** BLOCKED — BACKEND REQUIRED
+
+**Approval:** Not approved for a database/backend change in this frontend task.
+
+**Area:** CSR/OPM account profile, Settings, header, private Storage.
+
+### Current state and database work
+
+`public.profiles` already has `id uuid primary key references auth.users(id)`,
+`email text`, `name text`, `role text`, and `status text`. Reuse this table and
+`profiles.name`; do not create a second profile table. Add nullable
+`avatar_path text` (or an equivalently named Storage path reference) with a
+migration. Store the private object path, never a long-lived signed URL or a
+browser data URL. Existing names need no backfill. Existing browser-wide
+`360_display_name` and `360_avatar` values have no reliable owner and must
+not be migrated to arbitrary accounts. A missing avatar means the initials
+fallback.
+
+The current `profiles_update_opm` RLS policy only permits OPM updates to CSR
+rows, while column grants allow updates to `name`, `role`, and `status`. It
+does not provide CSR/OPM self-service profile updates. Add an owner-checked,
+current-session-aware operation for name/avatar updates. Its server-side
+authorization must bind the row to `auth.uid()` and permit only `name` and
+`avatar_path`. Do not accept an arbitrary target user ID from the browser.
+Keep `email`, `role`, `status`, and other account fields out of this operation.
+Preserve OPM Team Member management, while ensuring that extending column
+grants/policies cannot let OPM change another member's avatar or let CSR edit
+OPM/another CSR. Recheck the existing `profiles_update_opm` policy and grants
+together when choosing an RPC or RLS design; a new column grant combined with
+that policy could otherwise broaden OPM writes. Honor the existing
+`session_is_current()` single-active-session rule on reads and mutations.
+
+### Private photo Storage
+
+Reuse private bucket `make-ee4d169c-media`. Existing policies cover
+`photos/<assignment-id>/...` and `docs/<assignment-id>/...` and do not authorize
+profile files. Add narrowly scoped policies/operations for an account-owned
+path such as `profiles/<auth-user-uuid>/avatar.<ext>`; verify the path owner on
+upload, read, replace, and delete using the authenticated/current session.
+Validate file type and size server-side and handle replacement/deletion so
+orphaned objects do not accumulate. Do not make the bucket public. Resolve
+the stored path to a short-lived signed URL for authorized display; renew it
+after expiry. If OPM needs to see CSR photos in Workspace Settings, define
+that read permission explicitly without granting cross-account writes.
+
+### Required operations and frontend contract
+
+- **Fetch current profile:** existing `db.ts` `fetchProfile(auth.uid())` is
+  private and used by `signInStaff()` / `restoreSession()`. Extend its mapped
+  `StaffSession` response to `{ id, email, name, role, avatarPath }` (with
+  `avatarPath: null` when absent). `email` and `role` remain server-owned.
+- **Update own Display Name:** accept a validated nonempty `name`, identify
+  the account from the current session, persist `profiles.name`, and return
+  the updated current-profile fields. Reject a replaced/ended session.
+- **Upload/change own photo:** accept a real image for an owner-scoped path,
+  persist `avatar_path` only after a successful upload, and return the new
+  profile fields plus an authorized short-lived display URL. Handle failure
+  without falsely reporting a saved profile.
+- **Remove own photo:** clear `avatar_path` for the authenticated owner and
+  remove or schedule cleanup of the old object. Return the updated profile
+  with `avatarPath: null` and `avatarUrl: null`.
+- **Resolve image URL:** given the authenticated user's permitted avatar path,
+  return an expiring signed URL. Do not persist that URL in `profiles`.
+
+The frontend should extend `src/app/lib/db.ts` with these operations once the
+backend is ready. `App.tsx` now retains one `StaffSession` as the canonical
+identity; `AdminDashboard.tsx` passes it to Settings and supplies its name to
+the navbar, dropdown, dashboard, and Workspace Settings. After a successful
+server update, replace that shared profile with the returned profile, so all
+surfaces update together. On login/restore, load the current account by ID;
+on logout/session replacement, clear profile and signed-URL state. Reject
+late responses from a prior account/session. `SettingsPanel.tsx` must only
+show success after the operation succeeds. Its name/photo edit controls are
+currently disabled in the UI because no authorized server save exists.
+
+**Migration required:** Add `profiles.avatar_path`; add/adjust the secure
+self-profile operation, privileges, and RLS; and add private Storage policies
+for account-owned avatars. Do not edit prior migrations. Backend tests should
+cover CSR/OPM self-update, cross-account and cross-role denial, protected
+email/role/status, replaced session denial, upload/replace/remove, signed URL
+expiry, and failure consistency. No migration or Supabase operation is applied
+by this frontend task.
+
+---
+
+## [REQ-013] REQ — DELIVERIES DATE / TIMESTAMP CONSISTENCY
+
+**Status: BACKEND REQUIRED — PENDING IMPLEMENTATION.** This is a handoff only;
+no migration or backend change was applied by the frontend date-column task.
+
+### Current problem and fields
+
+`public.assignments.delivery_date text` is the scheduled delivery day, while
+`picked_up_date text` and `pickup_time text` are the planned pickup appointment.
+`assignments.created_at timestamptz` is creation time. Physical delivery is
+recorded by `unloading_completed_at timestamptz` (or historical Delivered
+photo evidence). These values are not the final completion or cancellation
+event.
+
+`complete_assignment(p_id)` currently writes `assignments.completed_at text`
+as `Mon DD, HH:MI AM` in Manila time, **without a year or offset**. In the same
+transaction it writes a `public.activity_log` row with
+`type = 'task_completed'`, `assignment_id`, and server-stamped `ts
+timestamptz`. The frontend now uses that full audit timestamp for the
+Completed date where available. The yearless label cannot independently
+support reliable historical display, sorting, or date-range filtering.
+
+The authorized `cancel_assignment(p_id, p_reason, p_password)` operation sets
+`assignments.state = 'cancelled'` and writes a `task_cancelled` activity row
+with server-stamped `activity_log.ts`. There is no `assignments.cancelled_at`
+column. The frontend uses the matching audit event. A historical cancellation
+without a trustworthy audit timestamp displays `—` and is omitted from
+specific date ranges; its scheduled `delivery_date` is never presented as a
+cancellation date.
+
+### Required backend behavior and frontend contract
+
+Add a canonical full timestamp for the successful final completion transition
+and cancellation transition on `public.assignments`. A safe additive migration
+could introduce nullable `completed_at_utc timestamptz` alongside the legacy
+`completed_at text`, plus nullable `cancelled_at timestamptz`. Choose final
+names after checking connected-project schema. Set each field with server time
+inside the corresponding guarded RPC, in the same transaction as the state
+change and activity row. Do not reset either timestamp on reload, document
+review, or unrelated edits. Retain the current authorization, password check,
+reason requirement, document approval gate, and resource release logic.
+
+Return the full ISO timestamp with its timezone/offset through the existing
+assignment fetch. The frontend should map it to an explicit completion or
+cancellation instant, format it with `Asia/Manila`, and use that same instant
+for display, descending order, and date-range filtering. Keep the legacy
+display label only for backward compatibility until its consumers are
+migrated. A date-only schedule must remain a Philippine calendar date, not be
+converted as a UTC instant.
+
+### Historical records and validation
+
+Backfill only when a matching, trustworthy `task_completed` or
+`task_cancelled` audit row exists for that assignment. Do not infer a year from
+the yearless `completed_at`, use `delivery_date`, or use `created_at` as an
+event time. Missing history stays nullable and visibly unavailable. Verify
+that duplicate/stale calls do not change a previously recorded timestamp.
+
+Backend tests should cover: authorized completion and cancellation each stamp
+the correct field and audit row atomically; blocked transitions stamp nothing;
+UTC instants around Manila midnight display on the right local day; records
+sort and filter by the event instant rather than schedule; older missing rows
+remain null; concurrent/duplicate calls cannot overwrite the original time;
+unauthorized callers cannot set or edit event timestamps directly.
 
 ---

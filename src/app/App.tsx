@@ -27,9 +27,10 @@ export default function App() {
 
   /* Auth state. The session itself (who is signed in) is kept by Supabase Auth in the browser and
      restored on refresh via restoreSession() — we no longer hand-roll tokens in localStorage. */
-  const [adminRole,    setAdminRole]    = useState<AdminRole | null>(null);
-  const [adminEmail,   setAdminEmail]   = useState<string | null>(null);
-  const [adminIsOm,    setAdminIsOm]    = useState(false);
+  const [staffProfile, setStaffProfile] = useState<StaffSession | null>(null);
+  const adminRole = staffProfile?.role ?? null;
+  const adminEmail = staffProfile?.email ?? null;
+  const adminIsOm = staffProfile?.isOm ?? false;
   const [signedIn,     setSignedIn]     = useState(false);
   const [restoring,    setRestoring]    = useState(true);   // true until the "am I already signed in?" check finishes
   const [dataLoading,  setDataLoading]  = useState(false);
@@ -84,13 +85,12 @@ export default function App() {
     localStorage.removeItem('360_driver_screen');
     localStorage.removeItem('360_active_nav');
     localStorage.removeItem('360_display_name');
+    localStorage.removeItem('360_avatar');
     signedInRef.current = false;
     activeSessionRef.current = false;
     adminEmailRef.current = null;
     adminRoleRef.current = null;
-    setAdminRole(null);
-    setAdminEmail(null);
-    setAdminIsOm(false);
+    setStaffProfile(null);
     setSignedIn(false);
     setAdminLoadFinished(false);
     setDriverInfo(null);
@@ -259,20 +259,15 @@ export default function App() {
     }
     const epoch = sessionEpochRef.current;
     isPollUpdate.current = true; // block auto-save until loadData finishes
-    setAdminRole(staff.role);
-    setAdminEmail(staff.email);
-    setAdminIsOm(staff.isOm);
+    setStaffProfile(staff);
     adminRoleRef.current  = staff.role;
     adminEmailRef.current = staff.email;
     signedInRef.current   = true;
     activeSessionRef.current = true;
     setSignedIn(true);
-    if (fresh) {
-      /* Reset the device-local display name on every fresh login so a previous account's name never
-         leaks onto the next session — it now comes from this account's profile. */
-      if (staff.name) localStorage.setItem('360_display_name', staff.name);
-      else localStorage.removeItem('360_display_name');
-    }
+    // Retire the old browser-wide profile cache; the authenticated profile is authoritative.
+    localStorage.removeItem('360_display_name');
+    localStorage.removeItem('360_avatar');
     await loadData();
     if (sessionEpochRef.current !== epoch || sessionTerminationRef.current) return;
     setActiveNav(startAdminNavigation());
@@ -623,6 +618,7 @@ export default function App() {
           onResetAll={handleResetAll}
           isViewOnly={isViewOnly}
           adminRole={adminRole}
+          staffProfile={staffProfile}
           savingToDb={savingToDb}
           isOperationManager={isOperationManager}
           adminEmail={adminEmail}

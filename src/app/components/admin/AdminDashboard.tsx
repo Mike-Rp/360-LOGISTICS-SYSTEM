@@ -20,6 +20,7 @@ import { ADMIN_NAVIGATION_EVENT, adminPageFromUrl, pushAdminNavigation } from '.
 import { canDispatchAssignments, canManageFleetAccounts as mayManageFleetAccounts } from '../../lib/staffPermissions';
 import { isActivityKey, notificationDestination, type ActivityKey } from '../../lib/notificationEvents';
 import { notificationSoundEnabled, setNotificationSoundEnabled } from '../../lib/notificationSound';
+import type { StaffSession } from '../../lib/db';
 import type { Assignment, CompletedTask, LocalDriver, LocalTruck, AppNotification, AdminRole, AdminActivityEntry, AdminActivityInput } from '../../data/assignmentTypes';
 
 type NavItem = 'Dashboard' | 'Monitor' | 'Deliveries' | 'Documents' | 'Reports' | 'Accounts';
@@ -74,6 +75,7 @@ interface Props {
   onLogout: () => void;
   isViewOnly: boolean;
   adminRole: AdminRole | null;
+  staffProfile: StaffSession | null;
   savingToDb: boolean;
   onResetAll: () => Promise<void>;   // AccountsPanel awaits this
   isOperationManager: boolean;
@@ -88,7 +90,7 @@ export default function AdminDashboard({
   notifications, notificationsReady, setNotifications,
   activityLog, onLogActivity, onServerChange, archivedDrivers, archivedTrucks,
   activeNav, setActiveNav,
-  onLogout, isViewOnly, adminRole, savingToDb,
+  onLogout, isViewOnly, adminRole, staffProfile, savingToDb,
   onResetAll, isOperationManager, adminEmail,
 }: Props) {
 
@@ -190,9 +192,7 @@ export default function AdminDashboard({
   /* Dashboard "Dispatch Truck" → go to Monitor and open its existing Dispatch Truck form */
   const [dispatchOnOpen, setDispatchOnOpen] = useState(false);
 
-  /* Display name is stored the same way SettingsPanel's profile section already
-     persists it — read once at mount, this component remounts on login/logout. */
-  const [adminName, setAdminName] = useState(() => localStorage.getItem('360_display_name') ?? undefined);
+  const adminName = staffProfile?.name || undefined;
 
   /* ── Notifications preference (persisted in localStorage) ── */
   const [notifEnabled, setNotifEnabled] = useState(
@@ -328,10 +328,7 @@ export default function AdminDashboard({
       <SettingsPanel
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
-        accountName={adminName}
-        accountEmail={adminEmail}
-        accountRole={adminRole}
-        onProfileSaved={setAdminName}
+        profile={staffProfile}
         notifEnabled={notifEnabled}
         setNotifEnabled={setNotifEnabled}
         soundEnabled={soundEnabled}

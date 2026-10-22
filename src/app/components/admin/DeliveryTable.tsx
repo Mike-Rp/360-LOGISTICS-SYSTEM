@@ -5,11 +5,13 @@ import { taskStatusConfig } from '../../data/assignmentTypes';
 import { statusColors } from '../../data/statusColors';
 import { assignmentDisplayStatusConfig, getAssignmentDisplayStatus, getAssignmentDocumentProgress } from '../../lib/assignmentWorkflow';
 import { ADMIN_NAVIGATION_EVENT, adminHref, followAdminLink, pushAdminNavigation } from '../../lib/adminNavigation';
-import { matchesAssignmentDate } from '../../lib/assignmentDateFilter';
+import { deliveryDateColumn, deliveryDateHeading, matchesDeliveryPeriod, sortCancelledNewestFirst } from '../../lib/deliveryDateColumn';
+import type { DeliveryTab, DeliveryPeriod } from '../../lib/deliveryDateColumn';
 import ASNWithCopy from './ASNWithCopy';
 import CompletedDeliverySummary from './CompletedDeliverySummary';
 import DeliveryTimingBadge from './DeliveryTimingBadge';
 import { getDeliveryTimingStatus } from '../../lib/assignmentTiming';
+import { formatOperationalStamp } from '../../lib/assignmentOperational';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
 import { sortNewestFirst, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
 import { sortCompletedNewestFirst } from '../../lib/completedOrdering';
@@ -17,7 +19,7 @@ import { capacityKgOnly } from '../../data/truckTypes';
 import { getAssignmentRoute } from '../../data/assignmentRoute';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 
-type FilterPeriod = 'all' | 'today' | 'month' | 'year';
+type FilterPeriod = DeliveryPeriod;
 const DELIVERIES_PAGE_SIZE = 8;
 
 interface DeliveryTableProps {
@@ -83,8 +85,17 @@ function SummaryAction({ onClick }: { onClick: () => void }) {
   </button>;
 }
 
-function secondaryTimestamp(assignment: Assignment) {
-  return (assignment as Partial<CompletedTask>).completedAt || assignment.assignedAt;
+function DeliveryDateValue({ assignment, tab, timingNow, showLabel = false }: {
+  assignment: Assignment; tab: DeliveryTab; timingNow: Date; showLabel?: boolean;
+}) {
+  const value = deliveryDateColumn(assignment, tab);
+  return <div className="min-w-0 break-words">
+    {showLabel && <p className="text-xs font-medium text-muted-foreground">{deliveryDateHeading(tab)}</p>}
+    <p className="font-medium text-foreground">{value.date}</p>
+    {value.time && <p className="text-xs text-foreground">{value.time}</p>}
+    {tab !== 'cancelled' && <DeliveryTimingBadge timing={getDeliveryTimingStatus(assignment, timingNow)} />}
+    {value.scheduled && <p className="text-xs text-muted-foreground">Scheduled: {value.scheduled}</p>}
+  </div>;
 }
 
 function RemarksPreview({ remarks, onOpen }: { remarks: string; onOpen: () => void }) {
@@ -121,12 +132,6 @@ function TruckMetadata({ assignment, truck, query }: { assignment: Assignment; t
       <p className="break-all text-xs text-muted-foreground/75"><ASNWithCopy value={assignment.id}><Highlight text={assignment.id} query={query} /></ASNWithCopy></p>
     </div>
   );
-}
-
-/* Filters by CREATED time, compared in the browser's local time (Philippine time for the
-   team) — not UTC, which would shift anything created before 8 AM to the previous day. */
-function matchesPeriod(a: Assignment, period: FilterPeriod): boolean {
-  return matchesAssignmentDate(a, period);
 }
 
 const PERIOD_LABELS: Record<FilterPeriod, string> = {
@@ -247,20 +252,20 @@ export default function DeliveryTable({
   const matchesSearch = (fields: string[]) =>
     !q || fields.some((f) => f.toLowerCase().includes(q));
 
-  /* Time filter (created time) + search, then newest first — the same for all three tabs */
+  /* The date range follows the event named by each tab's date column. */
   const summaryAssignment = completed.find((assignment) => assignment.id === summaryId) ?? null;
   const filteredActive = sortNewestFirst(assignments
     .filter((a) => a.taskStatus !== 'Cancelled')
-    .filter((a) => matchesPeriod(a, period))
+    .filter((a) => matchesDeliveryPeriod(a, 'active', period))
     .filter((a) => matchesSearch([a.truckPlate, a.id, a.driverName, a.destination, a.destinationArea ?? '', a.company, a.taskStatus])), (assignment) => assignment.id);
 
   const filteredDone = sortCompletedNewestFirst(completed
-    .filter((c) => c.id === linkedCompletedId || (matchesPeriod(c, period) &&
+    .filter((c) => c.id === linkedCompletedId || (matchesDeliveryPeriod(c, 'completed', period) &&
       matchesSearch([c.truckPlate, c.id, c.driverName, c.destination, c.destinationArea ?? '', c.company]))));
 
-  const filteredCancelled = sortNewestFirst(cancelled
-    .filter((a) => matchesPeriod(a, period))
-    .filter((a) => matchesSearch([a.truckPlate, a.id, a.driverName, a.destination, a.destinationArea ?? '', a.company, a.taskStatus])), (assignment) => assignment.id);
+  const filteredCancelled = sortCancelledNewestFirst(cancelled
+    .filter((a) => matchesDeliveryPeriod(a, 'cancelled', period))
+    .filter((a) => matchesSearch([a.truckPlate, a.id, a.driverName, a.destination, a.destinationArea ?? '', a.company, a.taskStatus])));
 
   const activePage = usePagination(filteredActive, DELIVERIES_PAGE_SIZE);
   const completedPage = usePagination(filteredDone, DELIVERIES_PAGE_SIZE);
@@ -421,7 +426,7 @@ export default function DeliveryTable({
                   </colgroup>
                   <thead className="bg-muted/30">
                     <tr>
-                      {['TRUCK', 'DRIVER', 'ROUTE', 'CUSTOMER', 'STATUS', 'DATE', 'DOCUMENTS'].map((col) => (
+                      {['TRUCK', 'DRIVER', 'ROUTE', 'CUSTOMER', 'STATUS', deliveryDateHeading(tab), 'DOCUMENTS'].map((col) => (
                         <th key={col} className="px-2 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider break-words">{col}</th>
                       ))}
                     </tr>
@@ -445,11 +450,7 @@ export default function DeliveryTable({
                           {tab === 'cancelled' && <button type="button" onClick={() => setCancelledDetails(a)}
                             className="mt-1 block text-xs font-medium text-slate-700 underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-500">Cancellation details</button>}
                         </td>
-                        <td className="px-2 py-3 min-w-0 break-words">
-                          <p className="font-medium text-foreground">{a.deliveryDate}</p>
-                          <DeliveryTimingBadge timing={getDeliveryTimingStatus(a, timingNow)} />
-                          <p className="text-xs text-muted-foreground break-words">{secondaryTimestamp(a)}</p>
-                        </td>
+                        <td className="px-2 py-3 min-w-0"><DeliveryDateValue assignment={a} tab={tab} timingNow={timingNow} /></td>
                         <td className="px-2 py-3"><DocumentsAction assignment={a} /></td>
                       </tr>
                     ))}
@@ -476,11 +477,7 @@ export default function DeliveryTable({
                         {a.remarks && <RemarksPreview remarks={a.remarks} onOpen={() => setRemarksAssignment(a)} />}
                       </div>
                       <p className="min-w-0 font-medium text-foreground break-all"><Highlight text={a.company} query={search} /></p>
-                      <div className="min-w-0 text-sm">
-                        <p className="font-medium text-foreground break-words">{a.deliveryDate}</p>
-                        <DeliveryTimingBadge timing={getDeliveryTimingStatus(a, timingNow)} />
-                        <p className="text-xs text-muted-foreground break-words">{secondaryTimestamp(a)}</p>
-                      </div>
+                      <DeliveryDateValue assignment={a} tab={tab} timingNow={timingNow} showLabel />
                     </div>
                     <DocumentsAction assignment={a} />
                   </div>
@@ -524,7 +521,7 @@ export default function DeliveryTable({
                   </colgroup>
                   <thead className="bg-muted/30">
                     <tr>
-                      {['TRUCK', 'DRIVER', 'ROUTE', 'CUSTOMER', 'STATUS', 'DATE', 'ACTIONS'].map((col) => (
+                      {['TRUCK', 'DRIVER', 'ROUTE', 'CUSTOMER', 'STATUS', deliveryDateHeading('completed'), 'ACTIONS'].map((col) => (
                         <th key={col} className="px-2 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider break-words">{col}</th>
                       ))}
                     </tr>
@@ -546,11 +543,7 @@ export default function DeliveryTable({
                         </td>
                         <td className="px-2 py-3 font-medium text-foreground break-all"><Highlight text={c.company} query={search} /></td>
                         <td className="px-2 py-3"><AssignmentStatusBadge assignment={c} /></td>
-                        <td className="px-2 py-3 break-words text-foreground">
-                          <p className="font-medium">{c.deliveryDate}</p>
-                          <DeliveryTimingBadge timing={getDeliveryTimingStatus(c, timingNow)} />
-                          <p className="text-xs text-muted-foreground break-words">{secondaryTimestamp(c)}</p>
-                        </td>
+                        <td className="px-2 py-3"><DeliveryDateValue assignment={c} tab="completed" timingNow={timingNow} /></td>
                         <td className="px-2 py-3">
                           <SummaryAction onClick={() => setSummaryId(c.id)} />
                         </td>
@@ -579,11 +572,7 @@ export default function DeliveryTable({
                         {c.remarks && <RemarksPreview remarks={c.remarks} onOpen={() => setRemarksAssignment(c)} />}
                       </div>
                       <p className="min-w-0 font-medium text-foreground break-all"><Highlight text={c.company} query={search} /></p>
-                      <div className="min-w-0">
-                        <p className="font-medium text-foreground break-words">{c.deliveryDate}</p>
-                        <DeliveryTimingBadge timing={getDeliveryTimingStatus(c, timingNow)} />
-                        <p className="text-xs text-muted-foreground break-words">{secondaryTimestamp(c)}</p>
-                      </div>
+                      <DeliveryDateValue assignment={c} tab="completed" timingNow={timingNow} showLabel />
                     </div>
                     <SummaryAction onClick={() => setSummaryId(c.id)} />
                   </div>
@@ -620,7 +609,7 @@ export default function DeliveryTable({
           </DialogHeader>
           <dl className="space-y-3 text-sm">
             <div><dt className="text-muted-foreground">Cancelled by</dt><dd className="font-medium">{cancelledDetails?.cancelledBy ?? 'Not recorded'}</dd></div>
-            <div><dt className="text-muted-foreground">Cancelled at</dt><dd className="font-medium">{cancelledDetails?.cancelledAt ? new Date(cancelledDetails.cancelledAt).toLocaleString() : 'Not recorded'}</dd></div>
+            <div><dt className="text-muted-foreground">Cancelled at</dt><dd className="font-medium">{formatOperationalStamp(cancelledDetails?.cancelledAt) ?? 'Not recorded'}</dd></div>
             <div><dt className="text-muted-foreground">Cancellation reason</dt><dd className="whitespace-pre-wrap break-words font-medium">{cancelledDetails?.cancelReason ?? 'Not recorded'}</dd></div>
           </dl>
           <DialogFooter><DialogClose className="min-h-10 rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-muted/30">Close</DialogClose></DialogFooter>

@@ -117,6 +117,8 @@ export interface Assignment {
 
 export interface CompletedTask extends Assignment {
   completedAt: string;
+  /** Full timestamp from the persisted task_completed audit event, when available. */
+  completedEventAt?: string | null;
 }
 
 export interface LocalDriver {

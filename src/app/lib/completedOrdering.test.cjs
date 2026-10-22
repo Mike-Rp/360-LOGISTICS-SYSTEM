@@ -24,3 +24,13 @@ test('completed records sort by final completion time, with missing times last',
     ['ASN43090', 'ASN73945', 'ASN86830', 'legacy']);
   assert.equal(records[0].id, 'ASN86830');
 });
+
+test('the full completion audit timestamp wins over a yearless label', () => {
+  const records = [
+    { id: 'older', completedAt: 'Oct 22, 04:00 PM', completedEventAt: '2025-10-22T08:00:00Z' },
+    { id: 'newer', completedAt: 'Oct 20, 04:09 PM', completedEventAt: '2026-10-20T08:09:00Z' },
+    { id: 'no-year', completedAt: 'Oct 21, 01:00 PM' },
+  ];
+  assert.deepEqual(loaded.exports.sortCompletedNewestFirst(records).map(record => record.id),
+    ['newer', 'older', 'no-year']);
+});

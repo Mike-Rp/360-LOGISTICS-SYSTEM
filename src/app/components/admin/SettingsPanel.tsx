@@ -2,13 +2,12 @@ import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
   X, KeyRound, Bell, Eye, EyeOff, UserRound,
-  CheckCircle2, Camera, Pencil, MoreHorizontal, ChevronDown, Trash2,
+  CheckCircle2, Pencil, ChevronDown,
 } from 'lucide-react';
 import { changeOwnPassword, PasswordError } from '../../lib/db';
 import { playNotificationSound } from '../../lib/notificationSound';
 import { useModalFocus } from './useModalFocus';
-import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '../ui/dropdown-menu';
-import type { AdminRole } from '../../data/assignmentTypes';
+import type { StaffSession } from '../../lib/db';
 import AccountRoleBadge from './AccountRoleBadge';
 
 /* ── Field row ── */
@@ -25,69 +24,23 @@ const inputCls = (err?: boolean) =>
 interface Props {
   open: boolean;
   onClose: () => void;
-  accountName?: string;
-  accountEmail: string | null;
-  accountRole: AdminRole | null;
-  onProfileSaved: (name: string) => void;
+  profile: StaffSession | null;
   notifEnabled: boolean;
   setNotifEnabled: (v: boolean) => void;
   soundEnabled: boolean;
   setSoundEnabled: (v: boolean) => void;
 }
 
-export default function SettingsPanel({ open, onClose, accountName, accountEmail, accountRole, onProfileSaved, notifEnabled, setNotifEnabled, soundEnabled, setSoundEnabled }: Props) {
+export default function SettingsPanel({ open, onClose, profile, notifEnabled, setNotifEnabled, soundEnabled, setSoundEnabled }: Props) {
   const [openSection, setOpenSection] = useState<'security' | 'notifications' | null>(null);
   /* ── Persist notifications preference ── */
   useEffect(() => {
     localStorage.setItem('360_notif_enabled', String(notifEnabled));
   }, [notifEnabled]);
 
-  /* ── Profile state (persisted in localStorage) ── */
-  const [savedProfile, setSavedProfile] = useState(() => ({
-    name: localStorage.getItem('360_display_name') ?? accountName ?? '',
-    avatar: localStorage.getItem('360_avatar'),
-  }));
-  const [displayName, setDisplayName]   = useState(savedProfile.name);
-  const [editingName,  setEditingName]  = useState(false);
-  const [nameInput,    setNameInput]    = useState(displayName);
-  const [profileSaved, setProfileSaved] = useState(false);
-  const [profileError, setProfileError] = useState('');
-  const [photoBusy, setPhotoBusy] = useState(false);
-  const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const photoRequest = useRef(0);
-
-  /* Avatar: either uploaded data-url or null (show initials) */
-  const [avatarUrl,    setAvatarUrl]    = useState<string | null>(savedProfile.avatar);
-  const fileRef = useRef<HTMLInputElement>(null);
-
-  const clearProfileFeedback = () => {
-    if (savedTimer.current !== null) clearTimeout(savedTimer.current);
-    savedTimer.current = null;
-    setProfileSaved(false);
-    setProfileError('');
-  };
-
-  /* Reopening starts from the persisted profile; closing discards unsaved drafts. */
   useEffect(() => {
-    if (open) {
-      const profile = {
-        name: localStorage.getItem('360_display_name') ?? accountName ?? '',
-        avatar: localStorage.getItem('360_avatar'),
-      };
-      setSavedProfile(profile);
-      setDisplayName(profile.name);
-      setNameInput(profile.name);
-      setAvatarUrl(profile.avatar);
-      setEditingName(false);
-      setPhotoBusy(false);
-      setOpenSection(null);
-      clearProfileFeedback();
-    }
-    return () => {
-      photoRequest.current += 1;
-      if (savedTimer.current !== null) clearTimeout(savedTimer.current);
-    };
-  }, [open, accountEmail]);
+    if (open) setOpenSection(null);
+  }, [open, profile?.id]);
 
   /* Focus moves into the modal on open, Tab stays inside, returns to the opener on close */
   const modalRef = useRef<HTMLDivElement>(null);
@@ -118,87 +71,6 @@ export default function SettingsPanel({ open, onClose, accountName, accountEmail
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = previousOverflow; };
   }, [open]);
-
-  const profileName = editingName ? nameInput.trim() : displayName;
-  const profileDirty = profileName !== savedProfile.name || avatarUrl !== savedProfile.avatar;
-  const photoDirty = avatarUrl !== savedProfile.avatar;
-  const cancelNameEdit = () => {
-    setNameInput(savedProfile.name);
-    setEditingName(false);
-    clearProfileFeedback();
-  };
-
-  const handleSaveProfile = () => {
-    if (!profileDirty || photoBusy) return;
-    clearProfileFeedback();
-    if (!profileName) { setProfileError('Enter a display name.'); return; }
-    const written: { key: string; value: string | null }[] = [];
-    try {
-      /* Write the photo first, since a large image can exceed browser storage capacity. */
-      const changes = [
-        ...(avatarUrl !== savedProfile.avatar ? [{ key: '360_avatar', value: avatarUrl }] : []),
-        ...(profileName !== savedProfile.name ? [{ key: '360_display_name', value: profileName }] : []),
-      ];
-      for (const change of changes) {
-        const previous = localStorage.getItem(change.key);
-        if (change.value === null) localStorage.removeItem(change.key);
-        else localStorage.setItem(change.key, change.value);
-        written.push({ key: change.key, value: previous });
-      }
-    } catch {
-      for (const previous of written.reverse()) {
-        try {
-          if (previous.value === null) localStorage.removeItem(previous.key);
-          else localStorage.setItem(previous.key, previous.value);
-        } catch { /* Keep the draft available for another save attempt. */ }
-      }
-      setProfileError('Could not save your profile. Check browser storage or try a smaller photo.');
-      return;
-    }
-    setSavedProfile({ name: profileName, avatar: avatarUrl });
-    onProfileSaved(profileName);
-    setDisplayName(profileName);
-    setNameInput(profileName);
-    setEditingName(false);
-    setProfileSaved(true);
-    savedTimer.current = setTimeout(() => {
-      setProfileSaved(false);
-      savedTimer.current = null;
-    }, 1800);
-  };
-
-  const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    clearProfileFeedback();
-    const request = ++photoRequest.current;
-    setPhotoBusy(false);
-    if (!file.type.startsWith('image/')) { setProfileError('Select an image file.'); return; }
-    if (file.size > 5 * 1024 * 1024) { setProfileError('Choose an image smaller than 5 MB.'); return; }
-    setPhotoBusy(true);
-    const fail = () => {
-      if (request !== photoRequest.current) return;
-      setPhotoBusy(false);
-      setProfileError('This image could not be opened. Choose another photo.');
-    };
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      if (request !== photoRequest.current) return;
-      const url = ev.target?.result as string;
-      const image = new Image();
-      image.onload = () => {
-        if (request !== photoRequest.current) return;
-        if (!image.naturalWidth || !image.naturalHeight) { fail(); return; }
-        setAvatarUrl(url);
-        setPhotoBusy(false);
-      };
-      image.onerror = fail;
-      image.src = url;
-    };
-    reader.onerror = fail;
-    reader.readAsDataURL(file);
-  };
 
   const handleSavePassword = async () => {
     setPassError('');
@@ -231,7 +103,7 @@ export default function SettingsPanel({ open, onClose, accountName, accountEmail
   };
 
   /* Initials avatar */
-  const initials = (profileName || savedProfile.name).split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2);
+  const initials = (profile?.name ?? '').split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2);
 
   if (!open) return null;
 
@@ -278,64 +150,23 @@ export default function SettingsPanel({ open, onClose, accountName, accountEmail
 
           {/* ── Profile ── */}
           <section className="pb-6">
-            <div className="relative flex min-w-0 flex-col gap-4 pr-12 sm:flex-row sm:items-center sm:gap-6">
+            <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-center sm:gap-6">
               <div className="flex-shrink-0">
                 <div className="flex h-[104px] w-[104px] items-center justify-center overflow-hidden rounded-[18px] border border-green-700/30 bg-[#03624c] shadow-sm sm:h-[116px] sm:w-[116px]">
-                  {avatarUrl ? (
-                    <img src={avatarUrl} alt="Profile" className="h-full w-full object-cover" />
-                  ) : (
-                    <span className="text-3xl font-bold tracking-wide text-white">{initials}</span>
-                  )}
+                  <span className="text-3xl font-bold tracking-wide text-white">{initials}</span>
                 </div>
-                <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                  <p className="min-w-0 break-words text-2xl font-semibold leading-tight text-foreground sm:text-[28px]">{displayName || savedProfile.name || 'Account'}</p>
-                  <AccountRoleBadge role={accountRole} />
+                  <p className="min-w-0 break-words text-2xl font-semibold leading-tight text-foreground sm:text-[28px]">{profile?.name || 'Account'}</p>
+                  <AccountRoleBadge role={profile?.role ?? null} />
                 </div>
-                <p className="mt-2 break-all text-sm text-slate-600 sm:text-base">{accountEmail ?? 'Email unavailable'}</p>
+                <p className="mt-2 break-all text-sm text-slate-600 sm:text-base">{profile?.email ?? 'Email unavailable'}</p>
                 <p className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground"><UserRound className="h-3.5 w-3.5 text-green-800" aria-hidden="true" />Account profile</p>
               </div>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button type="button" aria-label="Profile actions" className="absolute right-0 top-0 flex h-11 w-11 items-center justify-center rounded-lg border border-border text-foreground transition-colors hover:border-green-700/40 hover:bg-green-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
-                    <MoreHorizontal className="h-5 w-5" aria-hidden="true" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="z-[70] min-w-44 rounded-lg bg-white p-1 shadow-lg">
-                  <DropdownMenuItem onSelect={() => fileRef.current?.click()}><Camera aria-hidden="true" />Change Photo</DropdownMenuItem>
-                  <DropdownMenuItem disabled={!avatarUrl} onSelect={() => { photoRequest.current += 1; setPhotoBusy(false); clearProfileFeedback(); setAvatarUrl(null); }}><Trash2 aria-hidden="true" />Remove Photo</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => { clearProfileFeedback(); setNameInput(displayName); setEditingName(true); }}><Pencil aria-hidden="true" />Edit Display Name</DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
             </div>
 
-            {editingName && <div className="mt-4 rounded-xl border border-green-700/20 bg-green-50/30 p-4 sm:mt-5 sm:p-5">
-              <Field label="Display Name" htmlFor="settings-display-name">
-                <div className="mt-2">
-                  <input
-                    id="settings-display-name"
-                    autoFocus
-                    value={nameInput}
-                    onChange={(e) => { clearProfileFeedback(); setNameInput(e.target.value); }}
-                    onKeyDown={(e) => { if (e.key === 'Enter') handleSaveProfile(); }}
-                    className={inputCls()}
-                    placeholder="Your display name"
-                  />
-                </div>
-              </Field>
-              <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                <button type="button" onClick={cancelNameEdit} className="min-h-11 rounded-xl border border-border px-4 text-sm font-medium text-foreground hover:bg-muted/40 focus-visible:outline-2 focus-visible:outline-primary">Cancel</button>
-                <button type="button" onClick={handleSaveProfile} disabled={!profileDirty || photoBusy} className="min-h-11 rounded-xl bg-primary px-4 text-sm font-medium text-white hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Save Changes</button>
-              </div>
-            </div>}
-            {profileError && <p role="alert" className="mt-2 text-xs text-red-500 break-words">{profileError}</p>}
-            {!editingName && photoDirty && <div className="mt-3 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <button type="button" onClick={() => { setAvatarUrl(savedProfile.avatar); clearProfileFeedback(); }} className="min-h-11 rounded-xl border border-border px-4 text-sm font-medium text-foreground hover:bg-muted/40 focus-visible:outline-2 focus-visible:outline-primary">Cancel</button>
-              <button type="button" onClick={handleSaveProfile} disabled={photoBusy} className="min-h-11 rounded-xl bg-primary px-4 text-sm font-medium text-white hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Save Changes</button>
-            </div>}
-            {profileSaved && <p role="status" className="mt-3 flex items-center gap-1.5 text-sm text-green-700"><CheckCircle2 className="h-4 w-4" aria-hidden="true" /> Profile saved</p>}
+            <p className="mt-4 text-sm text-muted-foreground sm:mt-5">Profile editing is temporarily unavailable. Your account name and photo cannot be saved yet.</p>
           </section>
 
           {/* ── Password ── */}
