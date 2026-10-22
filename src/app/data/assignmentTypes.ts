@@ -94,6 +94,9 @@ export interface Assignment {
   pickupArrivedAt?: string | null;
   loadingStartedAt?: string | null;
   loadingCompletedAt?: string | null;
+  /** Optional driver-entered note, set once at finish_loading/finish_unloading. */
+  loadingRemark?: string | null;
+  unloadingRemark?: string | null;
   /** Persisted reason for historical cancelled assignments (REQ-003). */
   cancelReason?: string | null;
   /** Read from the existing cancellation audit record for historical detail. */
@@ -106,6 +109,10 @@ export interface Assignment {
   /* Driver-submitted data */
   statusPhotos?: Record<string, StatusPhoto>;
   issueReason?: string;
+  /** REQ-008: this assignment's current OPEN blocking issue from the real issue
+   * lifecycle table (assignment_issues) — read-only, null once resolved. Older
+   * reports made before this table existed only have issueReason, with no row here. */
+  openIssue?: { id: number; reason: string; reportedByName: string; reportedAt: string } | null;
   delayReports?: DelayReport[];
   /* Set the moment the driver's app first displays this assignment — lets
      admin see whether a driver has actually seen a freshly assigned task. */
@@ -152,11 +159,11 @@ export interface TeamMember {
   id: string;
   name: string;
   email: string;
-  password: string;
   role: 'csr' | 'viewer';
   status: 'active' | 'removed';
   invitedAt: string;
   lastActive?: string;
+  avatarPath: string | null;
 }
 
 /* The one hardcoded Operation Manager account — mirrors supabase/functions/server/index.tsx's
@@ -221,9 +228,11 @@ export type AdminActivityType =
   | 'doc_rejected'
   | 'driver_deleted'
   | 'driver_archived'
+  | 'driver_pin_reset'
   | 'truck_archived'
   | 'member_added'
-  | 'member_removed'
+  | 'member_archived'
+  | 'member_restored'
   | 'password_reset_requested'
   | 'password_reset_approved'
   | 'password_reset_link_generated'

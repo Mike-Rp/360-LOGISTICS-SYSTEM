@@ -76,6 +76,8 @@ interface Props {
   isViewOnly: boolean;
   adminRole: AdminRole | null;
   staffProfile: StaffSession | null;
+  avatarUrl: string;
+  onStaffProfileUpdated: (update: Partial<StaffSession>, freshAvatarUrl?: string) => void;
   savingToDb: boolean;
   onResetAll: () => Promise<void>;   // AccountsPanel awaits this
   isOperationManager: boolean;
@@ -90,7 +92,7 @@ export default function AdminDashboard({
   notifications, notificationsReady, setNotifications,
   activityLog, onLogActivity, onServerChange, archivedDrivers, archivedTrucks,
   activeNav, setActiveNav,
-  onLogout, isViewOnly, adminRole, staffProfile, savingToDb,
+  onLogout, isViewOnly, adminRole, staffProfile, avatarUrl, onStaffProfileUpdated, savingToDb,
   onResetAll, isOperationManager, adminEmail,
 }: Props) {
 
@@ -307,6 +309,7 @@ export default function AdminDashboard({
           adminRole={adminRole}
           adminEmail={adminEmail}
           adminName={adminName}
+          avatarUrl={avatarUrl}
           onOpenWorkspaceSettings={() => setWorkspaceOpen(true)}
           searchPlaceholder={SEARCH_PLACEHOLDERS[activeNav]}
           searchValue={currentSearchInput}
@@ -329,6 +332,8 @@ export default function AdminDashboard({
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         profile={staffProfile}
+        avatarUrl={avatarUrl}
+        onProfileUpdated={onStaffProfileUpdated}
         notifEnabled={notifEnabled}
         setNotifEnabled={setNotifEnabled}
         soundEnabled={soundEnabled}

@@ -8,7 +8,7 @@ import {
 import type { Assignment, CompletedTask, TaskStatus, StatusPhoto, DocStatus } from '../../data/assignmentTypes';
 import { statusColors } from '../../data/statusColors';
 import { OPERATIONAL_STEPS } from '../../lib/assignmentOperational';
-import { loadDriverData, loadDriverCompletedDelivery, driverUpdate, advanceDriverStage, uploadImage } from '../../lib/db';
+import { loadDriverData, loadDriverCompletedDelivery, driverUpdate, advanceDriverStage, reportAssignmentIssue, uploadImage } from '../../lib/db';
 import { getDeliveryTimingStatus, getPickupTimingStatus, type DeliveryTimingStatus } from '../../lib/assignmentTiming';
 import { assignmentDisplayStatusConfig, getAssignmentDisplayStatus, getAssignmentDocumentProgress, getDocumentAgingState } from '../../lib/assignmentWorkflow';
 import { DriverLanguageProvider, useDriverI18n, type DriverLanguage } from './driverI18n';
@@ -1402,6 +1402,10 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   const [photoTarget,  setPhotoTarget]  = useState<TaskStatus | null>(null);
   const [operationalPhotoTarget, setOperationalPhotoTarget] = useState<OperationalPhotoKey | null>(null);
   const [delaySheet,   setDelaySheet]   = useState<'pickup' | 'delivery' | null>(null);
+  /* Optional note at Loading/Unloading finish — sent once with finish_loading/
+     finish_unloading, write-once server-side. Reset whenever the active
+     assignment changes so a stale draft never carries into a different task. */
+  const [stageRemark, setStageRemark] = useState('');
   const [issueSheet,   setIssueSheet]   = useState(false);
   const [logoutDlg,    setLogoutDlg]    = useState(false);
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
@@ -1482,6 +1486,8 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
       if (scrollHideTimer.current) window.clearTimeout(scrollHideTimer.current);
     };
   }, [screen, data?.assignment?.id]);
+
+  useEffect(() => { setStageRemark(''); }, [data?.assignment?.id]);
 
   useEffect(() => {
     const action = stickyActionRef.current;
@@ -1756,8 +1762,12 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
     setUpdating(true);
     try {
       if (transition) {
-        await advanceDriverStage(assignment.id, transition);
+        const remark = transition === 'finish_loading' || transition === 'finish_unloading' ? stageRemark : undefined;
+        await advanceDriverStage(assignment.id, transition, remark);
         if (!sessionActiveRef.current) return false;
+        // Clear it now, not just on assignment change — otherwise a leftover Loading
+        // note would silently pre-fill the Unloading box much later in the same task.
+        if (remark !== undefined) setStageRemark('');
         if (transition in MILESTONE_NOTIFICATIONS && transition !== 'depart') {
           await notifyMilestone(assignment, transition as keyof typeof MILESTONE_NOTIFICATIONS);
           if (!sessionActiveRef.current) return false;
@@ -1815,14 +1825,29 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
 
   const handleIssueSubmit = async (reason: string) => {
     if (!data?.assignment || hasOpenBlockingIssue(data.assignment) || issueSubmitting.current) return;
+    const assignment = data.assignment;
+    if (!online) { setActionError(t('home.saveError')); return; }
+    // The canned reasons double as their own server-side type; anything else came
+    // from the sheet's free-text "Other..." field (see ReasonSheet — it only ever
+    // hands back one string, never which branch was taken).
+    const issueType = (BLOCKING_ISSUE_REASONS as readonly string[]).includes(reason) ? reason : 'Other...';
     issueSubmitting.current = true;
     setIssueSheet(false);
+    setUpdating(true);
     try {
-      await pushUpdate(
-        { issueReason: reason },
-        { type: 'issue_report', message: `[${data.assignment.truckPlate}] Issue: ${reason}`, assignmentId: data.assignment.id, truckPlate: data.assignment.truckPlate, reason, navigateTo: 'Monitor' }
-      );
-    } finally { issueSubmitting.current = false; }
+      await reportAssignmentIssue(assignment.id, issueType, reason, `issue-${assignment.id}-${Date.now()}`);
+      if (!sessionActiveRef.current) return;
+      await fetchData(true);
+      if (!sessionActiveRef.current) return;
+      setActionError('');
+    } catch (err) {
+      if (!await onCheckSession() || !sessionActiveRef.current) return;
+      console.error('[reportAssignmentIssue] error:', err);
+      setActionError(t('home.saveError'));
+    } finally {
+      issueSubmitting.current = false;
+      setUpdating(false);
+    }
   };
 
   const handleDocUpload = async (docType: string, file: File) => {
@@ -2219,7 +2244,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
                 {issueOpen && <div className="flex items-start gap-2 border-b border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
                   <div><p className="font-bold">{t('task.deliveryPaused')} · {t('task.issueUnderReview')}</p>
-                    <p className="mt-0.5 break-words">{reasonText(a.issueReason!)}</p></div>
+                    <p className="mt-0.5 break-words">{reasonText(a.openIssue?.reason ?? a.issueReason!)}</p></div>
                 </div>}
                 <DriverOverdueNotice timing={deliveryTiming} deliveryDate={a.deliveryDate} compact />
                 {postDelivery && documentProgress && (
@@ -2497,7 +2522,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
                   <div className="min-w-0 space-y-1">
                     <p className="text-xs font-bold uppercase tracking-wide text-red-700">{t('task.deliveryPaused')}</p>
                     <p className="text-base font-bold text-red-900">{t('task.issueUnderReview')}</p>
-                    <p className="break-words text-sm font-medium text-red-800">{reasonText(a.issueReason!)}</p>
+                    <p className="break-words text-sm font-medium text-red-800">{reasonText(a.openIssue?.reason ?? a.issueReason!)}</p>
                     <p className="text-sm text-red-800">{t('task.pauseExplanation')}</p>
                     <p className="text-xs font-semibold text-red-700">{t('task.waitingStaff')}</p>
                   </div>
@@ -2558,6 +2583,13 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
               <OperationalPhotos assignment={a} keys={['loading_after']}
                 title={t('workflow.afterLoading')} help={t('workflow.afterLoadingHelp')}
                 required onSelect={setOperationalPhotoTarget} highlightKey={highlightPhotoKey} />
+              <div className="rounded-2xl border border-gray-200 bg-white p-4">
+                <label htmlFor="loading-remark" className="block text-sm font-bold text-gray-900">{t('workflow.stageRemark')}</label>
+                <p className="mt-0.5 text-xs text-gray-500">{t('workflow.stageRemarkHelp')}</p>
+                <textarea id="loading-remark" value={stageRemark} onChange={(e) => setStageRemark(e.target.value.slice(0, 300))}
+                  rows={2} maxLength={300} placeholder={t('workflow.stageRemarkPlaceholder')}
+                  className="mt-2 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30" />
+              </div>
             </>}
             {phase === 'pretrip' && <>
               {a.loadingCompletedAt && <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-900">
@@ -2591,6 +2623,13 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
               </div>
               <OperationalPhotos assignment={a} keys={['unloading_after']}
                 title={t('workflow.afterUnloading')} required onSelect={setOperationalPhotoTarget} highlightKey={highlightPhotoKey} />
+              <div className="rounded-2xl border border-gray-200 bg-white p-4">
+                <label htmlFor="unloading-remark" className="block text-sm font-bold text-gray-900">{t('workflow.stageRemark')}</label>
+                <p className="mt-0.5 text-xs text-gray-500">{t('workflow.stageRemarkHelp')}</p>
+                <textarea id="unloading-remark" value={stageRemark} onChange={(e) => setStageRemark(e.target.value.slice(0, 300))}
+                  rows={2} maxLength={300} placeholder={t('workflow.stageRemarkPlaceholder')}
+                  className="mt-2 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30" />
+              </div>
             </>}
             {phase === 'delivery_pending' && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">{t('workflow.deliveryPending')}</p>}
 

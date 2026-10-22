@@ -108,6 +108,16 @@ export function OperationalEvidence({ assignment, onPreview, expandedGroup, onEx
               groupTitle={group.title} label={label} photo={photo}
               onPreview={onPreview} />)}
           </div>
+          {group.title === 'Loading' && assignment.loadingRemark && (
+            <p className="mt-4 rounded-lg bg-muted/40 px-3 py-2 text-[13px] text-foreground">
+              <span className="font-medium">Driver's note:</span> {assignment.loadingRemark}
+            </p>
+          )}
+          {group.title === 'Unloading' && assignment.unloadingRemark && (
+            <p className="mt-4 rounded-lg bg-muted/40 px-3 py-2 text-[13px] text-foreground">
+              <span className="font-medium">Driver's note:</span> {assignment.unloadingRemark}
+            </p>
+          )}
         </div>}
       </div>;
     })}

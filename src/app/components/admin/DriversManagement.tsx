@@ -19,6 +19,7 @@ import DocumentsSummaryCard from './DocumentsSummaryCard';
 import { OperationalEvidence } from './ShipmentPhotoEvidence';
 import UploadedFilePreviewModal from './UploadedFilePreviewModal';
 import PasswordVisibilityInput from './PasswordVisibilityInput';
+import ConfirmPasswordDialog from './ConfirmPasswordDialog';
 import DeliveryTimingBadge from './DeliveryTimingBadge';
 import PickupTimingNotice from './PickupTimingNotice';
 import { getDispatchTimingNotices } from '../../lib/assignmentTiming';
@@ -36,7 +37,7 @@ import { TRUCK_CLASSIFICATIONS, truckSideImageFor, capacityKgOnly } from '../../
 import { destinationAreaEnabled, getAssignmentRoute, getDeliveryLocation } from '../../data/assignmentRoute';
 import {
   verifyOwnPassword, editAssignment, cancelAssignment, notifyAssignmentCancelled, loadAdminData,
-  dispatchAssignment, completeAssignment, AssignmentActionError,
+  dispatchAssignment, completeAssignment, resolveAssignmentIssue, AssignmentActionError,
   type AssignmentActionErrorCode, type AssignmentEdit, type AssignmentLocationEdit,
 } from '../../lib/db';
 
@@ -226,6 +227,8 @@ const actionMessage = (code: AssignmentActionErrorCode): string => ({
   documents_not_approved: 'All required documents must be approved before marking this delivery complete.',
   driver_archived:   'That driver has been archived. Pick a different driver.',
   truck_archived:    'That truck has been archived. Pick a different truck.',
+  already_resolved:  'This issue has already been resolved. Refresh the page.',
+  assignment_not_active: 'This delivery is no longer active, so its issue can\'t be resolved from here.',
   invalid:          'The server rejected one of the values. Check the form and try again.',
   network:           'Couldn\'t reach the server. Check your connection and try again.',
 }[code]);
@@ -809,7 +812,8 @@ function DeliveryActivity({ assignment, now, onViewPhotos, highlightedEvent }: {
     { label: 'Loading', activityKey: 'loading_completed',
       main: formatOperationalStamp(assignment.loadingStartedAt), prefix: 'Started',
       details: [assignment.loadingCompletedAt ? `Finished · ${formatOperationalStamp(assignment.loadingCompletedAt)}` : null,
-        loadingDuration ? `${assignment.loadingCompletedAt ? 'Duration' : 'Elapsed'} · ${loadingDuration}` : null],
+        loadingDuration ? `${assignment.loadingCompletedAt ? 'Duration' : 'Elapsed'} · ${loadingDuration}` : null,
+        assignment.loadingRemark ? `Driver's note · ${assignment.loadingRemark}` : null],
       photoStage: photoStage(1, 'loading') },
     { label: 'In Transit', activityKey: 'in_transit',
       main: formatOperationalStamp(assignment.departedAt), prefix: 'Departed',
@@ -819,7 +823,8 @@ function DeliveryActivity({ assignment, now, onViewPhotos, highlightedEvent }: {
     { label: 'Unloading', activityKey: 'unloading_completed',
       main: formatOperationalStamp(assignment.unloadingStartedAt), prefix: 'Started',
       details: [assignment.unloadingCompletedAt ? `Finished · ${formatOperationalStamp(assignment.unloadingCompletedAt)}` : null,
-        unloadingDuration ? `${assignment.unloadingCompletedAt ? 'Duration' : 'Elapsed'} · ${unloadingDuration}` : null],
+        unloadingDuration ? `${assignment.unloadingCompletedAt ? 'Duration' : 'Elapsed'} · ${unloadingDuration}` : null,
+        assignment.unloadingRemark ? `Driver's note · ${assignment.unloadingRemark}` : null],
       photoStage: photoStage(3, 'unloading') },
     { label: 'Delivered', activityKey: 'delivered',
       main: assignment.taskStatus === 'Delivered'
@@ -952,7 +957,7 @@ function DocChip({ doc, uploadAvailable }: { doc: AssignmentDoc; uploadAvailable
 /* ─── View Details Modal ───────────────────────────── */
 type ShipmentTab = 'overview' | 'activity' | 'photos' | 'documents';
 
-function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClose, onEdit, onApproveDoc, onRejectDoc, onComplete, onCancel, onSimulateLate, isViewOnly = false, adminEmail, reviewTarget, activityTarget, timingNow }: {
+function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClose, onEdit, onApproveDoc, onRejectDoc, onComplete, onCancel, onResolveIssue, onSimulateLate, isViewOnly = false, adminEmail, reviewTarget, activityTarget, timingNow }: {
   assignment: Assignment | null; driver: LocalDriver | null;
   issueNotifications: AppNotification[];
   /* null when the truck record was deleted — the plate saved on the assignment is still shown */
@@ -963,6 +968,7 @@ function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClo
   onRejectDoc:    (id: string, docType: string, reason: string) => void;
   onComplete:     (id: string) => Promise<void>;
   onCancel:       (id: string, reason: string, password: string) => Promise<void>;
+  onResolveIssue: (issueId: number, note: string) => Promise<void>;
   onSimulateLate: (id: string) => void;
   isViewOnly?:    boolean;
   adminEmail?:    string | null;
@@ -997,6 +1003,8 @@ function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClo
   const [photosViewed, setPhotosViewed] = useState(false);
   const [completeBusy, setCompleteBusy] = useState(false);
   const [completeError, setCompleteError] = useState('');
+  const [resolveNote, setResolveNote] = useState('');
+  const [resolveConfirmOpen, setResolveConfirmOpen] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const reviewDocument = reviewTarget ? assignment?.documents.find(doc => reviewTarget.docType
     ? doc.type === reviewTarget.docType : doc.uploaded && doc.docStatus === 'pending') : undefined;
@@ -1031,6 +1039,8 @@ function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClo
   useEffect(() => {
     setPhotosViewed(false);
     setCompleteError('');
+    setResolveNote('');
+    setResolveConfirmOpen(false);
   }, [assignment?.id]);
 
   useLayoutEffect(() => {
@@ -1069,6 +1079,12 @@ function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClo
     } finally {
       setCompleteBusy(false);
     }
+  };
+  const handleResolve = async () => {
+    if (!assignment?.openIssue) return;
+    await onResolveIssue(assignment.openIssue.id, resolveNote.trim());
+    setResolveNote('');
+    setResolveConfirmOpen(false);
   };
   const { delivery: deliveryTiming, pickup: pickupTiming } = assignment
     ? getDispatchTimingNotices(assignment, timingNow) : { delivery: null, pickup: null };
@@ -1135,14 +1151,29 @@ function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClo
 
           {(openIssue || legacyIssue) && <section className="rounded-xl border border-red-200 bg-red-50 p-4" aria-label={openIssue ? 'Open issue' : 'Recorded issue'}>
             <p className="text-xs font-bold uppercase tracking-wider text-red-700">{openIssue ? 'Open Issue · Blocking' : 'Recorded Issue · Legacy Failed / Issue'}</p>
-            <p className="mt-1 break-words text-base font-semibold text-red-900">{assignment.issueReason}</p>
+            <p className="mt-1 break-words text-base font-semibold text-red-900">{assignment.openIssue?.reason ?? assignment.issueReason}</p>
             <div className="mt-3 grid gap-2 text-sm text-red-900 sm:grid-cols-2">
-              <p><span className="font-medium">Reported by:</span> {issueReport?.driverName || 'Not recorded on the issue'}</p>
-              <p><span className="font-medium">Reported:</span> {issueReport?.createdAt ? formatOperationalStamp(issueReport.createdAt) : 'Not recorded on the issue'}</p>
+              <p><span className="font-medium">Reported by:</span> {assignment.openIssue?.reportedByName || issueReport?.driverName || 'Not recorded on the issue'}</p>
+              <p><span className="font-medium">Reported:</span> {assignment.openIssue?.reportedAt ? formatOperationalStamp(assignment.openIssue.reportedAt) : issueReport?.createdAt ? formatOperationalStamp(issueReport.createdAt) : 'Not recorded on the issue'}</p>
               <p><span className="font-medium">Delivery stage:</span> {openIssue ? getAdminOperationalProgress(assignment).label : 'Not preserved at issue report'}</p>
-              <p><span className="font-medium">Status:</span> {openIssue ? 'Blocking marker present; resolution unavailable' : 'Legacy status; recovery cannot be verified'}</p>
+              <p><span className="font-medium">Status:</span> {assignment.openIssue ? 'Open — resolve to let this delivery continue' : openIssue ? 'Blocking marker present; resolution unavailable' : 'Legacy status; recovery cannot be verified'}</p>
             </div>
-            <p className="mt-3 text-xs text-red-800">Resolve &amp; Continue requires a recorded issue lifecycle and an authorized server action. This issue cannot be safely cleared from this screen.</p>
+            {assignment.openIssue && !isViewOnly ? (
+              <div className="mt-4 space-y-2 border-t border-red-200 pt-3">
+                <label className="block text-xs font-medium text-red-800" htmlFor="resolve-issue-note">Resolution note (optional)</label>
+                <textarea id="resolve-issue-note" value={resolveNote} onChange={(e) => setResolveNote(e.target.value.slice(0, 300))}
+                  rows={2} maxLength={300} placeholder="What was done to resolve this?"
+                  className="w-full rounded-xl border border-red-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-300" />
+                <button onClick={() => setResolveConfirmOpen(true)}
+                  className="w-full rounded-xl bg-red-600 py-2.5 text-sm font-bold text-white transition-colors hover:bg-red-700 disabled:opacity-60">
+                  Resolve &amp; Continue
+                </button>
+              </div>
+            ) : assignment.openIssue && isViewOnly ? (
+              <p className="mt-3 text-xs text-red-800">Resolving this issue requires CSR access.</p>
+            ) : (
+              <p className="mt-3 text-xs text-red-800">Resolve &amp; Continue requires a recorded issue lifecycle and an authorized server action. This issue cannot be safely cleared from this screen.</p>
+            )}
           </section>}
 
           {/* Demo-only: simulate a late driver — "adminabuse" account only */}
@@ -1459,6 +1490,18 @@ function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClo
           </div>
         )}
       </div>
+
+      {resolveConfirmOpen && assignment?.openIssue && (
+        <ConfirmPasswordDialog
+          title="Resolve this issue?"
+          message="This clears the blocking issue and lets the delivery continue. Your password confirms this action."
+          confirmLabel="Resolve"
+          busyLabel="Resolving…"
+          onConfirm={handleResolve}
+          onCancel={() => setResolveConfirmOpen(false)}
+          errorText={(err) => err instanceof Error ? err.message : 'Unable to resolve this issue. Please try again.'}
+        />
+      )}
 
       {/* Image Preview */}
       {previewDoc && (
@@ -2101,6 +2144,14 @@ export default function DriversManagement({
     }
     try {
       await onServerChange(() => completeAssignment(id).then(() => undefined));
+    } catch (err) {
+      throw new Error(actionMessage(errorCode(err)));
+    }
+  };
+
+  const handleResolveIssue = async (issueId: number, note: string) => {
+    try {
+      await onServerChange(() => resolveAssignmentIssue(issueId, note));
     } catch (err) {
       throw new Error(actionMessage(errorCode(err)));
     }
@@ -2852,6 +2903,7 @@ export default function DriversManagement({
           onRejectDoc={handleRejectDoc}
           onComplete={handleComplete}
           onCancel={handleCancel}
+          onResolveIssue={handleResolveIssue}
           onSimulateLate={handleSimulateLate}
           isViewOnly={isViewOnly || !assignments.some(a => a.id === viewDetailsId) || completed.some(a => a.id === viewDetailsId)}
           adminEmail={adminEmail}

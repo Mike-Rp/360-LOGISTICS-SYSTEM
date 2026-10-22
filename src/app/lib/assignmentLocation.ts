@@ -1,5 +1,5 @@
 /* ── REQ-005: exact pickup / delivery locations ────────────────────────────────
-   Pure helpers used by db.ts to move the Mapbox-selected stops between the app's
+   Pure helpers used by db.ts to move exact-coordinate stops between the app's
    Assignment fields and the assignments table columns. No network, no Supabase —
    so they can be unit-tested (assignmentLocation.test.cjs).
 
@@ -15,12 +15,6 @@ export const isLongitude = (v: unknown): v is number => typeof v === 'number' &&
 /** Both halves valid → the pair; anything else (missing half, NaN, out of range) → null. */
 export function coordinatePair(latitude: unknown, longitude: unknown): LatLng | null {
   return isLatitude(latitude) && isLongitude(longitude) ? { latitude, longitude } : null;
-}
-
-/** Mapbox geometry.coordinates is [longitude, latitude] — convert by position, never by guess. */
-export function fromMapboxPosition(position: readonly [number, number] | readonly number[] | null | undefined): LatLng | null {
-  if (!position || position.length < 2) return null;
-  return coordinatePair(position[1], position[0]);
 }
 
 type Row = Record<string, unknown>;

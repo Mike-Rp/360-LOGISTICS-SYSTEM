@@ -1,13 +1,14 @@
 import { useState, useEffect, useRef, useCallback, type Dispatch, type SetStateAction } from 'react';
 import { CheckCircle2 } from 'lucide-react';
 import { supabase } from './lib/supabaseClient';
-import { loadAdminData, syncAdminData, markNotificationsRead, resetAllData, restoreSession, signOut, checkSessionStatus, endThisDeviceSession, readRecordCreationTimes } from './lib/db';
+import { loadAdminData, syncAdminData, markNotificationsRead, resetAllData, restoreSession, signOut, checkSessionStatus, endThisDeviceSession, readRecordCreationTimes, resolveAvatarUrl } from './lib/db';
 import { rememberNotificationReads, restoreNotificationReads } from './lib/notificationReadState';
 import type { StaffSession } from './lib/db';
 import AdminDashboard from './components/admin/AdminDashboard';
 import DriverInterface from './components/driver/DriverInterface';
 import LoginScreen from './components/auth/LoginScreen';
 import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
+import VerifyReportScreen from './components/auth/VerifyReportScreen';
 import { canDispatchAssignments } from './lib/staffPermissions';
 import { ADMIN_PATHS, ADMIN_NAVIGATION_EVENT, adminPageFromUrl, startAdminNavigation, redirectToAdminLogin } from './lib/adminNavigation';
 import { pendingLocalRecordIds, confirmLocalRecordCreated } from './lib/recordOrdering';
@@ -28,6 +29,24 @@ export default function App() {
   /* Auth state. The session itself (who is signed in) is kept by Supabase Auth in the browser and
      restored on refresh via restoreSession() — we no longer hand-roll tokens in localStorage. */
   const [staffProfile, setStaffProfile] = useState<StaffSession | null>(null);
+  /* REQ-012: the resolved avatar display URL lives here, shared by the navbar AND
+     Settings, so both update together from one place. Resolved whenever the stored
+     path changes (login, restore, a different account). An upload/remove that keeps
+     the SAME path (avatars always upload to one fixed path, replacing in place) would
+     never re-trigger this effect on its own, so handleStaffProfileUpdated also takes
+     an optional fresh URL to set directly, bypassing the wait. */
+  const [avatarUrl, setAvatarUrl] = useState('');
+  useEffect(() => {
+    let alive = true;
+    if (!staffProfile?.avatarPath) { setAvatarUrl(''); return; }
+    resolveAvatarUrl(staffProfile.avatarPath).then((url) => { if (alive) setAvatarUrl(url); });
+    return () => { alive = false; };
+  }, [staffProfile?.id, staffProfile?.avatarPath]);
+
+  const handleStaffProfileUpdated = useCallback((update: Partial<StaffSession>, freshAvatarUrl?: string) => {
+    setStaffProfile((prev) => (prev ? { ...prev, ...update } : prev));
+    if (freshAvatarUrl !== undefined) setAvatarUrl(freshAvatarUrl);
+  }, []);
   const adminRole = staffProfile?.role ?? null;
   const adminEmail = staffProfile?.email ?? null;
   const adminIsOm = staffProfile?.isOm ?? false;
@@ -283,8 +302,9 @@ export default function App() {
     let cancelled = false;
     (async () => {
       try {
-        // The one-time reset link is available without an authenticated session.
-        if (window.location.pathname === '/reset-password') return;
+        // The one-time reset link and the public report-verification page are
+        // available without an authenticated session.
+        if (window.location.pathname === '/reset-password' || window.location.pathname === '/verify-report') return;
         const stored = (await supabase.auth.getSession()).data.session;
         if (cancelled) return;
         if (stored && !await checkAppSession()) return;
@@ -307,7 +327,7 @@ export default function App() {
   }, [applySession, checkAppSession]);
 
   useEffect(() => {
-    if (restoring || view === 'driver' || window.location.pathname === '/reset-password') return;
+    if (restoring || view === 'driver' || window.location.pathname === '/reset-password' || window.location.pathname === '/verify-report') return;
     const restoreLocation = () => {
       if (!signedInRef.current) {
         redirectToAdminLogin();
@@ -539,6 +559,7 @@ export default function App() {
   const isOperationManager = adminIsOm;
 
   if (window.location.pathname === '/reset-password') return <ResetPasswordScreen />;
+  if (window.location.pathname === '/verify-report') return <VerifyReportScreen />;
 
   /* ── Loading screen ── */
   if ((restoring || dataLoading) && !signedIn) {
@@ -619,6 +640,8 @@ export default function App() {
           isViewOnly={isViewOnly}
           adminRole={adminRole}
           staffProfile={staffProfile}
+          avatarUrl={avatarUrl}
+          onStaffProfileUpdated={handleStaffProfileUpdated}
           savingToDb={savingToDb}
           isOperationManager={isOperationManager}
           adminEmail={adminEmail}

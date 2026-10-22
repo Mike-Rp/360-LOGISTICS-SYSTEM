@@ -1,6 +1,7 @@
 import { createPortal } from 'react-dom';
 import logo from 'figma:asset/5e73e3c08e898d68c86717993c6e7442d03e9ac4.png';
 import { formatOperationalStamp } from '../../lib/assignmentOperational';
+import ReportVerificationBox from './ReportVerificationBox';
 import './WeeklyPrintReport.css';
 import './DelayPrintReport.css';
 
@@ -26,10 +27,12 @@ interface Props {
   generatedAt: Date;
   generatedBy: string;
   role: 'OPM' | 'CSR';
+  reportId: string | null;
+  qrDataUrl: string | null;
 }
 
 export default function DelayPrintReport({
-  rows, summary, issueCounts, mostCommonIssues, generatedAt, generatedBy, role,
+  rows, summary, issueCounts, mostCommonIssues, generatedAt, generatedBy, role, reportId, qrDataUrl,
 }: Props) {
   const generatedStamp = formatOperationalStamp(generatedAt.toISOString()) ?? generatedAt.toISOString();
 
@@ -41,12 +44,8 @@ export default function DelayPrintReport({
           <h1>Delay &amp; Issues Report</h1>
           <p>Reporting scope: All available delay reports</p>
           <p>Generated on: {generatedStamp}</p>
-          <p>Report ID: Not issued</p>
         </div>
-        <div className="wpr-verification">
-          <strong>Verification unavailable</strong>
-          <span>No report ID or verification record has been issued.</span>
-        </div>
+        <ReportVerificationBox reportId={reportId} qrDataUrl={qrDataUrl} />
       </header>
 
       <section className="wpr-section">

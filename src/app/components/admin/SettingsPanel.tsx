@@ -2,9 +2,12 @@ import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
   X, KeyRound, Bell, Eye, EyeOff, UserRound,
-  CheckCircle2, Pencil, ChevronDown,
+  CheckCircle2, Pencil, ChevronDown, Camera, Trash2,
 } from 'lucide-react';
-import { changeOwnPassword, PasswordError } from '../../lib/db';
+import {
+  changeOwnPassword, PasswordError,
+  updateOwnDisplayName, uploadOwnAvatar, removeOwnAvatar,
+} from '../../lib/db';
 import { playNotificationSound } from '../../lib/notificationSound';
 import { useModalFocus } from './useModalFocus';
 import type { StaffSession } from '../../lib/db';
@@ -25,13 +28,15 @@ interface Props {
   open: boolean;
   onClose: () => void;
   profile: StaffSession | null;
+  avatarUrl: string;
+  onProfileUpdated: (update: Partial<StaffSession>, freshAvatarUrl?: string) => void;
   notifEnabled: boolean;
   setNotifEnabled: (v: boolean) => void;
   soundEnabled: boolean;
   setSoundEnabled: (v: boolean) => void;
 }
 
-export default function SettingsPanel({ open, onClose, profile, notifEnabled, setNotifEnabled, soundEnabled, setSoundEnabled }: Props) {
+export default function SettingsPanel({ open, onClose, profile, avatarUrl, onProfileUpdated, notifEnabled, setNotifEnabled, soundEnabled, setSoundEnabled }: Props) {
   const [openSection, setOpenSection] = useState<'security' | 'notifications' | null>(null);
   /* ── Persist notifications preference ── */
   useEffect(() => {
@@ -56,6 +61,71 @@ export default function SettingsPanel({ open, onClose, profile, notifEnabled, se
   const [passError,   setPassError]   = useState('');
   const [passSaved,   setPassSaved]   = useState(false);
   const [passBusy,    setPassBusy]    = useState(false);
+
+  /* ── REQ-012: own name / avatar ── */
+  const [editingName, setEditingName] = useState(false);
+  const [nameInput,   setNameInput]   = useState(profile?.name ?? '');
+  const [nameBusy,    setNameBusy]    = useState(false);
+  const [nameError,   setNameError]   = useState('');
+  const [avatarBusy,  setAvatarBusy]  = useState(false);
+  const [avatarError, setAvatarError] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { if (!editingName) setNameInput(profile?.name ?? ''); }, [profile?.name, editingName]);
+
+  const handleSaveName = async () => {
+    setNameError('');
+    const trimmed = nameInput.trim();
+    if (!trimmed) { setNameError('Name is required.'); return; }
+    setNameBusy(true);
+    try {
+      const result = await updateOwnDisplayName(trimmed);
+      onProfileUpdated(result);
+      setEditingName(false);
+    } catch (e) {
+      console.error('[updateOwnDisplayName] error:', e);
+      setNameError('Could not update your name. Check your connection and try again.');
+    } finally {
+      setNameBusy(false);
+    }
+  };
+
+  const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !profile) return;
+    setAvatarError('');
+    setAvatarBusy(true);
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const { avatarUrl: freshUrl, ...profileUpdate } = await uploadOwnAvatar(profile.id, reader.result as string);
+        onProfileUpdated(profileUpdate, freshUrl);
+      } catch (err) {
+        console.error('[uploadOwnAvatar] error:', err);
+        setAvatarError('Could not upload your photo. Check your connection and try again.');
+      } finally {
+        setAvatarBusy(false);
+      }
+    };
+    reader.onerror = () => { setAvatarError('Could not read that file.'); setAvatarBusy(false); };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveAvatar = async () => {
+    if (!profile?.avatarPath) return;
+    setAvatarError('');
+    setAvatarBusy(true);
+    try {
+      const result = await removeOwnAvatar(profile.avatarPath);
+      onProfileUpdated(result, '');
+    } catch (err) {
+      console.error('[removeOwnAvatar] error:', err);
+      setAvatarError('Could not remove your photo. Check your connection and try again.');
+    } finally {
+      setAvatarBusy(false);
+    }
+  };
 
   /* ── Close on Esc ── */
   useEffect(() => {
@@ -152,21 +222,68 @@ export default function SettingsPanel({ open, onClose, profile, notifEnabled, se
           <section className="pb-6">
             <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-center sm:gap-6">
               <div className="flex-shrink-0">
-                <div className="flex h-[104px] w-[104px] items-center justify-center overflow-hidden rounded-[18px] border border-green-700/30 bg-[#03624c] shadow-sm sm:h-[116px] sm:w-[116px]">
-                  <span className="text-3xl font-bold tracking-wide text-white">{initials}</span>
+                <div className="relative flex h-[104px] w-[104px] items-center justify-center overflow-hidden rounded-[18px] border border-green-700/30 bg-[#03624c] shadow-sm sm:h-[116px] sm:w-[116px]">
+                  {avatarUrl
+                    ? <img src={avatarUrl} alt="" className="h-full w-full object-cover" />
+                    : <span className="text-3xl font-bold tracking-wide text-white">{initials}</span>}
+                  {avatarBusy && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+                      <span className="text-xs font-medium text-white">Saving…</span>
+                    </div>
+                  )}
                 </div>
+                <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button type="button" onClick={() => fileInputRef.current?.click()} disabled={avatarBusy}
+                    className="flex items-center gap-1.5 rounded-lg border border-border bg-white px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-muted/40 disabled:cursor-not-allowed disabled:opacity-60">
+                    <Camera className="w-3.5 h-3.5" /> {profile?.avatarPath ? 'Change photo' : 'Add photo'}
+                  </button>
+                  {profile?.avatarPath && (
+                    <button type="button" onClick={handleRemoveAvatar} disabled={avatarBusy}
+                      className="flex items-center gap-1.5 rounded-lg border border-border bg-white px-2.5 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60">
+                      <Trash2 className="w-3.5 h-3.5" /> Remove
+                    </button>
+                  )}
+                </div>
+                {avatarError && <p className="mt-1.5 text-xs text-red-500">{avatarError}</p>}
               </div>
               <div className="min-w-0 flex-1">
-                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                  <p className="min-w-0 break-words text-2xl font-semibold leading-tight text-foreground sm:text-[28px]">{profile?.name || 'Account'}</p>
-                  <AccountRoleBadge role={profile?.role ?? null} />
-                </div>
+                {editingName ? (
+                  <div className="max-w-xs space-y-2">
+                    <input
+                      value={nameInput}
+                      onChange={(e) => { setNameInput(e.target.value); setNameError(''); }}
+                      placeholder="Your name"
+                      className={inputCls(!!nameError)}
+                      autoFocus
+                    />
+                    {nameError && <p className="text-xs text-red-500">{nameError}</p>}
+                    <div className="flex gap-2">
+                      <button type="button" onClick={handleSaveName} disabled={nameBusy}
+                        className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60">
+                        {nameBusy ? 'Saving…' : 'Save'}
+                      </button>
+                      <button type="button" disabled={nameBusy}
+                        onClick={() => { setEditingName(false); setNameInput(profile?.name ?? ''); setNameError(''); }}
+                        className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted/40">
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                    <p className="min-w-0 break-words text-2xl font-semibold leading-tight text-foreground sm:text-[28px]">{profile?.name || 'Account'}</p>
+                    <AccountRoleBadge role={profile?.role ?? null} />
+                    <button type="button" onClick={() => setEditingName(true)} aria-label="Edit name"
+                      className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary">
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
                 <p className="mt-2 break-all text-sm text-slate-600 sm:text-base">{profile?.email ?? 'Email unavailable'}</p>
                 <p className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground"><UserRound className="h-3.5 w-3.5 text-green-800" aria-hidden="true" />Account profile</p>
               </div>
             </div>
-
-            <p className="mt-4 text-sm text-muted-foreground sm:mt-5">Profile editing is temporarily unavailable. Your account name and photo cannot be saved yet.</p>
           </section>
 
           {/* ── Password ── */}

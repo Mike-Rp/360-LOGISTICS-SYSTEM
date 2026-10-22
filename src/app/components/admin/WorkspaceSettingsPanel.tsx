@@ -2,10 +2,11 @@ import { useState, useEffect, useRef } from 'react';
 import {
   X, Users, UserPlus, Clock, ClipboardList, Search, ChevronRight,
   LogIn, CheckCircle, XCircle, FileCheck, FileX, UserX, UserMinus,
-  RefreshCw, Shield, Eye, EyeOff, Mail, Pencil, Archive,
+  RefreshCw, Shield, Mail, Pencil, Archive, KeyRound,
 } from 'lucide-react';
-import { listTeamMembers, createTeamMember, listCsrPasswordResetRequests, reviewCsrPasswordReset, createCsrPasswordResetLink } from '../../lib/db';
+import { listTeamMembers, createTeamMember, archiveTeamMember, restoreTeamMember, listCsrPasswordResetRequests, reviewCsrPasswordReset, createCsrPasswordResetLink, resolveAvatarUrls } from '../../lib/db';
 import type { CsrPasswordResetRequest } from '../../lib/db';
+import ConfirmPasswordDialog from './ConfirmPasswordDialog';
 import type { AdminActivityEntry, AdminActivityType, AdminActivityInput, TeamMember } from '../../data/assignmentTypes';
 import { PaginationFooter } from './Pagination';
 import { pushAdminNavigation } from '../../lib/adminNavigation';
@@ -18,12 +19,14 @@ const ACT_CONFIG: Record<AdminActivityType, { label: string; icon: React.Element
   task_cancelled:      { label: 'Delivery Cancelled', icon: XCircle, color: 'text-red-500' },
   task_edited:         { label: 'Task Edited',    icon: Pencil,       color: 'text-amber-500'  },
   driver_archived:     { label: 'Driver Archived', icon: Archive,     color: 'text-orange-500' },
+  driver_pin_reset:    { label: 'Driver PIN Reset', icon: KeyRound,   color: 'text-blue-600'   },
   truck_archived:      { label: 'Truck Archived',  icon: Archive,     color: 'text-orange-500' },
   doc_approved:        { label: 'Document Approved', icon: FileCheck, color: 'text-teal-500' },
   doc_rejected:        { label: 'Document Rejected', icon: FileX, color: 'text-red-500' },
   driver_deleted:      { label: 'Driver Removed', icon: UserX,        color: 'text-orange-500' },
   member_added:        { label: 'Member Added',   icon: UserPlus,     color: 'text-blue-500'   },
-  member_removed:      { label: 'Member Removed', icon: UserMinus,    color: 'text-red-500'    },
+  member_archived:     { label: 'Member Archived', icon: UserMinus,   color: 'text-red-500'    },
+  member_restored:     { label: 'Member Restored', icon: RefreshCw,   color: 'text-green-600'  },
   password_reset_requested: { label: 'Password Reset Requested', icon: Mail, color: 'text-amber-600' },
   password_reset_approved:  { label: 'Password Reset Approved', icon: CheckCircle, color: 'text-green-600' },
   password_reset_link_generated: { label: 'Password Reset Link Generated', icon: ClipboardList, color: 'text-blue-600' },
@@ -62,9 +65,11 @@ function getDesc(e: AdminActivityEntry): string {
     case 'doc_rejected':         return `Rejected "${e.docType ?? 'document'}" for ${e.driverName ?? '—'}`;
     case 'driver_deleted':       return `Removed driver "${e.driverName ?? '—'}"`;
     case 'driver_archived':      return `Moved driver "${e.driverName ?? '—'}" to archive`;
+    case 'driver_pin_reset':     return `New PIN set for "${e.driverName ?? '—'}"`;
     case 'truck_archived':       return `Moved truck ${e.truckPlate ?? '—'} to archive`;
     case 'member_added':         return `Added ${e.memberName ?? e.memberEmail ?? 'a member'} to the team`;
-    case 'member_removed':       return `Removed ${e.memberName ?? e.memberEmail ?? 'a member'}`;
+    case 'member_archived':      return `Archived ${e.memberName ?? e.memberEmail ?? 'a member'}`;
+    case 'member_restored':      return `Restored ${e.memberName ?? e.memberEmail ?? 'a member'}`;
     case 'password_reset_requested': return `Reset requested for ${e.memberName ?? e.memberEmail ?? 'a CSR member'}`;
     case 'password_reset_approved': return `Approved reset request for ${e.memberName ?? e.memberEmail ?? 'a CSR member'}`;
     case 'password_reset_link_generated': return `Generated reset link for ${e.memberName ?? e.memberEmail ?? 'a CSR member'}`;
@@ -72,13 +77,6 @@ function getDesc(e: AdminActivityEntry): string {
     case 'password_changed': return `Password changed by ${e.memberName ?? e.memberEmail ?? 'a CSR member'}`;
   }
 }
-
-const generatePassword = () => {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
-  let out = '';
-  for (let i = 0; i < 10; i++) out += chars[Math.floor(Math.random() * chars.length)];
-  return out;
-};
 
 /* ── Modal shell (mirrors RegisterModals.tsx's local ModalShell) ── */
 function ModalShell({ title, onClose, children, footer }: {
@@ -108,24 +106,24 @@ function AddMemberModal({ onClose, onAdded }: {
 }) {
   const [name,       setName]       = useState('');
   const [email,      setEmail]      = useState('');
-  const [password,   setPassword]   = useState('');
-  const [showPass,   setShowPass]   = useState(false);
   const [error,      setError]      = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [created,    setCreated]    = useState<TeamMember | null>(null);
+  const [created,    setCreated]    = useState<(TeamMember & { setupToken: string }) | null>(null);
+  const [copied,     setCopied]     = useState(false);
+  const [copyError,  setCopyError]  = useState('');
 
   const handleAdd = async () => {
     setError('');
     if (!name.trim()) { setError('Name is required.'); return; }
     if (!/^\S+@\S+\.\S+$/.test(email.trim())) { setError('Enter a valid email address.'); return; }
-    if (password.length < 6) { setError('Password must be at least 6 characters.'); return; }
 
     setSubmitting(true);
     try {
-      /* Creates the Supabase Auth login + the profile row in one database call (only the Operation
-         Manager is allowed — the function checks). The password is shown ONCE below because Auth
-         stores only a hash; nobody, including this app, can read it back later. */
-      const member = await createTeamMember({ name: name.trim(), email: email.trim(), password, role: 'csr' });
+      /* Creates the Supabase Auth login + the profile row in one database call (only the
+         Operation Manager is allowed — the function checks). No password is set by this
+         screen at all — the RPC issues a one-time setup link instead (same mechanism as
+         the CSR password reset link), so nothing ever has to be relayed out-of-band. */
+      const member = await createTeamMember({ name: name.trim(), email: email.trim(), role: 'csr' });
       setCreated(member);
       onAdded(member);
     } catch (e) {
@@ -134,6 +132,26 @@ function AddMemberModal({ onClose, onAdded }: {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleCopyLink = async () => {
+    if (!created) return;
+    setCopyError('');
+    const link = `${window.location.origin}/reset-password?token=${encodeURIComponent(created.setupToken)}`;
+    try {
+      await navigator.clipboard.writeText(link);
+    } catch {
+      const input = document.createElement('textarea');
+      input.value = link;
+      input.style.position = 'fixed';
+      input.style.opacity = '0';
+      document.body.appendChild(input);
+      input.select();
+      const ok = document.execCommand('copy');
+      input.remove();
+      if (!ok) { setCopyError('Could not copy automatically — select and copy the link manually.'); return; }
+    }
+    setCopied(true);
   };
 
   return (
@@ -170,40 +188,6 @@ function AddMemberModal({ onClose, onAdded }: {
             </div>
           </div>
 
-          <div>
-            <label htmlFor="member-temporary-password" className="block text-sm font-medium text-foreground mb-1.5">Temporary Password</label>
-            <p className="mb-2 text-xs text-muted-foreground">Create a temporary password for the new member. They can change it after signing in.</p>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              <div className="relative min-w-0 flex-1">
-                <Shield className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-                <input
-                  id="member-temporary-password"
-                  type={showPass ? 'text' : 'password'}
-                  value={password}
-                  onChange={(e) => { setPassword(e.target.value); setError(''); }}
-                  placeholder="Enter temporary password"
-                  className="w-full pl-10 pr-12 py-3 rounded-xl border border-border bg-white text-sm font-mono tracking-wide focus:outline-none focus:ring-2 focus:ring-primary/30"
-                />
-                <button
-                  type="button"
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => setShowPass((v) => !v)}
-                  aria-label={showPass ? 'Hide password' : 'Show password'}
-                  className="absolute right-1 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary"
-                >
-                  {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-              <button
-                type="button"
-                onClick={() => { setPassword(generatePassword()); setShowPass(true); }}
-                className="flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-primary px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-primary/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-              >
-                <RefreshCw className="w-4 h-4" /> Suggest
-              </button>
-            </div>
-          </div>
-
           {error && <p className="text-xs text-red-500">{error}</p>}
 
           <div className="flex gap-3 pt-1">
@@ -226,17 +210,20 @@ function AddMemberModal({ onClose, onAdded }: {
           </div>
           <div>
             <h4 className="font-semibold text-foreground text-lg">{created.name} added!</h4>
-            <p className="text-sm text-muted-foreground mt-1">Share these credentials with them privately.</p>
+            <p className="text-sm text-muted-foreground mt-1">Share this setup link with them privately. It lets them choose their own password and expires in 7 days.</p>
           </div>
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-left space-y-1">
             <p className="text-xs font-semibold text-amber-700 flex items-center gap-1.5 mb-2">
-              <Shield className="w-3.5 h-3.5" /> Login Credentials
+              <Shield className="w-3.5 h-3.5" /> Account Setup
             </p>
             <p className="text-xs text-amber-600">Email: <strong>{created.email}</strong></p>
-            <p className="text-xs text-amber-600">Temporary Password: <strong className="font-mono tracking-wide">{created.password}</strong></p>
             <p className="text-xs text-amber-600">Role: <strong>CSR</strong></p>
           </div>
-          <button onClick={onClose} className="w-full px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors text-sm font-medium">
+          {copyError && <p className="text-xs text-red-500">{copyError}</p>}
+          <button onClick={handleCopyLink} className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors text-sm font-medium">
+            {copied ? 'Copied!' : 'Copy Setup Link'}
+          </button>
+          <button onClick={onClose} className="w-full px-4 py-2.5 border border-border rounded-xl hover:bg-accent transition-colors text-sm font-medium">
             Done
           </button>
         </div>
@@ -265,9 +252,12 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
   const [memberSearch, setMemberSearch] = useState('');
   const [memberPage, setMemberPage] = useState(1);
   const [members,     setMembers]     = useState<TeamMember[]>([]);
+  const [memberAvatars, setMemberAvatars] = useState<Map<string, string>>(new Map());
   const [loading,     setLoading]     = useState(false);
   const [loadError,   setLoadError]   = useState('');
   const [showAddMember,  setShowAddMember]  = useState(false);
+  const [archiveTarget, setArchiveTarget] = useState<TeamMember | null>(null);
+  const [restoreTarget, setRestoreTarget] = useState<TeamMember | null>(null);
   const [logSearch,   setLogSearch]   = useState('');
   const [logAction, setLogAction] = useState<AdminActivityType | 'all'>('all');
   const [logRole, setLogRole] = useState<'all' | 'csr' | 'opm'>('all');
@@ -297,6 +287,12 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
   };
 
   useEffect(() => { if (open) fetchMembers(); }, [open]);
+  /* One batched signing call for every member's avatar, rather than one request per row. */
+  useEffect(() => {
+    let alive = true;
+    resolveAvatarUrls(members.map((m) => m.avatarPath)).then((map) => { if (alive) setMemberAvatars(map); });
+    return () => { alive = false; };
+  }, [members]);
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -382,6 +378,34 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
   const handleMemberAdded = (member: TeamMember) => {
     setMembers((p) => [...p, member]);
     onLogActivity({ type: 'member_added', memberName: member.name, memberEmail: member.email });
+  };
+
+  const handleArchiveMember = async () => {
+    if (!archiveTarget) return;
+    await archiveTeamMember(archiveTarget.id);
+    await fetchMembers();
+    onLogActivity({ type: 'member_archived', memberName: archiveTarget.name, memberEmail: archiveTarget.email });
+    setArchiveTarget(null);
+  };
+
+  const handleRestoreMember = async () => {
+    if (!restoreTarget) return;
+    await restoreTeamMember(restoreTarget.id);
+    await fetchMembers();
+    onLogActivity({ type: 'member_restored', memberName: restoreTarget.name, memberEmail: restoreTarget.email });
+    setRestoreTarget(null);
+  };
+
+  /* Plain-language text for the errors archive/restore can return */
+  const memberActionErrorText = (err: unknown): string => {
+    const m = err instanceof Error ? err.message : '';
+    if (m.includes('wrong_password'))    return 'Incorrect password. Please try again.';
+    if (m.includes('reauth_required'))   return 'Please enter your password again.';
+    if (m.includes('already_archived'))  return 'This member is already archived. Refresh the page.';
+    if (m.includes('already_active'))    return 'This member is already active. Refresh the page.';
+    if (m.includes('member_not_found'))  return 'This member could not be found. Refresh the page.';
+    if (m.includes('not_authorized'))    return 'Only the Operation Manager can do this.';
+    return m || 'Something went wrong. Please try again.';
   };
 
   const pageSize = 10;
@@ -499,13 +523,24 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
               : visibleMembers.length === 0 ? <p className="py-8 text-center text-sm text-muted-foreground">No {memberStatus === 'active' ? 'active' : 'archived'} members found.</p>
               : <div className="space-y-2">{visibleMembers.map((member) => <div key={member.id}
                   className="flex flex-wrap items-center gap-3 rounded-xl border border-border px-3 py-3">
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-800 text-xs font-semibold text-white">
-                    {member.name.split(' ').map((part) => part[0]).join('').toUpperCase().slice(0, 2)}
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-800 text-xs font-semibold text-white">
+                    {member.avatarPath && memberAvatars.get(member.avatarPath)
+                      ? <img src={memberAvatars.get(member.avatarPath)} alt="" className="h-full w-full object-cover" />
+                      : member.name.split(' ').map((part) => part[0]).join('').toUpperCase().slice(0, 2)}
                   </span>
                   <div className="min-w-0 flex-1"><p className="break-words text-sm font-semibold">{member.name}</p><p className="break-all text-xs text-muted-foreground">{member.email}</p></div>
                   <div className="text-xs text-muted-foreground"><span className="font-medium text-foreground">CSR</span><span className="mx-1.5">·</span>{memberStatus === 'active' ? `Last login: ${member.lastActive ? fmtTs(member.lastActive) : 'Never'}` : 'Access inactive'}</div>
+                  {memberStatus === 'active'
+                    ? <button type="button" onClick={() => setArchiveTarget(member)}
+                        className="min-h-9 shrink-0 rounded-lg border border-red-200 bg-white px-3 text-sm font-medium text-red-600 hover:bg-red-50">
+                        Archive
+                      </button>
+                    : <button type="button" onClick={() => setRestoreTarget(member)}
+                        className="min-h-9 shrink-0 rounded-lg border border-border bg-white px-3 text-sm font-medium text-foreground hover:bg-muted/40">
+                        Restore
+                      </button>}
                 </div>)}</div>}
-            <p className="text-xs text-muted-foreground">Member archive and restore require backend support. The existing Remove action permanently deletes the login.</p>
+            <p className="text-xs text-muted-foreground">Archiving a member revokes their access immediately; it does not delete their login, and can be undone from the Archived tab.</p>
           </section>}
 
           {/* ── Password Reset Requests ── */}
@@ -634,6 +669,36 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
         <AddMemberModal
           onClose={() => setShowAddMember(false)}
           onAdded={handleMemberAdded}
+        />
+      )}
+
+      {archiveTarget && (
+        <ConfirmPasswordDialog
+          title="Archive this member?"
+          message={<>
+            <span className="font-medium text-foreground">{archiveTarget.name}</span> will lose access immediately.
+            This doesn't delete their login, and can be undone from the Archived tab.
+          </>}
+          confirmLabel="Archive"
+          busyLabel="Archiving…"
+          onConfirm={handleArchiveMember}
+          onCancel={() => setArchiveTarget(null)}
+          errorText={memberActionErrorText}
+        />
+      )}
+
+      {restoreTarget && (
+        <ConfirmPasswordDialog
+          tone="primary"
+          title="Restore this member?"
+          message={<>
+            <span className="font-medium text-foreground">{restoreTarget.name}</span> will regain access immediately.
+          </>}
+          confirmLabel="Restore"
+          busyLabel="Restoring…"
+          onConfirm={handleRestoreMember}
+          onCancel={() => setRestoreTarget(null)}
+          errorText={memberActionErrorText}
         />
       )}
     </>

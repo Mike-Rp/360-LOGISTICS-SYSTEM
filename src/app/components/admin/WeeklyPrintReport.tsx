@@ -1,6 +1,7 @@
 import { createPortal } from 'react-dom';
 import logo from 'figma:asset/5e73e3c08e898d68c86717993c6e7442d03e9ac4.png';
 import { formatOperationalStamp } from '../../lib/assignmentOperational';
+import ReportVerificationBox from './ReportVerificationBox';
 import './WeeklyPrintReport.css';
 
 interface WeeklyPrintRow {
@@ -17,33 +18,27 @@ interface WeeklyPrintRow {
 interface Props {
   rows: WeeklyPrintRow[];
   summary: { total: number; completed: number; delayed: number; active: number };
-  includedDeliveryDates: string[];
+  /** The exact ISO week (Mon-Sun) this report covers, as YYYY-MM-DD — the same
+   * deterministic bounds used to filter `rows` and to issue the Report ID, so
+   * the header always matches regardless of which dates the rows themselves
+   * happen to carry (some are yearless display strings). */
+  weekStart: string;
+  weekEnd: string;
   generatedAt: Date;
   generatedBy: string;
   role: 'OPM' | 'CSR';
+  reportId: string | null;
+  qrDataUrl: string | null;
 }
 
-function deliveryDay(value: string): string | null {
-  const parsed = new Date(value);
-  if (!Number.isFinite(parsed.getTime())) return null;
-  const iso = /^\d{4}-\d{2}-\d{2}$/.test(value.trim());
-  const year = iso ? parsed.getUTCFullYear() : parsed.getFullYear();
-  const month = (iso ? parsed.getUTCMonth() : parsed.getMonth()) + 1;
-  const day = iso ? parsed.getUTCDate() : parsed.getDate();
-  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-}
-
-function includedDateSpan(values: string[]): string | null {
-  const days = values.map(deliveryDay).filter((day): day is string => day !== null).sort();
-  if (!days.length) return null;
-  const label = (day: string) => new Intl.DateTimeFormat('en-US', {
+function fmtSpanDate(day: string): string {
+  return new Intl.DateTimeFormat('en-US', {
     timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric',
   }).format(new Date(`${day}T00:00:00Z`));
-  return days[0] === days[days.length - 1] ? label(days[0]) : `${label(days[0])} – ${label(days[days.length - 1])}`;
 }
 
-export default function WeeklyPrintReport({ rows, summary, includedDeliveryDates, generatedAt, generatedBy, role }: Props) {
-  const dateSpan = includedDateSpan(includedDeliveryDates);
+export default function WeeklyPrintReport({ rows, summary, weekStart, weekEnd, generatedAt, generatedBy, role, reportId, qrDataUrl }: Props) {
+  const dateSpan = `${fmtSpanDate(weekStart)} – ${fmtSpanDate(weekEnd)}`;
   const generatedStamp = formatOperationalStamp(generatedAt.toISOString()) ?? generatedAt.toISOString();
 
   return createPortal(
@@ -53,13 +48,10 @@ export default function WeeklyPrintReport({ rows, summary, includedDeliveryDates
           <img src={logo} alt="360 Logistics" className="wpr-logo" />
           <h1>Weekly Performance Report</h1>
           <p>Coverage: All included active and completed assignments</p>
-          {dateSpan && <p>Included delivery dates: {dateSpan}</p>}
+          <p>Reporting week: {dateSpan}</p>
           <p>Generated on: {generatedStamp}</p>
         </div>
-        <div className="wpr-verification">
-          <strong>Verification unavailable</strong>
-          <span>No report ID or verification record has been issued.</span>
-        </div>
+        <ReportVerificationBox reportId={reportId} qrDataUrl={qrDataUrl} />
       </header>
 
       <section className="wpr-section">

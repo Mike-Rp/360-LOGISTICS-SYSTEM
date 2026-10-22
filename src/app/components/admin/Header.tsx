@@ -22,6 +22,7 @@ interface Props {
   adminRole: AdminRole | null;
   adminEmail?: string | null;
   adminName?: string;
+  avatarUrl?: string;
   onOpenWorkspaceSettings?: () => void;
   searchPlaceholder?: string;
   searchValue: string;
@@ -51,7 +52,7 @@ function fmtTimestamp(ts: string): string {
 
 export default function Header({
   notifications, setNotifications, onOpenNotification, onLogout, onOpenSettings, onOpenHelp,
-  isOperationManager, adminRole, adminEmail, adminName, onOpenWorkspaceSettings,
+  isOperationManager, adminRole, adminEmail, adminName, avatarUrl, onOpenWorkspaceSettings,
   searchPlaceholder, searchValue, onSearchChange,
 }: Props) {
   const [bellOpen,    setBellOpen]    = useState(false);
@@ -246,8 +247,8 @@ export default function Header({
             onClick={() => { setAccountOpen((v) => !v); setBellOpen(false); }}
             className="flex min-w-0 max-w-[calc(100vw-9rem)] shrink-0 items-center gap-2.5 rounded-full border border-border px-3 py-1.5 transition-colors hover:bg-accent sm:max-w-none"
           >
-            <div className="w-7 h-7 bg-black rounded-full flex items-center justify-center flex-shrink-0">
-              <User className="w-4 h-4 text-white" />
+            <div className="w-7 h-7 bg-black rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden">
+              {avatarUrl ? <img src={avatarUrl} alt="" className="h-full w-full object-cover" /> : <User className="w-4 h-4 text-white" />}
             </div>
             <span className="min-w-0 truncate text-sm font-medium text-foreground">{adminName ?? 'Admin User'}</span>
             <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform duration-150 ${accountOpen ? 'rotate-180' : ''}`} />
@@ -258,8 +259,8 @@ export default function Header({
 
               {/* User info */}
               <div className="flex min-w-0 items-center gap-3 px-4 py-4">
-                <div className="w-10 h-10 bg-black rounded-full flex items-center justify-center flex-shrink-0">
-                  <User className="w-5 h-5 text-white" />
+                <div className="w-10 h-10 bg-black rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden">
+                  {avatarUrl ? <img src={avatarUrl} alt="" className="h-full w-full object-cover" /> : <User className="w-5 h-5 text-white" />}
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex min-w-0 items-center gap-2">

@@ -151,8 +151,13 @@ begin
   -- ── 10. still cancellable at pickup arrival and while loading ──
   reset role;
   update public.drivers set status = 'Assigned' where id = drv_id;
+  -- REQ-011: the new assignments-insert guard only allows dispatch_assignment()'s own
+  -- insert; drop the CSR impersonation that's still active from step 2 so these raw
+  -- fixture inserts run as "no session" like every other fixture insert in this file.
+  perform set_config('request.jwt.claims', '{}', true);
   perform pg_temp.ct_assignment('ASN-CANCELTEST-B', drv_id, trk_id, 'Assigned', 'pickup_arrived', false);
   perform pg_temp.ct_assignment('ASN-CANCELTEST-C', drv_id, trk2,   'Assigned', 'loading', false);
+  perform set_config('request.jwt.claims', c_csr, true);
   set local role authenticated;
   perform public.cancel_assignment('ASN-CANCELTEST-B', v_reason, pw);
   perform public.cancel_assignment('ASN-CANCELTEST-C', v_reason, pw);
@@ -165,8 +170,10 @@ begin
   -- ── 11. a driver/truck still on another active assignment is NOT released ──
   update public.drivers set status = 'Assigned' where id = drv_id;
   update public.trucks set status = 'Assigned' where id = trk_id;
+  perform set_config('request.jwt.claims', '{}', true);
   perform pg_temp.ct_assignment('ASN-CANCELTEST-D', drv_id, trk_id, 'Assigned', null, false);
   perform pg_temp.ct_assignment('ASN-CANCELTEST-E', drv_id, trk_id, 'Assigned', null, false);
+  perform set_config('request.jwt.claims', c_csr, true);
   set local role authenticated;
   perform public.cancel_assignment('ASN-CANCELTEST-D', v_reason, pw);
   reset role;
@@ -177,9 +184,11 @@ begin
   n := n + 1;
 
   -- ── 12. Loading cutoff: loaded / departed / Picked Up / In Transit are refused ──
+  perform set_config('request.jwt.claims', '{}', true);
   perform pg_temp.ct_assignment('ASN-CANCELTEST-F', drv_id, trk2, 'Assigned', 'loaded', true);
   perform pg_temp.ct_assignment('ASN-CANCELTEST-G', drv_id, trk2, 'Picked Up', null, false);
   perform pg_temp.ct_assignment('ASN-CANCELTEST-H', drv_id, trk2, 'In Transit', 'destination_arrived', true);
+  perform set_config('request.jwt.claims', c_csr, true);
   set local role authenticated;
   err := null; begin perform public.cancel_assignment('ASN-CANCELTEST-F', v_reason, pw); exception when others then err := sqlerrm; end;
   if err is distinct from 'loading_completed' then raise exception 'CANCEL FAIL: loaded gave %', coalesce(err, 'success'); end if;
@@ -215,6 +224,7 @@ begin
 
   -- ── 16. drivers still progress past Loading: stage RPC (depart → Picked Up),
   --        the driver's own In Transit update, then arrival at the destination ──
+  perform set_config('request.jwt.claims', '{}', true);
   perform pg_temp.ct_assignment('ASN-CANCELTEST-P', drv_id, trk2, 'Assigned', null, false);
   insert into public.status_photos (assignment_id, status, url)
   select 'ASN-CANCELTEST-P', s, 'test://' || s from unnest(array['pickup_front', 'pickup_left', 'pickup_right', 'pickup_rear',

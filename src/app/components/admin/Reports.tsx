@@ -12,7 +12,9 @@ import { splitDisplayDateTime } from '../../lib/displayDateTime';
 import { getAssignmentRoute } from '../../data/assignmentRoute';
 import { statusColors } from '../../data/statusColors';
 import { PaginationFooter, usePagination } from './Pagination';
-import { restoreSession } from '../../lib/db';
+import QRCode from 'qrcode';
+import { restoreSession, issueReport, listIssuedReports, type IssuedReportSummary } from '../../lib/db';
+import { REPORT_TYPE_LABEL } from '../../lib/reportTypes';
 import WeeklyPrintReport from './WeeklyPrintReport';
 import MonthlyPrintReport from './MonthlyPrintReport';
 import DelayPrintReport from './DelayPrintReport';
@@ -76,6 +78,21 @@ function fmtTime(iso: string) {
   } catch { return iso; }
 }
 
+/* REQ-007: issued_reports.report_period_start/end are plain YYYY-MM-DD with no time
+   component — anchor to UTC noon so no local timezone can shift the calendar day. */
+function fmtPeriod(start: string | null, end: string | null): string {
+  if (!start || !end) return '—';
+  const label = (day: string) => new Intl.DateTimeFormat('en-US', {
+    timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric',
+  }).format(new Date(`${day}T00:00:00Z`));
+  return start === end ? label(start) : `${label(start)} – ${label(end)}`;
+}
+function fmtGeneratedAt(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  } catch { return iso; }
+}
+
 function completionRate(completedTrips: number, timesAssigned: number): string {
   return timesAssigned > 0 ? `${((completedTrips / timesAssigned) * 100).toFixed(1)}%` : '—';
 }
@@ -84,11 +101,41 @@ function arrivalTime(assignment: Assignment): string {
   return splitDisplayDateTime(assignment.destinationArrivedAt)?.time ?? '—';
 }
 
-/* Build weekly rows from live data */
-function buildWeeklyRows(assignments: Assignment[], completed: CompletedTask[]): WeeklyRow[] {
+/* REQ-007: the current ISO calendar week (Mon-Sun) containing `now` — Reports.tsx's
+   Weekly report previously had no date filter at all and included every active +
+   completed assignment regardless of date. */
+function isoWeekBounds(now: Date): { start: Date; end: Date } {
+  const day = (now.getDay() + 6) % 7; // Mon=0 ... Sun=6
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day, 0, 0, 0, 0);
+  const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6, 23, 59, 59, 999);
+  return { start, end };
+}
+function inRange(value: string | null | undefined, start: Date, end: Date): boolean {
+  const d = value ? parseStoredTimestamp(value) : null;
+  return !!d && d.getTime() >= start.getTime() && d.getTime() <= end.getTime();
+}
+
+// Local date components only — toISOString() converts to UTC first, which silently
+// shifts the date back a day for any positive UTC offset (e.g. Philippine time)
+// whenever local midnight hasn't yet reached UTC midnight.
+function toIsoDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/* REQ-007: a frozen forensic digest over the exact rows a report includes at
+   generation time — never recomputed or live-compared, just stored alongside
+   the issued report for possible future/manual auditing. */
+async function sha256Hex(input: string): Promise<string> {
+  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
+  return [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/* Build weekly rows from live data, scoped to the current ISO week */
+function buildWeeklyRows(assignments: Assignment[], completed: CompletedTask[], week: { start: Date; end: Date }): WeeklyRow[] {
   const rows: WeeklyRow[] = [];
 
   for (const c of completed) {
+    if (!inRange(c.completedEventAt ?? c.completedAt, week.start, week.end)) continue;
     const isDelayed = (c.delayReports?.length ?? 0) > 0;
     rows.push({
       date: c.completedAt ? fmtDate(c.completedAt) : c.deliveryDate,
@@ -102,6 +149,7 @@ function buildWeeklyRows(assignments: Assignment[], completed: CompletedTask[]):
   }
 
   for (const a of assignments) {
+    if (!inRange(a.deliveryDate, week.start, week.end)) continue;
     const isDelayed = (a.delayReports?.length ?? 0) > 0;
     const statusMap: Record<string, WeeklyRow['status']> = {
       'Assigned':   'Assigned',
@@ -387,7 +435,8 @@ function PreviewModal({
   trucks: { plateNumber: string; classification?: string }[];
   onClose: () => void;
 }) {
-  const weeklyRows  = buildWeeklyRows(assignments, completed);
+  const weekBounds  = isoWeekBounds(new Date());
+  const weeklyRows  = buildWeeklyRows(assignments, completed, weekBounds);
   const delayRows   = buildDelayRows(assignments, completed);
   const monthlyRows = buildMonthlyRows(completed);
   const monthlyPreviewRows = buildMonthlyPreviewRows(assignments, completed, cancelled);
@@ -408,6 +457,7 @@ function PreviewModal({
   const [printing, setPrinting] = useState(false);
   const [formalPrintContext, setFormalPrintContext] = useState<{
     generatedAt: Date; generatedBy: string; role: 'OPM' | 'CSR';
+    reportId: string | null; qrDataUrl: string | null;
   } | null>(null);
   const [printError, setPrintError] = useState('');
   const selectedDataKey = JSON.stringify(
@@ -528,11 +578,48 @@ function PreviewModal({
       if (reportKey === 'monthly' && !selectedMonth) throw new Error('No selected reporting month');
       const session = await restoreSession();
       if (session?.kind !== 'staff') throw new Error('No active staff session');
+
+      // REQ-007: issue the persistent, publicly-verifiable Report ID BEFORE printing —
+      // the QR is only created once a record has actually been issued.
+      let periodStart: string | null = null;
+      let periodEnd: string | null = null;
+      let rowCount = 0;
+      let digestSource = '';
+      if (reportKey === 'weekly') {
+        periodStart = toIsoDate(weekBounds.start);
+        periodEnd = toIsoDate(weekBounds.end);
+        rowCount = weeklyRows.length;
+        digestSource = weeklyRows.map((r) => r.asn).sort().join(',');
+      } else if (reportKey === 'monthly' && selectedMonth) {
+        periodStart = `${selectedMonth.key}-01`;
+        const [y, m] = selectedMonth.key.split('-').map(Number);
+        periodEnd = toIsoDate(new Date(y, m, 0));
+        rowCount = selectedMonth.total;
+        digestSource = JSON.stringify(selectedMonth);
+      } else if (reportKey === 'delay') {
+        rowCount = delayRows.length;
+        digestSource = delayRows.map((r) => `${r.asn}:${r.type}:${r.reportedStamp}`).sort().join(',');
+      } else {
+        rowCount = utilTab === 'trucks' ? truckUtilRows.length : driverUtilRows.length;
+        digestSource = (utilTab === 'trucks' ? truckUtilRows.map((r) => r.plate) : driverUtilRows.map((r) => r.key)).sort().join(',');
+      }
+      const rowDigest = await sha256Hex(digestSource);
+      const issued = await issueReport({ reportType: reportKey, periodStart, periodEnd, rowCount, rowDigest });
+      const verifyUrl = `${window.location.origin}/verify-report?id=${encodeURIComponent(issued.id)}`;
+      const qrDataUrl = await QRCode.toDataURL(verifyUrl, { margin: 1, width: 240 });
+      // window.print() can snapshot the page before a freshly-set data: URL image has
+      // actually decoded, printing it blank — force the decode to finish first.
+      const preload = new Image();
+      preload.src = qrDataUrl;
+      await preload.decode().catch(() => {});
+
       flushSync(() => setFormalPrintContext({
-        generatedAt: new Date(),
+        generatedAt: new Date(issued.generatedAt),
         generatedBy: session.staff.name.trim() || session.staff.email,
         // The retained legacy admin role has CSR permissions; OPM is its own role.
         role: session.staff.role === 'opm' ? 'OPM' : 'CSR',
+        reportId: issued.id,
+        qrDataUrl,
       }));
       window.print();
     } catch {
@@ -1014,10 +1101,13 @@ function PreviewModal({
       <WeeklyPrintReport
         rows={weeklyRows}
         summary={weeklySummary}
-        includedDeliveryDates={[...assignments, ...completed].map(task => task.deliveryDate)}
+        weekStart={toIsoDate(weekBounds.start)}
+        weekEnd={toIsoDate(weekBounds.end)}
         generatedAt={formalPrintContext.generatedAt}
         generatedBy={formalPrintContext.generatedBy}
         role={formalPrintContext.role}
+        reportId={formalPrintContext.reportId}
+        qrDataUrl={formalPrintContext.qrDataUrl}
       />
     )}
     {reportKey === 'monthly' && selectedMonth && formalPrintContext && (
@@ -1027,6 +1117,8 @@ function PreviewModal({
         generatedAt={formalPrintContext.generatedAt}
         generatedBy={formalPrintContext.generatedBy}
         role={formalPrintContext.role}
+        reportId={formalPrintContext.reportId}
+        qrDataUrl={formalPrintContext.qrDataUrl}
       />
     )}
     {reportKey === 'delay' && formalPrintContext && (
@@ -1038,6 +1130,8 @@ function PreviewModal({
         generatedAt={formalPrintContext.generatedAt}
         generatedBy={formalPrintContext.generatedBy}
         role={formalPrintContext.role}
+        reportId={formalPrintContext.reportId}
+        qrDataUrl={formalPrintContext.qrDataUrl}
       />
     )}
     {reportKey === 'utilization' && formalPrintContext && (
@@ -1050,6 +1144,8 @@ function PreviewModal({
         generatedAt={formalPrintContext.generatedAt}
         generatedBy={formalPrintContext.generatedBy}
         role={formalPrintContext.role}
+        reportId={formalPrintContext.reportId}
+        qrDataUrl={formalPrintContext.qrDataUrl}
       />
     )}
     </>
@@ -1152,11 +1248,22 @@ interface ReportsProps {
 /* ─── Main Component ──────────────────────────────── */
 export default function Reports({ assignments, completed, cancelled, trucks }: ReportsProps) {
   const [previewKey, setPreviewKey] = useState<ReportKey | null>(null);
+  const [issuedReports, setIssuedReports] = useState<IssuedReportSummary[] | null>(null);
+  const [issuedReportsError, setIssuedReportsError] = useState('');
+  const fetchIssuedReports = () => {
+    listIssuedReports(20)
+      .then((rows) => { setIssuedReports(rows); setIssuedReportsError(''); })
+      .catch((error: unknown) => setIssuedReportsError(error instanceof Error ? error.message : 'Could not load report history.'));
+  };
+  // Refetch on mount, and again whenever the preview modal closes — covers the
+  // common "print, close, see it appear" flow without a cross-component event bus.
+  useEffect(() => { fetchIssuedReports(); }, []);
+  useEffect(() => { if (!previewKey) fetchIssuedReports(); }, [previewKey]);
   const [draftRange, setDraftRange] = useState<DateRange>(initialRange);
   const [range, setRange] = useState<DateRange>(initialRange);
   const [rangeError, setRangeError] = useState('');
   const [actionFeedback, setActionFeedback] = useState<'apply' | 'reset' | null>(null);
-  const feedbackTimer = useRef<ReturnType<typeof window.setTimeout> | undefined>(undefined);
+  const feedbackTimer = useRef<number | undefined>(undefined);
 
   useEffect(() => () => window.clearTimeout(feedbackTimer.current), []);
 
@@ -1186,7 +1293,7 @@ export default function Reports({ assignments, completed, cancelled, trucks }: R
   };
 
   const handleExport = (reportKey: ReportKey) => {
-    const weeklyRows  = buildWeeklyRows(assignments, completed);
+    const weeklyRows  = buildWeeklyRows(assignments, completed, isoWeekBounds(new Date()));
     const dRows       = buildDelayRows(assignments, completed);
     const monthlyRows = buildMonthlyRows(completed);
     if (reportKey === 'weekly') {
@@ -1486,9 +1593,29 @@ export default function Reports({ assignments, completed, cancelled, trucks }: R
             <span>Report Name</span><span>Type</span><span>Date Range</span>
             <span>Generated At</span><span>Generated By</span><span>Actions</span>
           </div>
-          <p className="px-4 py-12 text-center text-sm text-muted-foreground">
-            Report history is unavailable. This system downloads reports without saving a generated-report record.
-          </p>
+          {issuedReportsError ? (
+            <p role="alert" className="px-4 py-12 text-center text-sm text-red-600">{issuedReportsError}</p>
+          ) : issuedReports === null ? (
+            <p className="px-4 py-12 text-center text-sm text-muted-foreground">Loading…</p>
+          ) : issuedReports.length === 0 ? (
+            <p className="px-4 py-12 text-center text-sm text-muted-foreground">No reports have been generated yet.</p>
+          ) : (
+            <div className="divide-y divide-border">
+              {issuedReports.map((r) => (
+                <div key={r.id} className="grid grid-cols-1 gap-1 px-4 py-3 text-sm lg:grid-cols-6 lg:items-center lg:gap-3">
+                  <span className="break-all font-mono text-xs font-medium text-foreground">{r.id}</span>
+                  <span className="text-muted-foreground">{REPORT_TYPE_LABEL[r.reportType] ?? r.reportType}</span>
+                  <span className="text-muted-foreground">{fmtPeriod(r.periodStart, r.periodEnd)}</span>
+                  <span className="text-muted-foreground">{fmtGeneratedAt(r.generatedAt)}</span>
+                  <span className="text-muted-foreground">{r.generatedByName}</span>
+                  <span>
+                    <a href={`/verify-report?id=${encodeURIComponent(r.id)}`} target="_blank" rel="noreferrer"
+                      className="text-sm font-medium text-primary hover:underline">Verify</a>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </section>
 

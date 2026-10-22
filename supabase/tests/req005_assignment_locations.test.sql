@@ -19,6 +19,8 @@ declare
   t_id     text := 'ASN-REQ005-TEST';
   h_id     text := 'ASN-REQ005-OLD';
   staff    uuid;
+  staff_sid uuid := gen_random_uuid();
+  c_staff  text;
   drv_uid  uuid;
   r        public.assignments%rowtype;
   log_diff jsonb;
@@ -27,17 +29,28 @@ begin
   -- ── setup: act as a signed-in admin/CSR who just re-entered their password ──
   select id into staff from public.profiles where status = 'active' and role in ('admin', 'csr') limit 1;
   if staff is null then raise exception 'REQ-005 FAIL: setup — no active admin/csr profile to act as'; end if;
-  perform set_config('request.jwt.claims', jsonb_build_object(
-    'sub', staff, 'role', 'authenticated',
+  -- REQ-009: can_write()/is_staff() now also require session_is_current(), which
+  -- matches the JWT's session_id against the newest row in auth.sessions for that
+  -- user. This impersonation predates that and never had one — add a throwaway
+  -- session for the real staff row; the whole test rolls back, so nothing persists.
+  insert into auth.sessions (id, user_id, created_at, updated_at) values (staff_sid, staff, now(), now());
+  c_staff := jsonb_build_object(
+    'sub', staff, 'role', 'authenticated', 'session_id', staff_sid,
     'amr', jsonb_build_array(jsonb_build_object('method', 'password', 'timestamp', extract(epoch from now())::bigint))
-  )::text, true);
+  )::text;
+  perform set_config('request.jwt.claims', c_staff, true);
   if not public.can_write() then raise exception 'REQ-005 FAIL: setup — impersonated staff cannot write'; end if;
 
   -- ── 1. CREATE: exact stops + origin/destination persist ──
+  -- REQ-011: the new assignments-insert guard only allows dispatch_assignment()'s own
+  -- insert; briefly drop impersonation so this raw fixture insert runs as "no session"
+  -- the same way it always effectively has (nothing here exercises RLS/the insert guard).
+  perform set_config('request.jwt.claims', '{}', true);
   insert into public.assignments (id, destination, destination_area, company, pickup_location, task_status, state,
                                   pickup_latitude, pickup_longitude, delivery_location, delivery_latitude, delivery_longitude)
   values (t_id, 'Makati City → SM Mall of Asia, Pasay City', 'Pasay City', 'REQ-005 test', '6750 Ayala Ave, Makati City',
           'Assigned', 'active', 14.554729, 121.024445, 'SM Mall of Asia, Pasay City', 14.537752, 120.98);
+  perform set_config('request.jwt.claims', c_staff, true);
   n := n + 1;
 
   -- ── 2. READ: the same values come back ──
@@ -155,8 +168,10 @@ begin
   n := n + 1;
 
   -- ── 9. HISTORICAL: an assignment without the new fields works as before ──
+  perform set_config('request.jwt.claims', '{}', true);
   insert into public.assignments (id, destination, destination_area, company, pickup_location, task_status, state)
   values (h_id, 'Laguna → Imus Business Center, Cavite', 'Cavite', 'REQ-005 test', 'Warehouse 3, Laguna', 'Assigned', 'active');
+  perform set_config('request.jwt.claims', c_staff, true);
   select * into r from public.assignments where id = h_id;
   if r.pickup_latitude is not null or r.delivery_location is not null or r.delivery_latitude is not null
      or r.destination <> 'Laguna → Imus Business Center, Cavite' then

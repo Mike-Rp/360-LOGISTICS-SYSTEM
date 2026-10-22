@@ -108,7 +108,11 @@ async function fetchAll(table: string, order: Array<[string, boolean]>): Promise
 
 export interface StaffSession {
   id: string; email: string; name: string; role: AdminRole; isOm: boolean; isDemo: boolean;
+  avatarPath: string | null;
 }
+/** What update_own_display_name / set_own_avatar_path return — merge into the
+    existing StaffSession (isOm/isDemo don't change from these calls). */
+type OwnProfileUpdate = Pick<StaffSession, 'id' | 'email' | 'name' | 'role' | 'avatarPath'>;
 export type LoginErrorCode = 'invalid_credentials' | 'no_access' | 'network' | 'server' | 'rate_limited';
 export class LoginError extends Error {
   code: LoginErrorCode;
@@ -121,6 +125,7 @@ export type AppSession =
 
 const toStaff = (p: Row): StaffSession => ({
   id: p.id, email: p.email, name: p.name ?? '', role: p.role as AdminRole, isOm: p.role === 'opm', isDemo: !!p.is_demo,
+  avatarPath: p.avatar_path ?? null,
 });
 
 async function fetchProfile(uid: string): Promise<Row | null> {
@@ -220,6 +225,61 @@ export async function restoreSession(): Promise<AppSession> {
 /* Logout button: ends this device's session only (see signOutThisDevice). */
 export const signOut = () => signOutThisDevice();
 
+/* ── REQ-012: own profile (name / avatar) ──
+   Both RPCs are SECURITY DEFINER and act only on the caller's own row
+   (auth.uid()); they return the updated {id, email, name, role, avatarPath},
+   which the caller merges into the existing StaffSession (isOm/isDemo stay
+   as they were — these calls never change role or status). */
+export async function updateOwnDisplayName(name: string): Promise<OwnProfileUpdate> {
+  const { data, error } = await supabase.rpc('update_own_display_name', { p_name: name });
+  if (error) throw new Error(error.message);
+  return data as OwnProfileUpdate;
+}
+
+async function setOwnAvatarPathRpc(path: string | null): Promise<OwnProfileUpdate> {
+  const { data, error } = await supabase.rpc('set_own_avatar_path', { p_avatar_path: path });
+  if (error) throw new Error(error.message);
+  return data as OwnProfileUpdate;
+}
+
+/** Upload a new avatar (same fixed path every time, so this replaces in place —
+    no separate cleanup needed), persist the pointer, and return the updated profile
+    plus the FRESH signed URL — the path string itself never changes on a replace,
+    so callers must use this returned URL directly rather than waiting on some
+    path-changed effect, which would never fire for a same-path replacement. */
+export async function uploadOwnAvatar(uid: string, dataUrl: string): Promise<OwnProfileUpdate & { avatarUrl: string }> {
+  const path = `profiles/${uid}/avatar.jpg`;
+  const avatarUrl = await uploadImage(dataUrl, path);
+  const profile = await setOwnAvatarPathRpc(path);
+  return { ...profile, avatarUrl };
+}
+
+/** Remove the current avatar: delete the stored file, then clear the pointer.
+    If the delete fails, the pointer is left alone rather than claiming removal succeeded. */
+export async function removeOwnAvatar(path: string): Promise<OwnProfileUpdate> {
+  const { error } = await supabase.storage.from(BUCKET).remove([path]);
+  if (error) throw new Error(error.message);
+  return setOwnAvatarPathRpc(null);
+}
+
+/** Resolve a stored avatar path to a short-lived display URL, reusing the same
+    signed-link cache/renewal as every other stored file (REQ-010). */
+export async function resolveAvatarUrl(path: string | null): Promise<string> {
+  if (!path) return '';
+  await signStoredFiles([path]);
+  return displayUrl(path);
+}
+
+/** Same, for several accounts at once (e.g. the Team Members list) — one batched
+    signing call instead of one request per row. Keyed by path, not account id,
+    since that's what the caller already has on each TeamMember. */
+export async function resolveAvatarUrls(paths: Array<string | null>): Promise<Map<string, string>> {
+  const unique = [...new Set(paths.filter((p): p is string => !!p))];
+  if (!unique.length) return new Map();
+  await signStoredFiles(unique);
+  return new Map(unique.map((p) => [p, displayUrl(p)]));
+}
+
 /* ── Single active session ──
    'current'    this browser's login is the account's newest — keep going
    'replaced'   the same account signed in on another device → show the message, sign out here
@@ -299,7 +359,8 @@ const photoFromRow = (r: Row): StatusPhoto => ({
 });
 const delayFromRow = (r: Row): DelayReport => ({ type: r.type, reason: r.reason, reportedAt: r.reported_at ?? '' });
 
-function assignmentFromRow(r: Row, docs: Row[], photos: Row[], delays: Row[]): Assignment {
+function assignmentFromRow(r: Row, docs: Row[], photos: Row[], delays: Row[], issues: Row[] = []): Assignment {
+  const openIssueRow = issues.find((i) => i.status === 'open' && i.is_blocking);
   return {
     id: r.id, driverName: r.driver_name ?? '', driverId: r.driver_id ?? '',
     truckPlate: r.truck_plate ?? '', truckId: r.truck_id ?? '',
@@ -313,6 +374,8 @@ function assignmentFromRow(r: Row, docs: Row[], photos: Row[], delays: Row[]): A
     pickupArrivedAt: r.pickup_arrived_at ?? null,
     loadingStartedAt: r.loading_started_at ?? null,
     loadingCompletedAt: r.loading_completed_at ?? null,
+    loadingRemark: r.loading_remark ?? null,
+    unloadingRemark: r.unloading_remark ?? null,
     cancelReason: r.cancel_reason ?? null,
     departedAt: r.departed_at ?? null,
     destinationArrivedAt: r.destination_arrived_at ?? null,
@@ -321,6 +384,10 @@ function assignmentFromRow(r: Row, docs: Row[], photos: Row[], delays: Row[]): A
     documents: [...docs].sort((a, b) => a.position - b.position).map(docFromRow),
     ...(photos.length ? { statusPhotos: Object.fromEntries(photos.map((p) => [p.status, photoFromRow(p)])) } : {}),
     ...(r.issue_reason ? { issueReason: r.issue_reason } : {}),
+    ...(openIssueRow ? { openIssue: {
+      id: openIssueRow.id, reason: openIssueRow.reason,
+      reportedByName: openIssueRow.reported_by_name, reportedAt: openIssueRow.reported_at,
+    } } : {}),
     ...(delays.length ? { delayReports: [...delays].sort((a, b) => a.id - b.id).map(delayFromRow) } : {}),
     ...(r.driver_acknowledged_at ? { driverAcknowledgedAt: r.driver_acknowledged_at } : {}),
     ...(r.created_at ? { createdAt: r.created_at } : {}),
@@ -357,7 +424,7 @@ export async function readRecordCreationTimes(table: 'assignments' | 'drivers', 
 }
 
 export async function loadAdminData(): Promise<AdminData & ArchivedData> {
-  const [driverRows, pinRows, truckRows, asnRows, docRows, photoRows, delayRows, notifRows, actRows] = await Promise.all([
+  const [driverRows, pinRows, truckRows, asnRows, docRows, photoRows, delayRows, issueRows, notifRows, actRows] = await Promise.all([
     fetchAll('drivers',              [['created_at', true], ['id', true]]),
     fetchAll('driver_pins',          [['driver_id', true]]),
     fetchAll('trucks',               [['id', true]]),
@@ -365,6 +432,7 @@ export async function loadAdminData(): Promise<AdminData & ArchivedData> {
     fetchAll('assignment_documents', [['assignment_id', true], ['type', true]]),
     fetchAll('status_photos',        [['assignment_id', true], ['status', true]]),
     fetchAll('delay_reports',        [['id', true]]),
+    fetchAll('assignment_issues',    [['reported_at', false]]),
     fetchAll('notifications',        [['created_at', false], ['id', false]]),
     fetchAll('activity_log',         [['ts', false], ['id', false]]),
   ]);
@@ -394,7 +462,8 @@ export async function loadAdminData(): Promise<AdminData & ArchivedData> {
   const docsBy = groupBy(docRows, 'assignment_id');
   const photosBy = groupBy(photoRows, 'assignment_id');
   const delaysBy = groupBy(delayRows, 'assignment_id');
-  const build = (r: Row) => assignmentFromRow(r, docsBy.get(r.id) ?? [], photosBy.get(r.id) ?? [], delaysBy.get(r.id) ?? []);
+  const issuesBy = groupBy(issueRows, 'assignment_id');
+  const build = (r: Row) => assignmentFromRow(r, docsBy.get(r.id) ?? [], photosBy.get(r.id) ?? [], delaysBy.get(r.id) ?? [], issuesBy.get(r.id) ?? []);
 
   const completionActivityByAssignment = new Map<string, Row>();
   for (const entry of actRows) {
@@ -403,8 +472,11 @@ export async function loadAdminData(): Promise<AdminData & ArchivedData> {
     }
   }
   const assignments = asnRows.filter((r) => r.state === 'active').map(build);
+  /* REQ-013: completed_at_utc is server-stamped inside complete_assignment() and is the
+     trustworthy instant now — prefer it. Fall back to the activity_log lookup only for
+     rows completed before this column existed. */
   const completed: CompletedTask[] = asnRows.filter((r) => r.state === 'completed')
-    .map((r) => ({ ...build(r), completedAt: r.completed_at ?? '', completedEventAt: completionActivityByAssignment.get(r.id)?.ts ?? null }));
+    .map((r) => ({ ...build(r), completedAt: r.completed_at ?? '', completedEventAt: r.completed_at_utc ?? completionActivityByAssignment.get(r.id)?.ts ?? null }));
   const cancelActivityByAssignment = new Map<string, Row>();
   for (const entry of actRows) {
     if (entry.type === 'task_cancelled' && entry.assignment_id && !cancelActivityByAssignment.has(entry.assignment_id)) {
@@ -416,7 +488,9 @@ export async function loadAdminData(): Promise<AdminData & ArchivedData> {
     return {
       ...build(r),
       cancelledBy: audit?.member_name ?? audit?.admin_email ?? null,
-      cancelledAt: audit?.ts ?? null,
+      /* REQ-013: assignments.cancelled_at is server-stamped inside cancel_assignment() —
+         prefer it, same fallback reasoning as completedEventAt above. */
+      cancelledAt: r.cancelled_at ?? audit?.ts ?? null,
     };
   });
 
@@ -716,7 +790,8 @@ export type AssignmentActionErrorCode =
   | 'wrong_password' | 'reauth_required' | 'not_editable' | 'not_cancellable' | 'loading_completed'
   | 'driver_busy' | 'truck_unavailable' | 'no_changes' | 'not_authorized' | 'not_deployed' | 'invalid' | 'network'
   | 'already_archived' | 'truck_busy'
-  | 'already_completed' | 'not_completable' | 'documents_not_approved' | 'driver_archived' | 'truck_archived';
+  | 'already_completed' | 'not_completable' | 'documents_not_approved' | 'driver_archived' | 'truck_archived'
+  | 'already_resolved' | 'assignment_not_active';
 export class AssignmentActionError extends Error {
   code: AssignmentActionErrorCode;
   constructor(code: AssignmentActionErrorCode, detail?: string) { super(detail ?? code); this.code = code; }
@@ -765,6 +840,7 @@ function actionFailure(error: { message?: string; code?: string }): AssignmentAc
     'wrong_password', 'loading_completed', 'reauth_required', 'not_editable', 'not_cancellable', 'driver_busy', 'truck_unavailable', 'no_changes', 'not_authorized',
     'already_archived', 'truck_busy',
     'already_completed', 'not_completable', 'documents_not_approved', 'driver_archived', 'truck_archived',
+    'already_resolved', 'assignment_not_active',
   ];
   for (const c of known) if (m.includes(c)) return new AssignmentActionError(c, m);
   if (error.code === 'PGRST202') return new AssignmentActionError('not_deployed', m);   // function missing: migration not applied
@@ -860,8 +936,9 @@ export async function resetAllData(): Promise<void> {
    ════════════════════════════════════════════════════════════════════════════ */
 
 const memberFromRow = (r: Row): TeamMember => ({
-  id: r.id, name: r.name ?? '', email: r.email, password: '',    // passwords are hashed by Auth; unreadable by design
+  id: r.id, name: r.name ?? '', email: r.email,
   role: r.role, status: r.status, invitedAt: r.invited_at, ...(r.last_active ? { lastActive: r.last_active } : {}),
+  avatarPath: r.avatar_path ?? null,
 });
 
 export async function listTeamMembers(): Promise<TeamMember[]> {
@@ -876,20 +953,29 @@ export async function listTeamMembers(): Promise<TeamMember[]> {
   return rows.map(memberFromRow);
 }
 
-export async function createTeamMember(input: { name: string; email: string; password: string; role: 'csr' }): Promise<TeamMember> {
+/** Sets no password — create_team_member() generates a random, never-returned
+ * throwaway one and instead issues a one-time setup link (reusing REQ-006's
+ * reset-link machinery), so a password never has to be relayed out-of-band. */
+export async function createTeamMember(input: { name: string; email: string; role: 'csr' }): Promise<TeamMember & { setupToken: string }> {
   const { data, error } = await supabase.rpc('create_team_member', {
-    p_name: input.name, p_email: input.email, p_password: input.password, p_role: input.role,
+    p_name: input.name, p_email: input.email, p_role: input.role,
   });
   if (error) {
     if (error.message.includes('email_exists')) throw new Error('A member with that email already exists');
     if (error.message.includes('not_authorized')) throw new Error('Only the Operation Manager can add team members.');
     throw new Error(error.message);
   }
-  return { ...memberFromRow({ ...(data as Row), invited_at: (data as Row).invitedAt }), password: input.password };
+  const row = data as Row;
+  return { ...memberFromRow({ ...row, invited_at: row.invitedAt }), setupToken: row.setupToken as string };
 }
 
-export async function removeTeamMember(id: string): Promise<void> {
-  const { error } = await supabase.rpc('remove_team_member', { p_id: id });
+export async function archiveTeamMember(id: string): Promise<void> {
+  const { error } = await supabase.rpc('archive_team_member', { p_id: id });
+  if (error) throw new Error(error.message);
+}
+
+export async function restoreTeamMember(id: string): Promise<void> {
+  const { error } = await supabase.rpc('restore_team_member', { p_id: id });
   if (error) throw new Error(error.message);
 }
 
@@ -997,14 +1083,15 @@ export async function loadDriverData(driverId: string): Promise<DriverViewData> 
 
   let assignment: Assignment | null = null;
   if (chosen) {
-    const [docs, photos, delays] = await Promise.all([
+    const [docs, photos, delays, issues] = await Promise.all([
       supabase.from('assignment_documents').select('*').eq('assignment_id', chosen.id),
       supabase.from('status_photos').select('*').eq('assignment_id', chosen.id),
       supabase.from('delay_reports').select('*').eq('assignment_id', chosen.id),
+      supabase.from('assignment_issues').select('*').eq('assignment_id', chosen.id),
     ]);
-    for (const r of [docs, photos, delays]) if (r.error) throw r.error;
+    for (const r of [docs, photos, delays, issues]) if (r.error) throw r.error;
     await signStoredFiles([...(docs.data ?? []).map((r) => r.file_url), ...(photos.data ?? []).map((r) => r.url)]);
-    assignment = assignmentFromRow(chosen, docs.data ?? [], photos.data ?? [], delays.data ?? []);
+    assignment = assignmentFromRow(chosen, docs.data ?? [], photos.data ?? [], delays.data ?? [], issues.data ?? []);
   }
 
   const completedHistory = rows.filter((r) => r.state === 'completed')
@@ -1044,12 +1131,78 @@ export async function loadDriverCompletedDelivery(driverId: string, assignmentId
   };
 }
 
-/** REQ-002 validates ownership, order, required photos, and timestamps on the server. */
-export async function advanceDriverStage(assignmentId: string, transition: string): Promise<void> {
+/** REQ-002 validates ownership, order, required photos, and timestamps on the server.
+ * `remark` is only used by finish_loading/finish_unloading — ignored by every other
+ * transition — and is write-once: there's no path to edit it after it's set. */
+export async function advanceDriverStage(assignmentId: string, transition: string, remark?: string): Promise<void> {
   const { error } = await supabase.rpc('advance_driver_stage', {
-    p_assignment_id: assignmentId, p_transition: transition,
+    p_assignment_id: assignmentId, p_transition: transition, p_remark: remark?.trim() || null,
   });
   if (error) throw error;
+}
+
+/** REQ-008: the real issue lifecycle, replacing the old issue_reason/
+ * task_status='Failed / Issue' path. The server derives the blocking
+ * classification and validates issueType — never set task_status here. */
+export async function reportAssignmentIssue(
+  assignmentId: string, issueType: string, reason: string, idempotencyKey?: string,
+): Promise<void> {
+  const { error } = await supabase.rpc('report_assignment_issue', {
+    p_assignment_id: assignmentId, p_issue_type: issueType, p_reason: reason,
+    p_idempotency_key: idempotencyKey ?? null,
+  });
+  if (error) throw error;
+}
+
+/** CSR/admin only — the server re-checks can_write() regardless of what the UI allows. */
+export async function resolveAssignmentIssue(issueId: number, resolutionNote?: string): Promise<void> {
+  const { error } = await supabase.rpc('resolve_assignment_issue', {
+    p_issue_id: issueId, p_resolution_note: resolutionNote?.trim() || null,
+  });
+  if (error) throw actionFailure(error);
+}
+
+/** REQ-007: a persistent, publicly-verifiable Report ID. admin/CSR only —
+ * server-stamps generated_at/generated_by, never trusts the client for those. */
+export async function issueReport(input: {
+  reportType: 'weekly' | 'monthly' | 'delay' | 'utilization';
+  periodStart?: string | null; periodEnd?: string | null;
+  rowCount: number; rowDigest?: string | null;
+}): Promise<{ id: string; generatedAt: string }> {
+  const { data, error } = await supabase.rpc('issue_report', {
+    p_report_type: input.reportType, p_period_start: input.periodStart ?? null, p_period_end: input.periodEnd ?? null,
+    p_row_count: input.rowCount, p_row_digest: input.rowDigest ?? null,
+  });
+  if (error) throw error;
+  const row = data as { id: string; generatedAt: string };
+  return { id: row.id, generatedAt: row.generatedAt };
+}
+
+export interface VerifiedReport {
+  id: string; reportType: string; generatedByName: string; generatedAt: string;
+  periodStart: string | null; periodEnd: string | null; rowCount: number;
+}
+
+/** Public lookup — no session required (anon may execute). Returns null when the ID is unknown. */
+export async function verifyReport(id: string): Promise<VerifiedReport | null> {
+  const { data, error } = await supabase.rpc('verify_report', { p_id: id });
+  if (error) throw error;
+  return (data as VerifiedReport | null) ?? null;
+}
+
+export interface IssuedReportSummary {
+  id: string; reportType: string; generatedByName: string; generatedAt: string;
+  periodStart: string | null; periodEnd: string | null; rowCount: number;
+}
+
+/** Staff only (is_staff() — read access, same as other staff-visible history). */
+export async function listIssuedReports(limit = 20): Promise<IssuedReportSummary[]> {
+  const { data, error } = await supabase.rpc('list_issued_reports', { p_limit: limit });
+  if (error) throw error;
+  return (data as Row[] ?? []).map((r) => ({
+    id: r.id, reportType: r.report_type, generatedByName: r.generated_by_name, generatedAt: r.generated_at,
+    periodStart: r.report_period_start ?? null, periodEnd: r.report_period_end ?? null, rowCount: r.row_count,
+  }));
 }
 
 /* Everything a driver may change (the database triggers enforce it — see guard_* in the migration):

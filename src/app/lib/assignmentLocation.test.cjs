@@ -51,13 +51,6 @@ test('read: numeric strings from the API are accepted, garbage is not', () => {
   assert.equal(f.deliveryLongitude, null);
 });
 
-test('Mapbox [longitude, latitude] is converted by position, not reversed', () => {
-  assert.deepEqual(loc.fromMapboxPosition([121.024445, 14.554729]), MAKATI);
-  assert.equal(loc.fromMapboxPosition([14.554729, 121.024445]), null, 'reversed Philippine pair has latitude 121 → rejected');
-  assert.equal(loc.fromMapboxPosition(null), null);
-  assert.equal(loc.fromMapboxPosition([121]), null);
-});
-
 test('edit: replacing pickup / delivery coordinates is a valid edit', () => {
   assert.equal(loc.invalidLocationEdit({ pickupLocation: 'New pickup', pickupLatitude: 14.6, pickupLongitude: 121.05 }), null);
   assert.equal(loc.invalidLocationEdit({ deliveryLocation: 'New drop', deliveryLatitude: 14.5, deliveryLongitude: 121.0 }), null);

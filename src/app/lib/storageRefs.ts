@@ -12,7 +12,7 @@
    ════════════════════════════════════════════════════════════════════════════ */
 
 /** Top-level folders the app uploads into (see DriverInterface uploads + Storage policies). */
-const UPLOAD_FOLDERS = ['photos/', 'docs/'];
+const UPLOAD_FOLDERS = ['photos/', 'docs/', 'profiles/'];
 
 /** The path inside `bucket` that a stored value points to, or null if it is not one of ours
  *  (empty, an inline data: image, a stripped placeholder, or some other URL). */

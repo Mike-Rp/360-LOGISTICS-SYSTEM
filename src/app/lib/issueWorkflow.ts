@@ -12,9 +12,11 @@ export const BLOCKING_ISSUE_REASONS = [
   'Accident / road incident',
 ] as const;
 
-/** Existing issue_reason is the only persisted open marker for new reports.
- * Legacy Failed / Issue rows have no trustworthy pre-issue stage to resume. */
-export function hasOpenBlockingIssue(assignment: Pick<Assignment, 'issueReason' | 'taskStatus'>): boolean {
+/** REQ-008: openIssue (from assignment_issues, server-derived) is the source of truth
+ * for anything reported through report_assignment_issue(). The issueReason heuristic
+ * only covers reports made before that table existed and has no row there. */
+export function hasOpenBlockingIssue(assignment: Pick<Assignment, 'issueReason' | 'taskStatus' | 'openIssue'>): boolean {
+  if (assignment.openIssue) return true;
   return assignment.taskStatus !== 'Failed / Issue' && assignment.taskStatus !== 'Cancelled'
     && !!assignment.issueReason?.trim();
 }

@@ -1,6 +1,7 @@
 import { createPortal } from 'react-dom';
 import logo from 'figma:asset/5e73e3c08e898d68c86717993c6e7442d03e9ac4.png';
 import { formatOperationalStamp } from '../../lib/assignmentOperational';
+import ReportVerificationBox from './ReportVerificationBox';
 import './WeeklyPrintReport.css';
 import './FleetUtilizationPrintReport.css';
 
@@ -34,10 +35,12 @@ interface Props {
   generatedAt: Date;
   generatedBy: string;
   role: 'OPM' | 'CSR';
+  reportId: string | null;
+  qrDataUrl: string | null;
 }
 
 export default function FleetUtilizationPrintReport({
-  trucks, drivers, fleetSummary, driverSummary, formatCompletionRate, generatedAt, generatedBy, role,
+  trucks, drivers, fleetSummary, driverSummary, formatCompletionRate, generatedAt, generatedBy, role, reportId, qrDataUrl,
 }: Props) {
   const generatedStamp = formatOperationalStamp(generatedAt.toISOString()) ?? generatedAt.toISOString();
   const fleetRate = formatCompletionRate(fleetSummary.completed, fleetSummary.assigned);
@@ -51,12 +54,8 @@ export default function FleetUtilizationPrintReport({
           <h1>Fleet &amp; Driver Utilization Report</h1>
           <p>Reporting period: All available assignment history</p>
           <p>Generated on: {generatedStamp}</p>
-          <p>Report ID: Not issued</p>
         </div>
-        <div className="wpr-verification">
-          <strong>Verification unavailable</strong>
-          <span>No report ID or verification record has been issued.</span>
-        </div>
+        <ReportVerificationBox reportId={reportId} qrDataUrl={qrDataUrl} />
       </header>
 
       <section className="wpr-section fdu-summary-section">

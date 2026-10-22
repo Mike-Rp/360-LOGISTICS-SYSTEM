@@ -97,6 +97,17 @@
     color: #34424a;
   }
 
+  .wpr-verification-issued {
+    text-align: center;
+  }
+
+  .wpr-qr {
+    display: block;
+    width: 20mm;
+    height: 20mm;
+    margin: 0 auto 1.5mm;
+  }
+
   .wpr-section {
     margin-top: 6mm;
   }

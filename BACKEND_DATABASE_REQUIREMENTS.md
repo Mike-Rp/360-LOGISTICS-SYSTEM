@@ -40,50 +40,32 @@ and their SQL test files passed (each test rolls itself back).
 | Item | Migration | Tests | Status |
 |---|---|---|---|
 | REQ-001 Destination / delivery location | `20261017000000`–`000003` | — | Implemented |
-| REQ-002 Driver stages + photo/status gates | `20261018000000`, `000001`, `20261021000002` | `req002_driver_gates` 11/11 | In Progress (gates live; see entry) |
+| REQ-002 Driver stages + photo/status gates | `20261018000000`, `000001`, `20261021000002`, `20261023000011` | `req002_driver_gates` 11/11 | In Progress (gates live; see entry) |
 | REQ-003 Cancel: reason + password + Loading cutoff | `20261021000000` | `req003_cancel_cutoff` 16/16 | Implemented |
-| REQ-004 OPM role | `20261018000003`, `000004`, `20261019000000` | — | In Progress (follow-ups below) |
+| REQ-004 OPM role | `20261018000003`, `000004`, `20261019000000`, `20261023000004`, `000007`, `000010` | — | In Progress (follow-ups below) |
 | REQ-005 Exact pickup/delivery coordinates | `20261020000000`, `000001` | 20/20 | Completed |
 | REQ-006 CSR password reset via OPM link | `20261020000002`, `000003` + Edge Function | `req006` 32/32 | Backend live; live CSR reset test pending |
 | REQ-009 Single active session (newest login wins) | `20261021000001` | `single_active_session` 15/15 | Implemented |
 | REQ-010 Store file paths, 1-hour links | `20261021000003` | `store_file_paths` 4/4 | Implemented |
-| REQ-011 Dispatch / complete as one database action | `20261021000004` | `dispatch_complete` 12/12 | Implemented |
-| REQ-012 Per-account profile persistence | Pending | Pending | Pending |
+| REQ-011 Dispatch / complete as one database action | `20261021000004`, `20261023000003` (hardening) | `dispatch_complete` 12/12 | Implemented |
+| REQ-012 Per-account profile persistence | `20261022000000` | — | Implemented |
+| REQ-013 Completion/cancellation timestamps | `20261022000001` | — | Implemented |
+| REQ-008 Recoverable delivery issues | `20261023000000`–`20261023000002` | — | Implemented |
+| REQ-007 Report ID + QR verification | `20261023000008`, `000009` | — | Implemented |
 
 ### Still needed (backend / database)
 
-1. **REQ-011 hardening** — once that frontend is live, block direct inserts of
-   new assignments and direct `state = 'completed'` updates outside the two
-   functions (same pattern as the cancel guard).
-2. **Activity-log gaps** (REQ-004 follow-up) — server-side log rows for
-   driver/truck add and edit, PIN reset, and document approve/reject. These
-   still log through the screen's auto-save, or not at all. Never log PINs,
-   passwords or tokens.
-3. **Team member archive / restore** (REQ-004 follow-up) — an OPM-only RPC that
-   sets `profiles.status` to `removed` / `active` and writes one log row,
-   instead of deleting the Auth user.
-4. **REQ-008** Delay / incident data — server-stamped report and resolution
-   times, measured delay, Failed / Issue history.
-5. **REQ-007** Report ID + QR verification — issued-report table, issuing
-   function and a safe lookup.
-6. **Stage remarks** — persist driver remarks per workflow stage (design to be
-   confirmed).
-7. **CSR setup link** — first password for a new CSR through a one-time link
-   (like the REQ-006 reset link) instead of showing it once on screen.
-8. **Clean-up:**
-   - Remove leftover Mapbox coordinate code in `db.ts` and update the REQ-005 notes.
-   - Drop the obsolete `csr_password_reset_approved()` helper.
-   - Correct the `app.bypass_driver_guard` comment in `advance_driver_stage`:
-     the flag lasts for the whole transaction, not just the call.
-9. **REQ-006** live test — one real CSR reset end-to-end on the live site.
-10. **Optional:** move files copied before REQ-010 so that old 10-year links
+1. **Activity-log gaps** (REQ-004 follow-up) — PIN reset done (2026-10-23).
+   Still needed: convert driver/truck add, driver/truck edit, and document
+   approve/reject from the client-driven auto-save path to dedicated
+   server-side RPCs that log atomically (large scope, see REQ-004 entry).
+   Never log PINs, passwords or tokens.
+2. **REQ-006** live test — one real CSR reset end-to-end on the live site.
+3. **Optional:** move files copied before REQ-010 so that old 10-year links
     stop working (skipped for now by decision).
-11. **Data review** (no change made) — one active assignment is Delivered with
+4. **Data review** (no change made) — one active assignment is Delivered with
     no `departed_at`, and one was cancelled after loading (before the REQ-003
     cutoff existed).
-12. **REQ-012 profile persistence** — self-service name updates and private,
-    account-owned avatar storage. Frontend profile editing is blocked until this
-    has been implemented and verified.
 
 ## [REQ-001] Separate Destination and Delivery Location
 
@@ -659,6 +641,34 @@ five transitions were exercised later through the Driver UI as recorded below.
   remarks at Loading or Unloading. No remarks input is being added as
   temporary React state. Add optional, stage-scoped remarks persistence only
   after its data model and authorization are approved.
+  **2026-10-23 — implemented and verified live:**
+  `supabase/migrations/20261023000011_stage_remarks.sql`. Two nullable
+  columns directly on `assignments` (`loading_remark`, `unloading_remark`,
+  capped at 300 chars) rather than a separate table, matching this exact
+  reasoning REQ-002 already used for its own event timestamps — a remark
+  happens at most once per stage per assignment. Set via a new optional
+  `p_remark` argument on `advance_driver_stage()`'s `finish_loading`/
+  `finish_unloading` transitions only (appended with a default, so the
+  function keeps its OID/grants — every existing 2-argument call still
+  works unchanged); never required, never blocks progression. Write-once via
+  the RPC path (no edit path exists); readable by staff and the owning
+  driver through the existing `assignments` SELECT policy, no new RLS
+  needed. Frontend: `DriverInterface.tsx` now shows an optional "Add a note"
+  box (300 chars) under the required photo at both stages, English +
+  Filipino, cleared on assignment change and right after a successful
+  submit so a Loading note can never bleed into the Unloading box later in
+  the same task. `assignmentTypes.ts`/`db.ts` carry the two fields
+  read-only. Verified live: finished a Loading step with a Filipino note
+  typed in ("gg tagal magbukas ng gate") — `loading_remark` stored exactly
+  as typed, `unloading_remark` correctly still null.
+
+  **Admin display added the same day, after live testing showed there was
+  nowhere to view it:** `ShipmentPhotoEvidence.tsx`'s Photos tab now shows
+  "Driver's note: ..." under the Loading/Unloading photo group when present;
+  `DriversManagement.tsx`'s Activity tab timeline shows the same note inline
+  next to that stage's Finished/Duration details. No backend change — purely
+  reading the two columns `assignmentFromRow` already carried. Verified live
+  in both tabs on the same test delivery.
 - The applied `20261018000001_driver_workflow_transitions.sql` checks only
   `operational_stage = 'unloading'` for `finish_unloading`. It does not require
   `unloading_before` or `unloading_after`. The local Driver UI now labels both
@@ -884,14 +894,21 @@ View Shipment, Driver Current Task and driver history detail, returns
 `pickupLocation`, `pickupLatitude`, `pickupLongitude`, `deliveryLocation`,
 `deliveryLatitude`, `deliveryLongitude` (numbers; null when absent).
 Convert Mapbox `geometry.coordinates` `[longitude, latitude]` with
-`fromMapboxPosition()` from `lib/assignmentLocation.ts`.
+`fromMapboxPosition()` from `lib/assignmentLocation.ts`. **2026-10-23:**
+`fromMapboxPosition()` was removed as dead code — no production caller ever
+used it (no map-picker UI exists in `src/`, confirmed by a repo-wide search),
+only its own unit test did. `db.ts`'s actual, live coordinate path
+(`locationFieldsFromRow`/`locationColumnsForRow`/`invalidLocationEdit`) is
+untouched and was never Mapbox-specific — it just moves plain lat/lng numbers
+between `Assignment` and the table columns.
 
 *Historical / null fallback* — all existing assignments keep NULL in every new
 column; nothing is backfilled or derived from `destination`. They keep using
 `pickup_location` and `destination` (`getDeliveryLocation()`), unchanged.
 
-*Tests* — `src/app/lib/assignmentLocation.test.cjs` (10 unit tests: create/read
-round trip, Mapbox order, validation, historical rows) and
+*Tests* — `src/app/lib/assignmentLocation.test.cjs` (9 unit tests as of
+2026-10-23, after removing the dead `fromMapboxPosition()` test: create/read
+round trip, validation, historical rows) and
 `supabase/tests/req005_assignment_locations.test.sql` (create, read, edit,
 stale clearing, relabel, validation, historical, driver lock; rolls itself back).
 
@@ -954,6 +971,118 @@ document review still logs through the client state sync path. Add safe
 server-side audit writes on successful mutations; never include PINs,
 passwords, or reset tokens. No migration or RPC has been applied for this
 follow-up.
+
+**2026-10-23 — Team member archive/restore applied and verified:**
+`supabase/migrations/20261023000004_team_member_archive_restore.sql`.
+`remove_team_member(p_id)` no longer deletes `auth.users` — it sets
+`profiles.status = 'removed'` instead (refuses an already-removed member)
+and logs a `member_removed` activity row. New `restore_team_member(p_id)`
+(OPM only) sets `status = 'active'` back (refuses an already-active member)
+and logs `member_restored`. No RLS/grant changes needed — `is_staff()`/
+`can_write()` already require `status = 'active'`, so a removed member loses
+every app-level privilege on their very next request without touching their
+Auth login.
+
+Turned out the frontend's Team Members "Active"/"Archived" tabs already
+existed in `WorkspaceSettingsPanel.tsx` (`listTeamMembers()` already queried
+by role only, no status filter) but had no working buttons — just a note
+reading "Member archive and restore require backend support. The existing
+Remove action permanently deletes the login," and nothing actually called
+`removeTeamMember()` anywhere. Wired real **Remove**/**Restore** buttons into
+those existing tabs (`db.ts`: new `restoreTeamMember()`; `assignmentTypes.ts`:
+new `'member_restored'` activity type). `create_team_member()` still writes
+no server-side activity_log row — left alone, same pre-existing gap as the
+other "Activity-log gaps" follow-up below, not expanded here.
+
+Verified live: created a throwaway CSR, removed it (disappeared from Active,
+appeared under Archived), restored it (moved back to Active), and confirmed
+both "Member Removed" and "Member Restored" entries in the Activity tab.
+
+**2026-10-23 — Renamed remove → archive, and password re-confirmation added:**
+Per an explicit project requirement (no "remove" action/function anywhere in
+the system — archive only), `remove_team_member()` was renamed to
+`archive_team_member()` via `supabase/migrations/20261023000005_rename_remove_to_archive_team_member.sql`
+(`alter function ... rename to`, which keeps its existing grants). The
+`already_removed` error became `already_archived`, matching
+`archive_driver()`'s convention, and the activity type became
+`'member_archived'` (`assignmentTypes.ts`, `WorkspaceSettingsPanel.tsx` —
+label "Member Archived", button now reads "Archive" not "Remove").
+`db.ts`'s wrapper is now `archiveTeamMember()`.
+
+Then, per a follow-up request, both `archive_team_member()` and
+`restore_team_member()` were given the same `signed_in_recently(300)` guard
+`archive_driver()`/`reset_driver_pin()` already use
+(`supabase/migrations/20261023000006_team_member_archive_restore_reauth.sql`).
+The frontend's Archive/Restore buttons now open the existing
+`ConfirmPasswordDialog` component (the same one already used for driver
+archive/PIN reset) instead of acting immediately — it calls
+`verifyOwnPassword()` against Supabase Auth first, and only calls the RPC on
+success.
+
+Verified live: both the rename (schema check confirmed `remove_team_member`
+gone, only `archive_team_member`/`restore_team_member` present) and the
+password-confirmation flow (Archive and Restore each now prompt for a
+password before taking effect) tested end-to-end in the running app.
+
+**2026-10-23 — Activity-log gap closed for PIN resets (scoped down from the
+full follow-up):** investigating the full "Activity-log gaps" item showed
+driver/truck add, driver/truck edit, and document approve/reject all share
+one architecture — they only update local React state and rely on the
+generic auto-save (`syncAdminData`) to diff-and-write whatever
+`AdminActivityEntry` the client decided to add via `onLogActivity(...)`,
+unlike `archive_driver()`/`dispatch_assignment()`/etc., which log atomically
+inside their own transaction. Converting those three to real guarded RPCs is
+a large change (on the order of REQ-002/REQ-011), not a quick fix — deferred,
+not attempted here. `reset_driver_pin()` was the one true gap (logged
+nothing at all, not even through auto-save) and was self-contained to fix:
+`supabase/migrations/20261023000007_log_driver_pin_reset.sql` adds one
+`activity_log` row (`type = 'driver_pin_reset'`, driver name only — never the
+PIN) inside the existing RPC, same pattern as `archive_driver()`. New
+activity type added to `assignmentTypes.ts`/`WorkspaceSettingsPanel.tsx`
+(label "Driver PIN Reset", `KeyRound` icon). Verified live: resetting a PIN
+now shows "Driver PIN Reset · New PIN set for [driver]" with correct
+actor/role/timestamp in the Activity tab.
+
+**Still open (not attempted — large scope, separate task):** driver/truck
+add/edit and document approve/reject converted to dedicated server-side RPCs
+instead of the client-driven auto-save path.
+
+**2026-10-23 — CSR setup link applied and verified (closes the "CSR setup
+link" backlog item):** `supabase/migrations/20261023000010_csr_setup_link.sql`.
+Previously, adding a CSR meant OPM typed or "Suggest"-generated a temporary
+password that was shown once on screen and had to be relayed to the new CSR
+out-of-band (chat, verbally, email) — a real password exposed in plaintext
+outside Auth. Closed by reusing REQ-006's reset-link machinery for the
+*first* password too, since `claim_csr_password_reset()`/
+`release_csr_password_reset_claim()`/`finish_csr_password_reset()` and the
+`complete-csr-password-reset` Edge Function were already fully generic (they
+only check that a `csr_password_reset_requests` row is `approved`/unexpired/
+unclaimed/matching an active CSR — they don't know or care *why* it's
+approved) — **zero changes needed to any of that downstream machinery.**
+
+`create_team_member(p_name, p_email, p_role)` dropped the `p_password`
+argument entirely (old 4-arg overload explicitly `DROP FUNCTION`'d, not left
+reachable): creates the Auth user with a random, never-returned, never-logged
+throwaway password; inserts the profile; inserts one `approved`
+`csr_password_reset_requests` row with a fresh one-time token (same
+generation technique as `create_csr_password_reset_link()` — 32 random
+bytes, SHA-256 hash stored, raw token returned once); returns `setupToken`
+instead of a password. Expiry is 7 days, not the 45-minute reset window —
+onboarding isn't security-urgent the way a reset is, and a new hire may not
+open the link same-day.
+
+Frontend: `AddMemberModal` (`WorkspaceSettingsPanel.tsx`) no longer has a
+password field at all — the success screen shows a **"Copy Setup Link"**
+button (same clipboard-with-fallback pattern as "Copy Reset Link") instead
+of a visible password. The link opens the exact same `/reset-password` page
+REQ-006 already built — its copy ("Create New Password" / "Enter a new
+password for your CSR account") already worked for first-time setup without
+any wording changes. `TeamMember.password` removed from `assignmentTypes.ts`
+(no longer meaningful — Auth never lets a password be read back).
+
+Verified live: added a test CSR, confirmed no password was shown anywhere,
+copied the setup link, opened it in an incognito window, set a password
+there, and confirmed login works with that password.
 
 **Area:** Accounts / Drivers / Trucks / Auth & Roles
 
@@ -1222,7 +1351,81 @@ entry rather than adding a duplicate requirement.
 
 ## [REQ-007] Persistent verification for generated reports
 
-**Status:** Pending
+**Status:** Implemented
+
+**Approval:** Approved 2026-10-23 — design decisions made explicitly before
+implementation: Weekly period = current ISO calendar week (Mon-Sun);
+verification is metadata-only (type/period/generator/generated-at/row count,
+never raw delivery data, never live-recomputed — the `issued_reports` row is
+immutable and is the sole source of truth for its own page).
+
+**2026-10-23 — Implemented and verified live:**
+`supabase/migrations/20261023000008_issued_reports.sql` and
+`20261023000009_list_issued_reports.sql`.
+
+- New `public.issued_reports` table: `id` (random `RPT-xxxxxxxxxxxx`, 48 bits
+  — never sequential, since it's a *public* lookup key reachable by anyone
+  holding the printed report; a guessable/sequential ID would let someone
+  enumerate every issued report), `report_type`, `generated_by_user_id`/
+  `generated_by_name`, `generated_at` (server-stamped), `report_period_start`/
+  `end` (nullable — Delay/Utilization reports have no natural period),
+  `row_count`, `row_digest` (a frozen forensic artifact — a hash of the
+  included assignment IDs, computed client-side from the exact rows the PDF
+  rendered; never live-compared against anything). RLS has no SELECT policy
+  for anyone — every read goes through the two RPCs below.
+- `issue_report(...)`: admin/CSR only (`can_write()`; OPM stays view-only per
+  REQ-004). Generates the ID, inserts the row, returns it.
+- `verify_report(id)`: **public** — granted to `anon`, no session required,
+  since the QR code must be scannable by anyone. Returns only the safe
+  fields.
+- `list_issued_reports(limit)`: staff-only (`is_staff()` — read access, not
+  `can_write()`, so OPM can view history even though only CSR/admin can
+  generate) — backs the admin-facing "Recent Reports" list.
+
+All 4 of Reports.tsx's report types (weekly, monthly, delay, utilization)
+share this one mechanism, not just the 2 the original request named — scoping
+it to 2 of the 4 types the same screen generates would have been visibly
+inconsistent to an admin printing a Delay or Utilization report.
+
+**Frontend:** new public route `/verify-report?id=...`
+(`VerifyReportScreen.tsx`, wired into `App.tsx` the same way `/reset-password`
+already bypasses the authenticated app shell). `Reports.tsx`'s Weekly report
+now actually filters to the current ISO week — it previously had no date
+filter at all, including every active + completed assignment regardless of
+date. `handlePrint()` calls `issue_report()` before `window.print()`
+(printing is blocked if issuance fails — the QR is only created after a
+record exists), generates a QR via the new `qrcode` dependency, and passes
+the real Report ID/QR into a new shared `ReportVerificationBox.tsx` that all
+4 print components now render in place of the "Verification unavailable"
+placeholder that was already sitting there. The "Recent Reports" table (which
+had its own placeholder: *"Report history is unavailable. This system
+downloads reports without saving a generated-report record."*) now lists via
+`list_issued_reports()`, with a Verify link per row opening that report's
+public page.
+
+**Bugs found and fixed during live testing:**
+- A `toISOString()`-based date formatter shifted the stored week/month period
+  back one calendar day for Philippine time (UTC+8) — `toISOString()`
+  converts to UTC first, which crosses the date boundary whenever local
+  midnight hasn't yet reached UTC midnight. Fixed by building the `YYYY-MM-DD`
+  string from local date components directly.
+- The printed Weekly report's header separately re-derived its displayed date
+  span from each row's own (inconsistently-formatted, sometimes yearless)
+  date string, defaulting to the year 2001 for yearless input — a longstanding
+  JS `new Date("Oct 19")` quirk. Fixed by passing the same deterministic week
+  boundary already used to filter the rows, instead of re-inferring it.
+- The QR image rendered blank in the print output the first time —
+  `window.print()` can snapshot the page before a freshly-set `data:` URL
+  image has finished decoding. Fixed by forcing `Image.decode()` to resolve
+  before printing.
+
+Verified live end-to-end: generated multiple Weekly reports, confirmed the
+Report ID + QR render correctly on the printed PDF, confirmed the period
+reads "Oct 19 – Oct 25, 2026" (not Oct 18 or 2001), scanned/opened the QR's
+target URL in an incognito window (no session) and got the correct
+metadata, confirmed an unknown ID shows "not found" rather than erroring,
+and confirmed "Recent Reports" lists all previously issued reports with
+working Verify links.
 
 **Area:** Reports / formal Print-PDF output
 
@@ -1255,8 +1458,183 @@ change is included in the local print-layout task.
 
 ## [REQ-008] Recoverable delivery issues and incident history
 
-**Status:** Pending backend design/implementation. This entry is a handoff,
-not an applied migration. No production issue records were changed.
+**Status:** Implemented — all 4 phases applied and verified live
+
+**2026-10-23 — Phase 1 (schema only) prepared, not yet applied:**
+`supabase/migrations/20261023000000_assignment_issues_schema.sql`. New
+`public.assignment_issues` table per the data model this entry already
+specified, with two adjustments from the original draft:
+- `resolved_by_user_id -> profiles(id)` uses `ON DELETE SET NULL`, not
+  `RESTRICT` as originally suggested — `remove_team_member()` does a real
+  delete of the CSR's auth user (unlike drivers, which are archived, never
+  row-deleted), so `RESTRICT` would make it impossible to ever remove a CSR
+  who resolved an issue. Paired with a new `resolved_by_name` snapshot
+  column (same "copy identity onto the row" convention already used for
+  `assignments.driver_name`/`truck_plate`) so history stays readable after
+  the account is gone.
+- Added `reported_by_name` the same way, for the same reason, even though
+  `reported_by_driver_id` itself stays `RESTRICT` (drivers are archived, not
+  deleted, so this is mostly a safety rail rather than an expected path).
+
+Also includes the partial unique index preventing duplicate open blocking
+issues per assignment, and the idempotency-key unique index for phase 2's
+double-submit protection. RLS allows SELECT only (staff see everything,
+a driver sees only their own assignment's issues) — no insert/update/delete
+policy or grant for anyone; every write will go through phase 2's two
+SECURITY DEFINER RPCs, same pattern as every other guarded RPC in this
+schema. Zero behavior change — nothing writes to this table yet.
+
+**Applied and verified (2026-10-23):** Ran in the Supabase SQL editor; all
+18 columns confirmed present with correct types via `information_schema`.
+
+**2026-10-23 — Phase 2 (RPCs) applied and verified:**
+`supabase/migrations/20261023000001_assignment_issues_rpcs.sql`. Adds
+`report_assignment_issue(assignment_id, issue_type, reason, idempotency_key)`
+and `resolve_assignment_issue(issue_id, resolution_note)`, both `SECURITY
+DEFINER`, plus a nullable `activity_log.issue_id bigint` column (no check
+constraint needed — `activity_log.type` was already free text).
+
+- `report_assignment_issue`: owning Driver only (`driver_owns_assignment`
+  pre-check, re-checked against the locked row). Validates `issue_type`
+  against the exact set `src/app/lib/issueWorkflow.ts` uses — the 6 named
+  `BLOCKING_ISSUE_REASONS` strings plus the frontend's literal `'Other...'`
+  sentinel (with the ellipsis) — rejecting anything else. All 7 currently
+  classify as blocking, matching what the existing UI already assumes (see
+  the open item below — still not an operations-reviewed decision, just
+  isolated to one `in (...)` list for easy revision later). Requires
+  `assignments.state = 'active'`. Inserts one `assignment_issues` row, one
+  `activity_log` row (`type='issue_reported'`), one staff notification
+  (`type='issue_report'`, same shape the old path already produced).
+  Idempotency-key replay returns the existing row rather than erroring or
+  duplicating. **Does not set `task_status`/`operational_stage`** — this
+  path only records the issue; the gate that stops driver progression is
+  phase 3, not this.
+- `resolve_assignment_issue`: `can_write()` only (CSR/admin; **not** OPM,
+  consistent with REQ-004's view-only-in-shipment-screens rule). Locks
+  assignment then issue — same order `report_assignment_issue` uses, so the
+  two can never deadlock. Requires the issue to be `open` and the assignment
+  `active`; sets `status='resolved'`, `resolved_at`, `resolved_by_user_id`/
+  `resolved_by_name` (looked up from `profiles`), `resolution_note`; inserts
+  one `activity_log` row (`type='issue_resolved'`). Also leaves
+  `task_status`/`operational_stage` untouched.
+
+Still inert in practice: the driver app's "Report a problem" button still
+calls the old `driverUpdate`/`issue_reason` path, not this RPC — nothing
+calls either function until phase 4 rewires the frontend. Retiring the old
+path is a phase 3/4 concern (coordinated client rollout), not this one.
+
+Verified live end-to-end on assignment `ASN54196`: reported as the owning
+driver via console (`error: null`, row inserted with `is_blocking: true`,
+`status: open`, correct `reported_by_name`/stage snapshot); resolved as CSR
+via console (`status: resolved`, `resolved_by_name`, `resolved_at`,
+`resolution_note` all correct); both `activity_log` rows present and linked
+via `issue_id`; the `issue_report` notification present with the right
+message/`navigate_to`; confirmed `assignments.task_status` for ASN54196
+never changed (stayed `Delivered` throughout) — proving the new path is
+fully side-effect-free on the legacy columns, as designed.
+
+**2026-10-23 — Phase 3 (progression gate) applied and verified:**
+`supabase/migrations/20261023000002_assignment_issues_progression_gate.sql`.
+Adds `has_open_blocking_issue(assignment_id)` — a one-line `sql stable
+security definer` helper matching the exact style of `is_staff()`/
+`can_write()`/`driver_owns_assignment()` — then re-declares (`create or
+replace`) the two existing gates with one addition each, bodies otherwise
+unchanged from `20261021000002_driver_workflow_gates.sql`:
+
+- `advance_driver_stage()`: every transition now fails with
+  `open_blocking_issue` if the assignment has an open blocking issue,
+  checked once right after the existing `not_active` check, before any
+  transition-specific logic. Applies to both driver- and staff-initiated
+  calls (this RPC is callable by `can_write()` staff too) — the rule is
+  about the physical state of the delivery, not who's operating it.
+- `guard_assignment_update()`: the two forward moves a driver makes via a
+  direct `task_status` update outside the RPC (`Picked Up -> In Transit`,
+  `In Transit -> Delivered`) now also fail with `open_blocking_issue` under
+  the same condition, raised as a distinct error rather than folded into the
+  existing generic `invalid_status_transition`. The `-> Failed / Issue`
+  transition (legacy report path) stays ungated — it's a stop, not an
+  advance, and reporting through it while a new-table issue is open is
+  expected/harmless during this transitional period. Staff are already
+  exempted from this entire trigger by a pre-existing early return, untouched
+  here.
+
+Verified live end-to-end on a fresh test dispatch (`ASN03578`): reported a
+blocking issue as the driver (`error: null`); attempted `arrive_pickup` —
+failed with `open_blocking_issue` as the driver (`error: null`); retried the
+same `arrive_pickup` as the driver — succeeded (`error: null`), confirming
+the gate opens again immediately on resolution.
+
+**2026-10-23 — Phase 4 (frontend wiring) written, not yet verified live:**
+No new migration — code only.
+
+- `assignmentTypes.ts`: `Assignment.openIssue` (read-only: `id`, `reason`,
+  `reportedByName`, `reportedAt`) — the real table's current open blocking
+  issue, parallel to the existing `issueReason` legacy field.
+- `db.ts`: `assignmentFromRow` now takes an `issues` row array and derives
+  `openIssue` from it (the row with `status='open' && is_blocking`, matching
+  what the phase-1 unique index already caps at one). `loadAdminData` fetches
+  `assignment_issues` for everyone; `loadDriverData` fetches it for the
+  driver's own chosen assignment; `loadDriverCompletedDelivery` passes none
+  (completed deliveries can't have one open, per the phase-3 gate). Two new
+  wrappers: `reportAssignmentIssue()` (driver, raw-throw like
+  `advanceDriverStage`) and `resolveAssignmentIssue()` (CSR, routed through
+  the existing `actionFailure()`/`AssignmentActionError` typing — added
+  `already_resolved` and `assignment_not_active` as new codes, both mapped to
+  plain-language text in `DriversManagement.tsx`'s `actionMessage`).
+- `issueWorkflow.ts`: `hasOpenBlockingIssue()` now checks `openIssue` first,
+  falling back to the old issueReason heuristic only for reports made before
+  this table existed — single source of truth for both old and new data.
+- `DriverInterface.tsx`: `handleIssueSubmit` now calls
+  `reportAssignmentIssue()` directly instead of `driverUpdate({ issueReason
+  })` — no more `driverUpdate`/manual notification call, the RPC does both
+  server-side in one transaction. Maps the sheet's single returned string to
+  `issueType`/`reason` itself: a canned `BLOCKING_ISSUE_REASONS` match passes
+  through as its own type; anything else (the "Other..." free-text branch)
+  is classified `issueType: 'Other...'`, matching the phase-2 RPC's
+  validation exactly. The two "delivery paused" reason displays now read
+  `openIssue?.reason ?? issueReason` so both new and legacy-reported issues
+  show correctly.
+- `DriversManagement.tsx`: the View Details issue banner now shows real
+  reporter/timestamp from `openIssue` when present (falling back to the old
+  notification-matching lookup only for legacy rows with no table row), and
+  renders a working **Resolve & Continue** button (optional 300-char note)
+  for CSR/admin — hidden under `isViewOnly` (OPM stays view-only, per
+  REQ-004). A legacy issue with no `openIssue` row still shows the original
+  "cannot be safely cleared from this screen" message, since there's no real
+  `issue_id` to act on for those.
+
+`pnpm typecheck` passes clean.
+
+**Verified live (2026-10-23) on ASN03578, end-to-end through the real UI (no
+console):** reported an issue as the driver via the "Report a problem"
+button — the "Delivery paused · Issue under review" banner appeared with the
+correct reason, slider disabled. On the admin side, View Details showed the
+"Open Issue · Blocking" banner with the correct reporter name and a real
+timestamp (not the old "Not recorded" fallback), plus a working **Resolve &
+Continue** button with the resolution-note field in place of the old static
+"cannot be safely cleared" message. Resolving it cleared the banner
+immediately; back on the driver tab, the paused banner was gone and the
+delivery could continue normally.
+
+**2026-10-23 — Password re-confirmation added to resolve_assignment_issue():**
+Same `signed_in_recently(300)` guard as `archive_driver()`/`reset_driver_pin()`,
+added in the same migration as the team member archive/restore reauth change
+(`supabase/migrations/20261023000006_team_member_archive_restore_reauth.sql`).
+The **Resolve & Continue** button no longer acts immediately — it opens the
+existing `ConfirmPasswordDialog` component (`verifyOwnPassword()` against
+Supabase Auth first, RPC called only on success), same pattern now shared by
+driver archive, team member archive/restore, and this. Verified live: Resolve
+now prompts for a password before clearing the issue.
+
+**REQ-008 is complete — all 4 phases implemented and verified live.**
+
+**Open item carried over from the original handoff, not yet resolved:** the
+doc's own text flags that issue-type blocking classification (all 6 named
+types + Other are currently all blocking) needs review with operations
+before being treated as final. Phase 2 will implement it exactly matching
+what the existing frontend prototype already assumes, as a single,
+clearly-isolated, easily-revisable mapping — not a business decision made
+here.
 
 ### Existing data path and failure
 
@@ -1496,16 +1874,136 @@ Frontend: `db.ts` (`dispatchAssignment`, `completeAssignment`, new error codes),
 
 **Verification:** `supabase/tests/dispatch_complete.test.sql` 12/12 passed,
 including the all-or-nothing check; TypeScript and 74 Node tests pass.
-Tested on localhost by the user (2026-10-21): no problems found. Later: block
-direct inserts/completions outside these functions.
+Tested on localhost by the user (2026-10-21): no problems found.
+
+**2026-10-23 — Hardening applied and verified:**
+`supabase/migrations/20261023000003_req011_direct_write_guards.sql`. Found
+live: `assignments_insert`/`assignments_update` RLS let any `can_write()`
+staff member raw-INSERT or raw-UPDATE `state = 'completed'` directly,
+skipping every check `dispatch_assignment()`/`complete_assignment()` make
+(driver/truck availability, the 6 document slots, documents-approved,
+driver/truck release, the activity-log row). Closed with the same
+transaction-local-flag technique cancellation already used:
+- `dispatch_assignment()` now sets `app.verified_dispatch_id` right before
+  its own insert; a new `guard_assignment_insert()` trigger (`before insert`)
+  refuses any insert whose id doesn't match.
+- `guard_assignment_cancel()` (already firing on every assignments update,
+  not just cancellations) gets one more check: `state → 'completed'` must
+  carry `app.verified_completion_id` — the flag `complete_assignment()`
+  already set for the `completed_at_utc` guard, so no change was needed
+  there.
+
+Verifying this exposed that two existing test fixtures
+(`req003_cancel_cutoff.test.sql`, `req005_assignment_locations.test.sql`)
+inserted directly into `assignments` while a CSR's `request.jwt.claims` was
+still active from an earlier step in the same transaction (PostgreSQL GUCs
+persist across `reset role`) rather than with no session — fixed both to
+clear claims around those raw inserts, matching the convention
+`dispatch_complete.test.sql` already used correctly.
+`req005_assignment_locations.test.sql` also turned out to have been broken
+independent of this change since REQ-009 shipped: it impersonates a real
+staff profile without ever giving it a session row, so `can_write()`'s
+newer `session_is_current()` check always failed at setup. Fixed by adding
+a throwaway `auth.sessions` row (the whole test rolls back, so nothing
+persists).
+
+Verified live: `dispatch_complete.test.sql` 12/12, `req003_cancel_cutoff.test.sql`
+16/16, `req005_assignment_locations.test.sql` 20/20 all still pass. A manual
+negative test (impersonating a real CSR with a valid session, wrapped in its
+own rolled-back transaction) confirmed both a direct insert and a direct
+`state = 'completed'` update are now rejected with `not_authorized`.
 
 ---
 
 ## [REQ-012] REQ — PER-ACCOUNT PROFILE PERSISTENCE
 
-**Status:** Pending
+**Status:** Implemented (2026-10-22)
 
-**Blocker:** BLOCKED — BACKEND REQUIRED
+**2026-10-22 — migration prepared, not yet applied:**
+`supabase/migrations/20261022000000_profile_persistence.sql`. Adds
+`profiles.avatar_path`; two self-service `SECURITY DEFINER` RPCs
+(`update_own_display_name(p_name)`, `set_own_avatar_path(p_avatar_path)`),
+both scoped to `auth.uid()` only, so neither `profiles_update_opm` nor the
+existing column grants needed any change (avoids the cross-account-write
+risk this entry itself flagged). Extends `media_insert`/`media_update` to
+allow a staff member to write only under their own
+`profiles/<their uuid>/...` path in the existing private bucket; extends
+`media_delete` (previously `can_write()`-only, which would have wrongly
+blocked OPM from removing their own avatar) with the same owner-match
+branch. `media_select` needed no change — `is_staff()` already grants any
+signed-in staff member read access to the whole bucket. Server-side file
+size/type validation is **not** included — flagged, not silently skipped;
+validation stays client-side for now, same as existing photo/doc uploads.
+**Applied and verified (2026-10-22):** Ran in the Supabase SQL editor against
+360Logistics DB; `profiles.avatar_path` confirmed present. Exercised from the
+running app's browser console, signed in as staff:
+`update_own_display_name` succeeded and persisted the new name on the
+caller's own row. `set_own_avatar_path` succeeded for the caller's own
+`profiles/<their uuid>/...` path, and correctly refused with `invalid_path`
+(22023) for another account's uuid — confirming the ownership check works
+both ways, not just the happy path. Storage policy changes
+(`media_insert`/`media_update`/`media_delete`) were not independently
+exercised with a real file upload in this pass; they follow the identical
+ownership-check pattern already proven at the RPC level.
+
+**`db.ts` wiring (2026-10-22):** `StaffSession` gained `avatarPath`; `toStaff()`
+maps it from `avatar_path`. Added `updateOwnDisplayName(name)`,
+`uploadOwnAvatar(uid, dataUrl)`, `removeOwnAvatar(path)`, and
+`resolveAvatarUrl(path)`. Avatar upload/sign reuses the existing
+`uploadImage()`/`signStoredFiles()`/`displayUrl()` infrastructure already
+built for REQ-010 (short-lived signed links, 1-hour cache) — no new signing
+logic was written. Avatars upload to a fixed `profiles/<uid>/avatar.jpg`
+path every time, so a new upload replaces in place (no orphaned-file
+cleanup needed); only an explicit removal (no replacement) calls
+`storage.remove()`. Compiles cleanly (`pnpm dev` HMR, no errors). **Frontend wiring (2026-10-22):** `SettingsPanel.tsx`'s Profile section
+replaced the disabled "editing unavailable" message with real controls: an
+inline-editable name (pencil icon → input + Save/Cancel) and an avatar
+upload/remove flow (file picker → `uploadOwnAvatar`, "Remove" button →
+`removeOwnAvatar`), with the stored path resolved to a display URL via
+`resolveAvatarUrl` whenever it changes. `App.tsx` gained
+`handleStaffProfileUpdated`, threaded through `AdminDashboard.tsx` as
+`onStaffProfileUpdated` → `SettingsPanel`'s `onProfileUpdated`; a successful
+save merges the returned fields into the single shared `staffProfile` state,
+so the navbar/dropdown/dashboard update together per the requirement's own
+contract — no separate refetch. Compiles cleanly (`pnpm dev` HMR, no
+errors). **Tested live (2026-10-22), two real bugs found and fixed:**
+1. `storageRefs.ts`'s `UPLOAD_FOLDERS` allow-list (`['photos/', 'docs/']`) didn't
+   include `'profiles/'`, so `storagePathOf()` rejected the new avatar paths and
+   `displayUrl()` fell through to returning the raw path unchanged instead of a
+   signed URL — the `<img>` tag's `src` was literally the storage path, not a
+   link. Fixed by adding `'profiles/'` to that list.
+2. Avatars always upload to one fixed path (`profiles/<uid>/avatar.jpg`) so
+   replacing doesn't orphan old files — but that means the path string never
+   changes on a replace, so a `useEffect` keyed on the path alone never
+   re-fires after a second upload, and the navbar/dropdown avatar (a separate
+   piece of UI that never displayed a photo at all before this work) wouldn't
+   pick up a replacement either. Restructured: the resolved avatar URL now
+   lives once in `App.tsx` (shared by the navbar and Settings, both reading
+   the same state), and `uploadOwnAvatar`/`onProfileUpdated` pass the fresh
+   URL through directly rather than relying solely on the path-changed
+   effect. `Header.tsx` now also renders the actual photo (both the pill and
+   dropdown), not just a generic icon.
+
+**Live-tested (2026-10-22):** name edit, photo upload, instant replace (no
+refresh), removal, and navbar sync all confirmed working by the user.
+
+**Third issue found and fixed — Workspace Settings Team Members list:**
+OPM's member list never showed any photo at all, even for a CSR who had one
+— `TeamMember` (type + `memberFromRow()` in `db.ts`) never carried
+`avatarPath`, so the UI had no way to know one existed. Added `avatarPath`
+to `TeamMember`, mapped it in `memberFromRow()`, and added
+`resolveAvatarUrls()` (plural) — one batched signing call for every member's
+avatar at once, reusing the same `signStoredFiles` infrastructure, instead
+of one request per row. `WorkspaceSettingsPanel.tsx`'s member rows now show
+the real photo when resolved, falling back to initials otherwise.
+**Live-tested and confirmed by the user:** the member with a photo shows it;
+members without one still show initials correctly.
+
+**REQ-012 status: all three found issues fixed and live-verified. Backend
+and frontend both complete.**
+
+**Blocker:** None — resolved. Backend, `db.ts`, and frontend (own profile +
+Workspace Settings member list) all implemented and live-verified.
 
 **Approval:** Not approved for a database/backend change in this frontend task.
 
@@ -1592,8 +2090,57 @@ by this frontend task.
 
 ## [REQ-013] REQ — DELIVERIES DATE / TIMESTAMP CONSISTENCY
 
-**Status: BACKEND REQUIRED — PENDING IMPLEMENTATION.** This is a handoff only;
-no migration or backend change was applied by the frontend date-column task.
+**Status:** Implemented (2026-10-22)
+
+**2026-10-22 — migration prepared, not yet applied:**
+`supabase/migrations/20261022000001_assignment_event_timestamps.sql`. Adds
+nullable `assignments.completed_at_utc` / `cancelled_at`
+(`timestamptz`), stamped with the server's own `now()` inside
+`complete_assignment()` / `cancel_assignment()` respectively, in the same
+update as the state change. Legacy `completed_at` text untouched; no
+backfill of historical rows. Both new columns are additionally protected
+from being set any other way — each RPC sets a transaction-local flag right
+before its own update (reusing the exact technique `cancel_assignment`
+already used for `cancel_reason`), and `guard_assignment_cancel()` (already
+firing on every `assignments` update, not just cancellations) refuses any
+other attempt to change either column, including a `can_write()` caller
+going around the RPC with a direct table update — satisfies this
+requirement's own "unauthorized callers cannot set or edit event timestamps
+directly" test point for both timestamps, not just one.
+
+**Applied and verified (2026-10-22):** Ran in the Supabase SQL editor;
+`completed_at_utc`/`cancelled_at` confirmed present as `timestamptz`.
+Protection confirmed: a direct `.update({cancelled_at: ...})` from a logged-in
+admin/CSR session correctly failed with `not_authorized` — even a legitimate
+staff session cannot bypass the RPC. Functional stamping confirmed: cancelled
+a real test assignment (`ASN07474`) through the actual `cancel_assignment`
+RPC via the console; `cancelled_at` persisted as a real server timestamp
+(`2026-10-22 16:20:24.698584+00`) alongside the correct `state`,
+`task_status`, and `cancel_reason`. `completed_at_utc` independently confirmed too: fast-forwarded a second test
+assignment (`ASN21884`) to `Delivered` with all 6 documents approved via SQL
+(shortcutting the already-separately-tested delivery workflow itself), then
+called the real `complete_assignment` RPC via the console —
+`completed_at_utc` persisted as `2026-10-22 16:27:40.567096+00`, alongside
+the correct `state`/`task_status` and the unchanged legacy `completed_at`
+label.
+
+**Both new timestamps fully verified end to end.**
+
+**`db.ts` wiring (2026-10-22):** Turned out the UI already had the full
+display/sort contract built and waiting — `DriversManagement.tsx` and
+`DeliveryTable.tsx` already read `completedEventAt`/`cancelledAt`, previously
+sourced only from an `activity_log` lookup (the doc's own earlier note: "the
+frontend now uses that full audit timestamp... where available"). The only
+change needed was swapping the source: `completedEventAt` now prefers the
+new `completed_at_utc` directly, `cancelledAt` now prefers `cancelled_at`
+directly — falling back to the old `activity_log` lookup only for rows that
+predate this migration. No other file touched; nothing else consumes these
+fields. Compiles cleanly (module re-fetched with no transpile error).
+**Confirmed live in the browser by the user:** both `ASN07474` (cancelled)
+and `ASN21884` (completed) show the correct date and time in Deliveries.
+
+**REQ-013 complete — backend applied/verified, `db.ts` wired and
+live-confirmed.**
 
 ### Current problem and fields
 
