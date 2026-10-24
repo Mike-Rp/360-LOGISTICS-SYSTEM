@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Sidebar from './Sidebar';
 import Header from './Header';
 import NotificationToastContainer from './NotificationToastContainer';
@@ -15,10 +15,9 @@ import HelpPanel from './HelpPanel';
 import WorkspaceSettingsPanel from './WorkspaceSettingsPanel';
 import DashboardHome from './dashboard/DashboardHome';
 import AdminContentSkeleton from './AdminContentSkeleton';
-import { Toaster } from '../ui/sonner';
 import { ADMIN_NAVIGATION_EVENT, adminPageFromUrl, pushAdminNavigation } from '../../lib/adminNavigation';
 import { canDispatchAssignments, canManageFleetAccounts as mayManageFleetAccounts } from '../../lib/staffPermissions';
-import { isActivityKey, notificationDestination, type ActivityKey } from '../../lib/notificationEvents';
+import { isActivityKey, notificationDestination, type ActionFeedbackToast, type ActivityKey } from '../../lib/notificationEvents';
 import { notificationSoundEnabled, setNotificationSoundEnabled } from '../../lib/notificationSound';
 import type { StaffSession } from '../../lib/db';
 import type { Assignment, CompletedTask, LocalDriver, LocalTruck, AppNotification, AdminRole, AdminActivityEntry, AdminActivityInput } from '../../data/assignmentTypes';
@@ -66,6 +65,9 @@ interface Props {
   setCancelled: React.Dispatch<React.SetStateAction<Assignment[]>>;
   notifications: AppNotification[];
   notificationsReady: boolean;
+  saveError: string | null;
+  loadError: string | null;
+  onRetryLoad: () => void;
   setNotifications: React.Dispatch<React.SetStateAction<AppNotification[]>>;
   activityLog: AdminActivityEntry[];
   onLogActivity: (entry: AdminActivityInput) => void;
@@ -91,7 +93,7 @@ export default function AdminDashboard({
   drivers, setDrivers, trucks, setTrucks,
   assignments, setAssignments, completed, setCompleted,
   cancelled, setCancelled,
-  notifications, notificationsReady, setNotifications,
+  notifications, notificationsReady, setNotifications, saveError, loadError, onRetryLoad,
   activityLog, onLogActivity, onServerChange, archivedDrivers, archivedTrucks,
   activeNav, setActiveNav,
   onLogout, isViewOnly, adminRole, staffProfile, avatarUrl, onStaffProfileUpdated, savingToDb,
@@ -103,6 +105,12 @@ export default function AdminDashboard({
   const [helpOpen,      setHelpOpen]      = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const feedbackSequence = useRef(0);
+  const [feedback, setFeedback] = useState<ActionFeedbackToast[]>([]);
+  const showActionFeedback = useCallback((message: string, tone: ActionFeedbackToast['tone'] = 'success', presentation?: ActionFeedbackToast['presentation']) => {
+    const item: ActionFeedbackToast = { id: `feedback-${++feedbackSequence.current}`, type: 'feedback', message, tone, presentation };
+    setFeedback(current => [...current.slice(-99), item]);
+  }, []);
   const [searchInput, setSearchInput] = useState({ page: activeNav, value: '' });
   const [searchQuery, setSearchQuery] = useState({ page: activeNav, value: '' });
   const [notificationTarget, setNotificationTarget] = useState<NotificationTarget | null>(targetFromUrl);
@@ -261,6 +269,7 @@ export default function AdminDashboard({
             availabilityError={availabilityError}
             onLogActivity={onLogActivity}
             onServerChange={onServerChange}
+            onActionFeedback={showActionFeedback}
             adminEmail={adminEmail}
             openDispatchOnMount={dispatchOnOpen}
             onDispatchOpened={() => setDispatchOnOpen(false)}
@@ -289,6 +298,7 @@ export default function AdminDashboard({
             savingToDb={savingToDb}
             onLogActivity={onLogActivity}
             onServerChange={onServerChange}
+            onActionFeedback={showActionFeedback}
             archivedDrivers={archivedDrivers}
             archivedTrucks={archivedTrucks}
             search={currentSearchQuery}
@@ -323,14 +333,22 @@ export default function AdminDashboard({
         <span role="status" className="sr-only">{initialLoading ? 'Loading page content…' : ''}</span>
         <main aria-busy={contentLoading} className={`min-w-0 flex-1 p-4 sm:p-6 ${mobileMenuOpen || settingsOpen ? 'overflow-hidden' : 'overflow-y-auto'}`}>
           <div className={`max-w-[1600px] mx-auto space-y-4 sm:space-y-6 ${initialLoading ? '' : 'animate-in fade-in duration-300 motion-reduce:animate-none'}`}>
+            {(saveError || loadError) && <div className="space-y-2" role="alert">
+              {saveError && <p className="rounded-lg border border-red-200 bg-white px-4 py-3 text-sm text-red-700">{saveError}</p>}
+              {loadError && <div className="flex flex-wrap items-center gap-2 rounded-lg border border-red-200 bg-white px-4 py-3 text-sm text-red-700">
+                <span className="min-w-0 flex-1">{loadError}</span>
+                <button type="button" onClick={onRetryLoad} className="rounded-md px-2 py-1 font-semibold text-red-700 underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700">Retry</button>
+              </div>}
+            </div>}
             {initialLoading ? <AdminContentSkeleton page={activeNav} isViewOnly={operationalReadOnly} canManageFleetAccounts={canManageFleetAccounts} /> : renderContent()}
           </div>
         </main>
       </div>
 
-      <Toaster position="bottom-right" duration={1800} visibleToasts={1} closeButton={false} />
       <NotificationToastContainer notifications={notifications} ready={notificationsReady}
-        enabled={notifEnabled} soundEnabled={soundEnabled} onOpen={openNotification} />
+        enabled={notifEnabled} soundEnabled={soundEnabled} onOpen={openNotification}
+        feedback={feedback}
+        modalOpen={settingsOpen || helpOpen || workspaceOpen || mobileMenuOpen} />
 
       {/* ── Floating panels ── */}
       <SettingsPanel

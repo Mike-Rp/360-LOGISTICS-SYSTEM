@@ -13,7 +13,7 @@ new Function('require', 'module', 'exports', source)(require, moduleForTest, mod
 const {
   MILESTONE_NOTIFICATIONS, isActivityKey, isToastEligible, notificationDestination,
   enqueueNotificationToasts, dismissNotificationToast, MAX_VISIBLE_NOTIFICATION_TOASTS,
-  NOTIFICATION_TOAST_DURATION,
+  NOTIFICATION_TOAST_DURATION, filterNotificationToasts, collectNewOperationalToasts,
 } = moduleForTest.exports;
 
 const notification = (id, overrides = {}) => ({
@@ -54,14 +54,69 @@ test('popup and bell use the same shipment and review destination', () => {
   assert.equal(review.actionLabel, 'Review');
 });
 
-test('burst shows at most three, then promotes pending in arrival order', () => {
-  assert.equal(MAX_VISIBLE_NOTIFICATION_TOASTS, 3);
+test('burst shows at most two, then promotes pending in arrival order', () => {
+  assert.equal(MAX_VISIBLE_NOTIFICATION_TOASTS, 2);
   assert.equal(NOTIFICATION_TOAST_DURATION, 6000);
   const items = Array.from({ length: 5 }, (_, index) => notification(String(index)));
   const first = enqueueNotificationToasts({ visible: [], pending: [] }, items);
-  assert.deepEqual(first.visible.map(item => item.id), ['0', '1', '2']);
-  assert.deepEqual(first.pending.map(item => item.id), ['3', '4']);
+  assert.deepEqual(first.visible.map(item => item.id), ['0', '1']);
+  assert.deepEqual(first.pending.map(item => item.id), ['2', '3', '4']);
   const next = dismissNotificationToast(first, '1');
-  assert.deepEqual(next.visible.map(item => item.id), ['0', '2', '3']);
-  assert.deepEqual(next.pending.map(item => item.id), ['4']);
+  assert.deepEqual(next.visible.map(item => item.id), ['0', '2']);
+  assert.deepEqual(next.pending.map(item => item.id), ['3', '4']);
+});
+
+test('queue deduplicates exact event ids but retains distinct events with equal text', () => {
+  const first = notification('first');
+  const second = notification('second');
+  const queue = enqueueNotificationToasts({ visible: [], pending: [] }, [first, first, second]);
+  assert.deepEqual(queue.visible.map(item => item.id), ['first', 'second']);
+  const repeated = enqueueNotificationToasts(queue, [first, second, notification('third')]);
+  assert.deepEqual(repeated.visible.map(item => item.id), ['first', 'second']);
+  assert.deepEqual(repeated.pending.map(item => item.id), ['third']);
+  assert.deepEqual(dismissNotificationToast(repeated, 'first').visible.map(item => item.id), ['second', 'third']);
+});
+
+test('acting CSR cancellation remains a popup with its shipment context and reason', () => {
+  const cancelled = notification('assignment-ASN123-cancelled', {
+    statusUpdate: 'cancelled', driverName: 'CSR@360logistics.ph',
+    message: '[ATV 2313] Delivery cancelled · Customer requested a different date',
+  });
+  const result = collectNewOperationalToasts([cancelled], new Set(), true);
+  assert.deepEqual(result.toasts, [cancelled]);
+  assert.equal(result.toasts[0].truckPlate, 'ATV 2313');
+  assert.match(result.toasts[0].message, /Customer requested a different date/);
+  const action = { id: 'feedback-1', type: 'feedback', message: 'Assignment cancelled successfully.', tone: 'success' };
+  const stack = enqueueNotificationToasts({ visible: [], pending: [] }, [action, ...result.toasts]);
+  assert.deepEqual(stack.visible.map(item => item.id), ['feedback-1', cancelled.id]);
+});
+
+test('disabling operational popups keeps local action feedback and promotes the queue', () => {
+  const action = { id: 'feedback-1', type: 'feedback', message: 'Saved', tone: 'success' };
+  const queue = enqueueNotificationToasts({ visible: [], pending: [] }, [notification('one'), action, notification('two')]);
+  const filtered = filterNotificationToasts(queue, item => item.type === 'feedback');
+  assert.deepEqual(filtered.visible.map(item => item.id), ['feedback-1']);
+  assert.deepEqual(filtered.pending, []);
+});
+
+test('polling does not replay a seen event or a read-state change', () => {
+  const first = notification('first');
+  const seeded = new Set(['historical']);
+  const update = collectNewOperationalToasts([notification('historical'), first], seeded, true);
+  assert.deepEqual(update.toasts.map(item => item.id), ['first']);
+  const repeated = collectNewOperationalToasts([notification('historical'), { ...first, read: true }], update.knownIds, true);
+  assert.deepEqual(repeated.toasts, []);
+  const distinct = collectNewOperationalToasts([first, notification('second')], repeated.knownIds, true);
+  assert.deepEqual(distinct.toasts.map(item => item.id), ['second']);
+});
+
+test('a new account seeds its own history and does not inherit an old popup queue', () => {
+  const previousAccountQueue = enqueueNotificationToasts({ visible: [], pending: [] }, [notification('old-account')]);
+  assert.equal(previousAccountQueue.visible.length, 1);
+  const newAccountHistory = [notification('new-account-history')];
+  const seededKnownIds = new Set(newAccountHistory.map(item => item.id));
+  const update = collectNewOperationalToasts(newAccountHistory, seededKnownIds, true);
+  assert.deepEqual(update.toasts, []);
+  const newEvent = collectNewOperationalToasts([...newAccountHistory, notification('new-event')], update.knownIds, true);
+  assert.deepEqual(newEvent.toasts.map(item => item.id), ['new-event']);
 });

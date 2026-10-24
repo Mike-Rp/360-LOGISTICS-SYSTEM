@@ -38,26 +38,59 @@ export function isToastEligible(notification: AppNotification): boolean {
     (/Documents ready for review/.test(notification.message) || /Corrected .+ uploaded/.test(notification.message));
 }
 
-export const MAX_VISIBLE_NOTIFICATION_TOASTS = 3;
+export const MAX_VISIBLE_NOTIFICATION_TOASTS = 2;
 export const NOTIFICATION_TOAST_DURATION = 6000;
 
-export interface NotificationToastQueue {
-  visible: AppNotification[];
-  pending: AppNotification[];
+export interface ActionFeedbackToast {
+  id: string;
+  type: 'feedback';
+  message: string;
+  tone: 'success' | 'error' | 'warning' | 'info';
+  presentation?: 'solid';
 }
 
-export function enqueueNotificationToasts(queue: NotificationToastQueue, incoming: AppNotification[]): NotificationToastQueue {
+export type TemporaryToast = AppNotification | ActionFeedbackToast;
+
+export function collectNewOperationalToasts(
+  notifications: AppNotification[], knownIds: ReadonlySet<string>, enabled: boolean,
+): { knownIds: Set<string>; toasts: AppNotification[] } {
+  const nextKnown = new Set(knownIds);
+  const toasts: AppNotification[] = [];
+  for (const notification of notifications) {
+    if (nextKnown.has(notification.id)) continue;
+    nextKnown.add(notification.id);
+    if (enabled && !notification.read && isToastEligible(notification)) toasts.push(notification);
+  }
+  return { knownIds: nextKnown, toasts };
+}
+
+export interface NotificationToastQueue<T extends { id: string } = TemporaryToast> {
+  visible: T[];
+  pending: T[];
+}
+
+export function enqueueNotificationToasts<T extends { id: string }>(queue: NotificationToastQueue<T>, incoming: T[]): NotificationToastQueue<T> {
+  const known = new Set([...queue.visible, ...queue.pending].map(item => item.id));
+  const distinct = incoming.filter(item => {
+    if (known.has(item.id)) return false;
+    known.add(item.id);
+    return true;
+  });
   const slots = Math.max(0, MAX_VISIBLE_NOTIFICATION_TOASTS - queue.visible.length);
   return {
-    visible: [...queue.visible, ...incoming.slice(0, slots)],
-    pending: [...queue.pending, ...incoming.slice(slots)],
+    visible: [...queue.visible, ...distinct.slice(0, slots)],
+    pending: [...queue.pending, ...distinct.slice(slots)],
   };
 }
 
-export function dismissNotificationToast(queue: NotificationToastQueue, id: string): NotificationToastQueue {
+export function dismissNotificationToast<T extends { id: string }>(queue: NotificationToastQueue<T>, id: string): NotificationToastQueue<T> {
   const visible = queue.visible.filter(notification => notification.id !== id);
   const pending = queue.pending.filter(notification => notification.id !== id);
   if (visible.length === queue.visible.length) return { visible, pending };
   const slots = MAX_VISIBLE_NOTIFICATION_TOASTS - visible.length;
   return { visible: [...visible, ...pending.slice(0, slots)], pending: pending.slice(slots) };
+}
+
+export function filterNotificationToasts<T extends { id: string }>(queue: NotificationToastQueue<T>, keep: (item: T) => boolean): NotificationToastQueue<T> {
+  return enqueueNotificationToasts({ visible: queue.visible.filter(keep), pending: [] }, queue.pending.filter(keep));
 }

@@ -584,31 +584,23 @@ export default function App() {
   return (
     <div className="min-h-screen bg-background relative">
 
-      {/* ── Login success toast ── */}
+      {/* Authentication success stays centered above either signed-in view. */}
       {loginSuccess && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] bg-green-600 text-white text-sm font-medium px-5 py-3 rounded-xl shadow-xl flex items-center gap-2.5 max-w-sm animate-in fade-in slide-in-from-top-3 duration-300">
-          <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
-          {loginSuccess}
+        <div className="pointer-events-none fixed inset-x-3 top-[calc(1rem+env(safe-area-inset-top))] z-40 mx-auto max-w-sm" aria-live="polite">
+          <div role="status" className="pointer-events-auto flex items-center gap-2.5 rounded-xl bg-green-600 px-5 py-3 text-sm font-medium text-white shadow-lg">
+            <CheckCircle2 className="h-4 w-4 flex-shrink-0" />{loginSuccess}
+          </div>
         </div>
       )}
 
-      {/* ── Save-error toast ── */}
-      {saveError && (
-        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-[100] bg-red-600 text-white text-xs font-medium px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2 max-w-sm text-center animate-in fade-in slide-in-from-top-2 duration-200">
-          <span>⚠️</span> {saveError}
-        </div>
-      )}
-
-      {/* ── Load-error banner — stays until a later load or poll succeeds ── */}
-      {loadError && (
-        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-[100] bg-red-600 text-white text-xs font-medium px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2 max-w-sm text-center animate-in fade-in slide-in-from-top-2 duration-200">
-          <span>⚠️</span> {loadError}
-          <button
-            onClick={() => { setLoadError(null); void loadData(); }}
-            className="underline font-semibold whitespace-nowrap"
-          >
-            Retry
-          </button>
+      {/* Login errors stay together; persistent admin errors appear in page content. */}
+      {view !== 'admin' && !signedIn && (saveError || loadError) && (
+        <div className={`pointer-events-none fixed inset-x-3 z-40 mx-auto flex max-w-sm flex-col gap-2 ${loginSuccess ? 'top-[calc(5rem+env(safe-area-inset-top))]' : 'top-[calc(1rem+env(safe-area-inset-top))]'}`} aria-live="polite">
+          {saveError && <div role="alert" className="pointer-events-auto rounded-xl bg-red-600 px-4 py-2.5 text-sm font-medium text-white shadow-lg">{saveError}</div>}
+          {loadError && <div role="alert" className="pointer-events-auto flex flex-wrap items-center gap-2 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-medium text-white shadow-lg">
+            <span className="min-w-0 flex-1">{loadError}</span>
+            <button type="button" onClick={() => { setLoadError(null); void loadData(); }} className="rounded px-1 font-semibold underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white">Retry</button>
+          </div>}
         </div>
       )}
 
@@ -631,6 +623,7 @@ export default function App() {
 
       {(view === 'admin' || signedIn) && (
         <AdminDashboard
+          key={adminEmail ?? 'admin'}
           initialLoading={dataLoading && !adminLoadFinished}
           contentLoading={dataLoading}
           availabilityError={!!loadError || availabilityRefreshError}
@@ -641,6 +634,9 @@ export default function App() {
           cancelled={cancelled}      setCancelled={setCancelled}
           notifications={notifications} setNotifications={persistNotificationReads}
           notificationsReady={notificationsReady}
+          saveError={saveError}
+          loadError={loadError}
+          onRetryLoad={() => { setLoadError(null); void loadData(); }}
           activityLog={activityLog}
           onLogActivity={onLogActivity}
           onServerChange={onServerChange}

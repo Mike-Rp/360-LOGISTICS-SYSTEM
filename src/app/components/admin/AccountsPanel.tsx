@@ -1,7 +1,7 @@
 import { useState, useEffect, useLayoutEffect } from 'react';
 import {
   Users, Truck, Plus, Eye, EyeOff, RefreshCw,
-  CheckCircle2, Shield, KeyRound, Phone,
+  Shield, KeyRound, Phone,
   Package, Weight, Trash2, AlertTriangle, Archive, ChevronDown,
 } from 'lucide-react';
 import type { LocalDriver, LocalTruck, AdminActivityInput, Assignment } from '../../data/assignmentTypes';
@@ -14,6 +14,7 @@ import { PaginationFooter, usePagination, useStablePageHeight } from './Paginati
 import { sortNewestFirst, markLocalRecordAdded, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
 import { capacityKgOnly } from '../../data/truckTypes';
 import ASNWithCopy from './ASNWithCopy';
+import type { ActionFeedbackToast } from '../../lib/notificationEvents';
 
 /* Plain-language text for the errors the archive / PIN database functions can return */
 const accountActionError = (err: unknown): string => {
@@ -150,6 +151,7 @@ interface Props {
   onLogActivity?: (entry: AdminActivityInput) => void;
   /* Runs a database-function change (archive / new PIN), then reloads — see App.tsx */
   onServerChange: (action: () => Promise<void>) => Promise<void>;
+  onActionFeedback: (message: string, tone?: ActionFeedbackToast['tone'], presentation?: ActionFeedbackToast['presentation']) => void;
   archivedDrivers?: LocalDriver[];
   archivedTrucks?: LocalTruck[];
   search: string;
@@ -163,7 +165,7 @@ const ROLE_LABEL: Record<string, string> = {
 
 type TabView = 'Drivers' | 'Trucks';
 
-export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, assignments = [], canManageFleetAccounts, onResetAll, savingToDb, onLogActivity, onServerChange, archivedDrivers = [], archivedTrucks = [], search }: Props) {
+export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, assignments = [], canManageFleetAccounts, onResetAll, savingToDb, onLogActivity, onServerChange, onActionFeedback, archivedDrivers = [], archivedTrucks = [], search }: Props) {
   const [tab, setTab] = useState<TabView>('Drivers');
   const [driverView, setDriverView] = useState<'active' | 'archived'>('active');
   const [availabilityFilter, setAvailabilityFilter] = useState<AvailabilityFilter>('all');
@@ -217,14 +219,6 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
     ? { gridTemplateColumns: 'minmax(160px, 1.5fr) minmax(205px, 1.6fr) minmax(120px, 1fr) minmax(130px, 1fr)', minWidth: '700px' }
     : { gridTemplateColumns: 'minmax(160px, 1.6fr) minmax(205px, 1.6fr) 120px 115px 190px', minWidth: '870px' };
 
-  /* Success message after an archive / PIN change — hides itself after 4 s */
-  const [toast, setToast] = useState<string | null>(null);
-  useEffect(() => {
-    if (!toast) return;
-    const t = setTimeout(() => setToast(null), 4000);
-    return () => clearTimeout(t);
-  }, [toast]);
-
   /* The "Reset All Data" button was removed from this page. The backend is untouched:
      resetAllData() in lib/db.ts and the reset_all_data() database function both still
      exist, and `onResetAll` is still passed down, so the feature can be restored by
@@ -269,17 +263,17 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
   const handleArchiveDriver = async (target: { id: string; name: string }) => {
     await onServerChange(() => archiveDriver(target.id));
     setDeleteTarget(null);
-    setToast(`${target.name} moved to archive.`);
+    onActionFeedback(`${target.name} moved to archive.`, 'success', 'solid');
   };
   const handleNewPin = async (target: { id: string; name: string }) => {
     await onServerChange(() => resetDriverPin(target.id, generatePin()));
     setPinTarget(null);
-    setToast(`PIN successfully changed for ${target.name}.`);
+    onActionFeedback(`PIN successfully changed for ${target.name}.`, 'success', 'solid');
   };
   const handleArchiveTruck = async (target: { id: string; plate: string }) => {
     await onServerChange(() => archiveTruck(target.id));
     setTruckTarget(null);
-    setToast(`${target.plate} moved to archive.`);
+    onActionFeedback(`${target.plate} moved to archive.`, 'success', 'solid');
   };
 
   return (
@@ -784,16 +778,6 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
           errorText={accountActionError}
         />
       )}
-
-      {/* ════ Success message ════ */}
-      {toast && (
-        <div role="status"
-          className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[90] w-[calc(100%-2rem)] max-w-sm bg-green-600 text-white text-sm font-medium px-4 py-3 rounded-xl shadow-xl flex items-center gap-2.5 animate-in fade-in slide-in-from-bottom-3 duration-300">
-          <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
-          <span className="break-words min-w-0">{toast}</span>
-        </div>
-      )}
-
 
       {/* ════ MODAL: Register Driver ════ */}
       {showAddDriver && canManageFleetAccounts && (

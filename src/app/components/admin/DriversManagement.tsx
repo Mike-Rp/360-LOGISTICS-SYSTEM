@@ -1,5 +1,4 @@
 import { useState, useEffect, useLayoutEffect, useRef } from 'react';
-import { toast } from 'sonner';
 import {
   User, Truck, MapPin, Building2, Calendar, MessageSquare,
   X, ClipboardList, CheckCircle2,
@@ -33,7 +32,7 @@ import { sortNewestFirst, markLocalRecordAdded } from '../../lib/recordOrdering'
 import { advanceDispatchHighlight, dispatchHighlightPage, type DispatchHighlight } from '../../lib/dispatchHighlight';
 import { hasUnsavedDispatchDetails } from '../../lib/dispatchDraft';
 import { ADMIN_NAVIGATION_EVENT, pushAdminNavigation } from '../../lib/adminNavigation';
-import type { ActivityKey } from '../../lib/notificationEvents';
+import type { ActionFeedbackToast, ActivityKey } from '../../lib/notificationEvents';
 import { hasOpenBlockingIssue } from '../../lib/issueWorkflow';
 import { TRUCK_CLASSIFICATIONS, truckSideImageFor, capacityKgOnly } from '../../data/truckTypes';
 import { destinationAreaEnabled, getAssignmentRoute, getDeliveryLocation } from '../../data/assignmentRoute';
@@ -1880,6 +1879,7 @@ interface Props {
   onLogActivity?: (entry: AdminActivityInput) => void;
   /* Runs a database-function change (edit / cancel), then reloads — see App.tsx */
   onServerChange: (action: () => Promise<void>, onActionSuccess?: () => void) => Promise<void>;
+  onActionFeedback: (message: string, tone?: ActionFeedbackToast['tone']) => void;
   adminEmail?: string | null;
   /* Dashboard "Dispatch Truck": open this screen's Dispatch Truck form once on arrival */
   openDispatchOnMount?: boolean;
@@ -1928,7 +1928,7 @@ function reviewQueueRequested() {
 export default function DriversManagement({
   drivers, setDrivers, trucks, setTrucks,
   assignments, setAssignments, notifications, completed, setCompleted, cancelled, setCancelled,
-  isViewOnly = false, availabilityLoading = false, availabilityError = false, onLogActivity, onServerChange, adminEmail,
+  isViewOnly = false, availabilityLoading = false, availabilityError = false, onLogActivity, onServerChange, onActionFeedback, adminEmail,
   openDispatchOnMount = false, onDispatchOpened, search, onSearchChange, notificationTarget, onNotificationTargetHandled,
 }: Props) {
 
@@ -2140,7 +2140,7 @@ export default function DriversManagement({
       setDispatchHighlight(null);
       setHiddenDispatchId(null);
       setPendingDispatch({ id: newId, waitForFocus: false });
-      toast.success('Assignment dispatched successfully.', { duration: 3000 });
+      onActionFeedback('Assignment dispatched successfully.');
       resetAssignTask();
     } catch (err) {
       const code = errorCode(err);
@@ -2262,7 +2262,7 @@ export default function DriversManagement({
             ? { ...truck, status: 'Available' } : truck));
         }
       });
-      toast.success('Assignment cancelled successfully.', { duration: 3000 });
+      onActionFeedback('Assignment cancelled successfully.');
     } catch (error) {
       if (errorCode(error) === 'loading_completed' || errorCode(error) === 'not_cancellable') {
         // The driver's transition may have won the row lock while this modal was open.
