@@ -25,7 +25,7 @@ import type { Assignment, CompletedTask, LocalDriver, LocalTruck, AppNotificatio
 
 type NavItem = 'Dashboard' | 'Monitor' | 'Deliveries' | 'Documents' | 'Reports' | 'Accounts';
 
-type NotificationTarget = { page: 'Documents' | 'Monitor'; assignmentId: string; docType?: string; review?: boolean; activityKey?: ActivityKey };
+type NotificationTarget = { page: 'Documents' | 'Monitor'; assignmentId: string; docType?: string; review?: boolean; activityKey?: ActivityKey; focusOnly?: boolean };
 
 function targetFromUrl(): NotificationTarget | null {
   const params = new URLSearchParams(window.location.search);
@@ -35,6 +35,7 @@ function targetFromUrl(): NotificationTarget | null {
   const activity = params.get('activity');
   return { page, assignmentId, docType: params.get('document') ?? undefined,
     review: page === 'Monitor' && params.get('review') === 'true',
+    focusOnly: page === 'Monitor' && params.get('focus') === 'true',
     activityKey: page === 'Monitor' && isActivityKey(activity) ? activity : undefined };
 }
 
@@ -166,6 +167,7 @@ export default function AdminDashboard({
     url.searchParams.delete('document');
     url.searchParams.delete('review');
     url.searchParams.delete('activity');
+    url.searchParams.delete('focus');
     window.history.replaceState(window.history.state, '', url);
     setNotificationTarget(null);
   }, []);

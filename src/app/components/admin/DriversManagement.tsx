@@ -29,7 +29,8 @@ import { statusColors } from '../../data/statusColors';
 import { assignmentDisplayStatusConfig, canCompleteAssignment, getAssignmentDisplayStatus, getAssignmentDocumentProgress, getDocumentAgingState, type AssignmentDisplayStatus } from '../../lib/assignmentWorkflow';
 import { DISPATCH_STATUS_OPTIONS, matchesDispatchStatus, type DispatchStatus } from '../../lib/dispatchStatusFilter';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
-import { sortNewestFirst, markLocalRecordAdded, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
+import { sortNewestFirst, markLocalRecordAdded } from '../../lib/recordOrdering';
+import { advanceDispatchHighlight, dispatchHighlightPage, type DispatchHighlight } from '../../lib/dispatchHighlight';
 import { ADMIN_NAVIGATION_EVENT, pushAdminNavigation } from '../../lib/adminNavigation';
 import type { ActivityKey } from '../../lib/notificationEvents';
 import { hasOpenBlockingIssue } from '../../lib/issueWorkflow';
@@ -1892,12 +1893,33 @@ interface Props {
   onDispatchOpened?: () => void;
   search: string;
   onSearchChange: (value: string) => void;
-  notificationTarget?: { assignmentId: string; docType?: string; review?: boolean; activityKey?: ActivityKey } | null;
+  notificationTarget?: { assignmentId: string; docType?: string; review?: boolean; activityKey?: ActivityKey; focusOnly?: boolean } | null;
   onNotificationTargetHandled?: () => void;
 }
 
 const MONITOR_PAGE_SIZE = 6;
 const RECENT_COMPLETED_LIMIT = 5;
+
+function scrollToDispatchCardIfNeeded(card: HTMLElement) {
+  let scrollParent = card.parentElement;
+  while (scrollParent && scrollParent !== document.body) {
+    const overflow = window.getComputedStyle(scrollParent).overflowY;
+    if (/(auto|scroll)/.test(overflow) && scrollParent.scrollHeight > scrollParent.clientHeight) break;
+    scrollParent = scrollParent.parentElement;
+  }
+  const container = scrollParent && scrollParent !== document.body ? scrollParent : null;
+  const cardRect = card.getBoundingClientRect();
+  const frame = container?.getBoundingClientRect();
+  const visibleTop = Math.max(frame?.top ?? 0, 80);
+  const visibleBottom = Math.min(frame?.bottom ?? window.innerHeight, window.innerHeight);
+  if (cardRect.top >= visibleTop + 12 && cardRect.bottom <= visibleBottom - 12) return;
+  const behavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+  if (container) {
+    container.scrollTo({ top: container.scrollTop + cardRect.top - visibleTop - 16, behavior });
+  } else {
+    window.scrollTo({ top: window.scrollY + cardRect.top - visibleTop - 16, behavior });
+  }
+}
 
 function formatRecentCompletion(date: Date, today: string) {
   const day = dateToIso(date) === today ? 'Today' : 'Yesterday';
@@ -1939,6 +1961,19 @@ export default function DriversManagement({
   const [statusFilter, setStatusFilter] = useState<DispatchStatus | ''>('');
   const [completedOpen, setCompletedOpen] = useState(false);
   const [reviewQueueOpen, setReviewQueueOpen] = useState(reviewQueueRequested);
+  const [pendingDispatch, setPendingDispatch] = useState<{ id: string; waitForFocus: boolean } | null>(null);
+  const [hiddenDispatchId, setHiddenDispatchId] = useState<string | null>(null);
+  const [dispatchHighlight, setDispatchHighlight] = useState<DispatchHighlight | null>(null);
+
+  useEffect(() => {
+    if (!dispatchHighlight) return;
+    const expected = dispatchHighlight;
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const timer = window.setTimeout(() => {
+      setDispatchHighlight((current) => advanceDispatchHighlight(current, expected, reducedMotion));
+    }, expected.phase === 'hold' ? reducedMotion ? 4000 : 3000 : 1000);
+    return () => window.clearTimeout(timer);
+  }, [dispatchHighlight]);
 
   useEffect(() => {
     const restoreReviewQueue = () => setReviewQueueOpen(reviewQueueRequested());
@@ -2059,8 +2094,15 @@ export default function DriversManagement({
           remarks: taskRemarks.trim(),
         });
       });
+      if (!newId) {
+        setTaskErrors({ submit: 'Dispatch result could not be confirmed. Refresh before trying again.' });
+        return;
+      }
       markLocalRecordAdded('assignment', newId);
-      activePage.setPage(1);
+      setDispatchHighlight(null);
+      setHiddenDispatchId(null);
+      setPendingDispatch({ id: newId, waitForFocus: false });
+      toast.success('Assignment dispatched successfully.', { duration: 3000 });
       resetAssignTask();
     } catch (err) {
       const code = errorCode(err);
@@ -2234,7 +2276,32 @@ export default function DriversManagement({
     }
     previousFocusId.current = focusedAssignmentId;
   }, [focusedAssignmentId, activePage.page, activePage.setPage]);
-  const newAssignmentId = useLocalAddedHighlight('assignment', () => activePage.setPage(1));
+  useLayoutEffect(() => {
+    if (!pendingDispatch || (pendingDispatch.waitForFocus && focusedAssignmentId !== pendingDispatch.id)) return;
+    if (!assignments.some((assignment) => assignment.id === pendingDispatch.id)) return;
+    const page = dispatchHighlightPage(pendingDispatch.id, visibleAssignments.map((assignment) => assignment.id), MONITOR_PAGE_SIZE);
+    if (page === null) {
+      setHiddenDispatchId(pendingDispatch.id);
+      setPendingDispatch(null);
+      return;
+    }
+    if (activePage.page !== page) {
+      activePage.setPage(page);
+      return;
+    }
+    const card = Array.from(document.querySelectorAll<HTMLElement>('[data-dispatch-assignment-id]'))
+      .find((element) => element.dataset.dispatchAssignmentId === pendingDispatch.id);
+    if (!card) return;
+    scrollToDispatchCardIfNeeded(card);
+    setDispatchHighlight({ id: pendingDispatch.id, phase: 'hold' });
+    setHiddenDispatchId(null);
+    setPendingDispatch(null);
+  }, [pendingDispatch, focusedAssignmentId, assignments, visibleAssignments, activePage.page, activePage.pageItems]);
+  useEffect(() => {
+    if (hiddenDispatchId && visibleAssignments.some((assignment) => assignment.id === hiddenDispatchId)) {
+      setHiddenDispatchId(null);
+    }
+  }, [hiddenDispatchId, visibleAssignments]);
   useLayoutEffect(() => {
     if (focusedAssignmentId) normalPage.current = 1;
     activePage.setPage(1);
@@ -2251,7 +2318,7 @@ export default function DriversManagement({
       setMissingTarget(true);
     } else {
       setMissingTarget(false);
-      setViewDetailsId(assignment.id);
+      setViewDetailsId(notificationTarget.focusOnly ? null : assignment.id);
       if (notificationTarget.review) setReviewTarget({ assignmentId: assignment.id, docType: notificationTarget.docType });
       if (notificationTarget.activityKey) setActivityTarget({ assignmentId: assignment.id, key: notificationTarget.activityKey });
       setCompletedOpen(false);
@@ -2460,6 +2527,18 @@ export default function DriversManagement({
         </div>
       </div>
 
+      {hiddenDispatchId && (
+        <div role="status" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-foreground">
+          <p>Assignment <span className="font-semibold">{hiddenDispatchId}</span> was dispatched. The current filters hide its card.</p>
+          <button type="button" onClick={() => {
+            pushAdminNavigation('Monitor', { assignmentId: hiddenDispatchId, focusOnly: true });
+            setPendingDispatch({ id: hiddenDispatchId, waitForFocus: true });
+            setHiddenDispatchId(null);
+          }} className="min-h-10 rounded-lg border border-green-500 bg-white px-3 font-semibold text-green-800 hover:bg-green-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-green-600">
+            View New Assignment
+          </button>
+        </div>
+      )}
       {focusedAssignmentId && (
         <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
           <p className="text-muted-foreground">Showing assignment <span className="font-semibold text-foreground">{focusedAssignmentId}</span></p>
@@ -2539,10 +2618,13 @@ export default function DriversManagement({
 
             return (
               <div key={a.id}
-                style={newRecordHighlight(a.id, newAssignmentId)}
+                data-dispatch-assignment-id={a.id}
+                style={dispatchHighlight?.id === a.id && dispatchHighlight.phase === 'hold'
+                  ? { backgroundColor: '#E9FAF0', borderColor: '#32C785' } : undefined}
                 className={`flex h-full flex-col rounded-xl border-[0.5px] overflow-hidden ${
                   sq ? 'border-yellow-400 bg-yellow-50/30' : timing?.kind === 'overdue' || pickupTiming?.kind === 'pickup_overdue' ? 'border-red-200 bg-white' : 'border-border bg-white'
-                }`}
+                } ${dispatchHighlight?.id === a.id && dispatchHighlight.phase === 'fade'
+                  ? 'transition-[background-color,border-color] duration-1000 ease-out motion-reduce:transition-none' : ''}`}
               >
                 <div className="flex flex-1 flex-col p-4 sm:p-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">

@@ -20,3 +20,8 @@ test('workspace audit actions target the existing shipment, document, and summar
     '/deliveries?assignment=ASN43090&summary=true&tab=completed');
   assert.equal(adminHref('Deliveries', undefined, 'completed'), '/deliveries?tab=completed');
 });
+
+test('a newly dispatched card uses the existing assignment route with focus-only intent', () => {
+  assert.equal(loaded.exports.adminHref('Monitor', { assignmentId: 'ASN21630', focusOnly: true }),
+    '/dispatch?assignment=ASN21630&focus=true');
+});
