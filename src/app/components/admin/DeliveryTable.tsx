@@ -20,7 +20,7 @@ import { getAssignmentRoute } from '../../data/assignmentRoute';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 
 type FilterPeriod = DeliveryPeriod;
-const DELIVERIES_PAGE_SIZE = 8;
+const DELIVERIES_PAGE_SIZE = 7;
 
 interface DeliveryTableProps {
   fullView?: boolean;
@@ -45,7 +45,7 @@ function StatusBadge({ status }: { status: TaskStatus }) {
 function AssignmentStatusBadge({ assignment }: { assignment: Assignment }) {
   const cfg = assignmentDisplayStatusConfig[getAssignmentDisplayStatus(assignment)];
   return (
-    <span className={`inline-flex max-w-full items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-medium ${cfg.badge}`}>
+    <span className={`inline-flex max-w-full items-center gap-1.5 px-2.5 py-1 rounded-full border text-sm font-medium ${cfg.badge}`}>
       <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
       <span className="min-w-0 break-words">{cfg.label}</span>
     </span>
@@ -57,7 +57,7 @@ function DocumentsAction({ assignment }: { assignment: Assignment }) {
   if (!docs.canOpen) {
     return (
       <button type="button" disabled aria-label={`Documents for ${assignment.id}: not available yet`}
-        className="flex min-h-10 max-w-full flex-col items-start rounded-lg border border-border bg-muted/20 px-2 py-1 text-xs text-muted-foreground">
+        className="flex min-h-10 max-w-full flex-col items-start rounded-lg border border-border bg-muted/20 px-2 py-1 text-sm text-muted-foreground">
         <span>Documents</span><span>Not available yet</span>
       </button>
     );
@@ -71,7 +71,7 @@ function DocumentsAction({ assignment }: { assignment: Assignment }) {
     <a href={adminHref('Documents', { assignmentId: assignment.id })}
       aria-label={`Open documents for ${assignment.truckPlate}, assignment ${assignment.id}: ${count}`}
       onClick={event => { event.stopPropagation(); followAdminLink(event, () => pushAdminNavigation('Documents', { assignmentId: assignment.id })); }}
-      className="inline-flex min-h-10 max-w-full flex-wrap items-center gap-1 rounded-lg border border-border bg-white px-2 py-1 text-xs font-medium text-foreground hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+      className="inline-flex min-h-10 max-w-full flex-wrap items-center gap-1 rounded-lg border border-border bg-white px-2 py-1 text-sm font-medium text-foreground hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
       <span>Documents</span><span className={`rounded-full px-1.5 py-0.5 tabular-nums ${color}`}>{count}</span>
       <ChevronRight aria-hidden="true" className="ml-auto h-3.5 w-3.5 shrink-0" />
     </a>
@@ -80,7 +80,7 @@ function DocumentsAction({ assignment }: { assignment: Assignment }) {
 
 function SummaryAction({ onClick }: { onClick: () => void }) {
   return <button type="button" onClick={onClick}
-    className="inline-flex min-h-9 items-center gap-1 rounded-lg border border-border bg-white px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+    className="inline-flex min-h-10 items-center gap-1 rounded-lg border border-border bg-white px-2.5 py-1.5 text-sm font-medium text-foreground hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
     View Summary <ChevronRight aria-hidden="true" className="h-3.5 w-3.5" />
   </button>;
 }
@@ -90,11 +90,11 @@ function DeliveryDateValue({ assignment, tab, timingNow, showLabel = false }: {
 }) {
   const value = deliveryDateColumn(assignment, tab);
   return <div className="min-w-0 break-words">
-    {showLabel && <p className="text-xs font-medium text-muted-foreground">{deliveryDateHeading(tab)}</p>}
-    <p className="font-medium text-foreground">{value.date}</p>
-    {value.time && <p className="text-xs text-foreground">{value.time}</p>}
-    {tab !== 'cancelled' && <DeliveryTimingBadge timing={getDeliveryTimingStatus(assignment, timingNow)} />}
-    {value.scheduled && <p className="text-xs text-muted-foreground">Scheduled: {value.scheduled}</p>}
+    {showLabel && <p className="text-sm font-medium text-muted-foreground">{deliveryDateHeading(tab)}</p>}
+    <p className="text-[15px] font-medium text-foreground">{value.date}</p>
+    {value.time && <p className="text-sm text-foreground">{value.time}</p>}
+    {tab !== 'cancelled' && <DeliveryTimingBadge timing={getDeliveryTimingStatus(assignment, timingNow)} readable />}
+    {value.scheduled && <p className="text-sm text-muted-foreground">Scheduled: {value.scheduled}</p>}
   </div>;
 }
 
@@ -114,9 +114,9 @@ function RemarksPreview({ remarks, onOpen }: { remarks: string; onOpen: () => vo
 
   return (
     <div className="flex min-w-0 max-w-full items-center gap-1">
-      <p ref={textRef} className="min-w-0 flex-1 line-clamp-1 break-all text-xs italic text-muted-foreground/80"><span className="not-italic font-medium">Remarks: </span>{remarks}</p>
+      <p ref={textRef} className="min-w-0 flex-1 line-clamp-1 break-words text-sm italic text-muted-foreground"><span className="not-italic font-medium">Remarks: </span>{remarks}</p>
       {clipped && (
-        <button type="button" onClick={(event) => { event.stopPropagation(); onOpen(); }} className="shrink-0 px-0.5 py-0.5 text-xs font-medium text-primary hover:underline">
+        <button type="button" onClick={(event) => { event.stopPropagation(); onOpen(); }} className="shrink-0 px-0.5 py-0.5 text-sm font-medium text-primary hover:underline">
           See more
         </button>
       )}
@@ -127,9 +127,9 @@ function RemarksPreview({ remarks, onOpen }: { remarks: string; onOpen: () => vo
 function TruckMetadata({ assignment, truck, query }: { assignment: Assignment; truck?: LocalTruck; query: string }) {
   const capacity = capacityKgOnly(truck?.capacity);
   return (
-    <div className="min-w-0 leading-4">
-      {(truck?.classification || capacity) && <p className="break-words text-xs text-muted-foreground">{truck?.classification}{truck?.classification && capacity && ' · '}{capacity}</p>}
-      <p className="break-all text-xs text-muted-foreground/75"><ASNWithCopy value={assignment.id} alignTextStart><Highlight text={assignment.id} query={query} /></ASNWithCopy></p>
+    <div className="min-w-0 leading-5">
+      {(truck?.classification || capacity) && <p className="break-words text-sm text-muted-foreground">{truck?.classification}{truck?.classification && capacity && ' · '}{capacity}</p>}
+      <p className="break-all text-[15px] font-semibold text-foreground"><ASNWithCopy value={assignment.id} alignTextStart><Highlight text={assignment.id} query={query} /></ASNWithCopy></p>
     </div>
   );
 }
@@ -421,37 +421,37 @@ export default function DeliveryTable({
               <div className="hidden xl:block w-full min-w-0">
                 <table className="w-full table-fixed text-sm">
                   <colgroup>
-                    <col className="w-[14%]" /><col className="w-[10%]" /><col className="w-[20%]" />
-                    <col className="w-[10%]" /><col className="w-[17%]" /><col className="w-[12%]" /><col className="w-[17%]" />
+                    <col className="w-[16%]" /><col className="w-[11%]" /><col className="w-[22%]" />
+                    <col className="w-[11%]" /><col className="w-[14%]" /><col className="w-[12%]" /><col className="w-[14%]" />
                   </colgroup>
                   <thead className="bg-muted/30">
                     <tr>
                       {['TRUCK', 'DRIVER', 'ROUTE', 'CUSTOMER', 'STATUS', deliveryDateHeading(tab), 'DOCUMENTS'].map((col) => (
-                        <th key={col} className="px-2 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider break-words">{col}</th>
+                        <th key={col} className="px-2.5 py-3 text-left text-sm font-semibold text-muted-foreground uppercase tracking-wide break-words">{col}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
                     {pageRows.map((a) => (
                       <tr key={a.id} style={newRecordHighlight(a.id, newAssignmentId)} className={"hover:bg-accent/50 transition-colors" + (q ? " bg-yellow-50/30" : "")}>
-                        <td className="px-2 py-3 min-w-0 break-words">
-                          <p className="font-semibold text-foreground"><Highlight text={a.truckPlate} query={search} /></p>
+                        <td className="px-2.5 py-4 min-w-0 break-words">
+                          <p className="text-base font-bold text-foreground"><Highlight text={a.truckPlate} query={search} /></p>
                           <TruckMetadata assignment={a} truck={truckFor(a)} query={search} />
                         </td>
-                        <td className="px-2 py-3 font-semibold text-foreground break-words"><Highlight text={a.driverName} query={search} /></td>
-                        <td className="px-2 py-3 min-w-0">
-                          <p className="font-medium break-words text-foreground"><Highlight text={getAssignmentRoute(a)} query={search} /></p>
-                          {a.pickupLocation && <p className="break-words text-xs text-muted-foreground">Pickup: {a.pickupLocation}</p>}
+                        <td className="px-2.5 py-4 text-base font-bold text-foreground break-words"><Highlight text={a.driverName} query={search} /></td>
+                        <td className="px-2.5 py-4 min-w-0">
+                          <p className="text-base font-semibold break-words text-foreground"><Highlight text={getAssignmentRoute(a)} query={search} /></p>
+                          {a.pickupLocation && <p className="break-words text-sm text-muted-foreground">Pickup: {a.pickupLocation}</p>}
                           {a.remarks && <RemarksPreview remarks={a.remarks} onOpen={() => setRemarksAssignment(a)} />}
                         </td>
-                        <td className="px-2 py-3 font-medium text-foreground break-words"><Highlight text={a.company} query={search} /></td>
-                        <td className="px-2 py-3">
+                        <td className="px-2.5 py-4 text-[15px] font-medium text-foreground break-words"><Highlight text={a.company} query={search} /></td>
+                        <td className="px-2.5 py-4">
                           <AssignmentStatusBadge assignment={a} />
                           {tab === 'cancelled' && <button type="button" onClick={() => setCancelledDetails(a)}
-                            className="mt-1 block text-xs font-medium text-slate-700 underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-500">Cancellation details</button>}
+                            className="mt-1 block text-sm font-medium text-slate-700 underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-500">Cancellation details</button>}
                         </td>
-                        <td className="px-2 py-3 min-w-0"><DeliveryDateValue assignment={a} tab={tab} timingNow={timingNow} /></td>
-                        <td className="px-2 py-3"><DocumentsAction assignment={a} /></td>
+                        <td className="px-2.5 py-4 min-w-0"><DeliveryDateValue assignment={a} tab={tab} timingNow={timingNow} /></td>
+                        <td className="px-2.5 py-4"><DocumentsAction assignment={a} /></td>
                       </tr>
                     ))}
                   </tbody>
@@ -461,22 +461,22 @@ export default function DeliveryTable({
               {/* Tablet and mobile card list */}
               <div className="xl:hidden divide-y divide-border">
                 {pageRows.map((a) => (
-                  <div key={a.id} style={newRecordHighlight(a.id, newAssignmentId)} className={`p-4 min-w-0 space-y-2 ${q ? 'bg-yellow-50/30' : ''}`}>
+                  <div key={a.id} style={newRecordHighlight(a.id, newAssignmentId)} className={`p-4 min-w-0 space-y-2.5 ${q ? 'bg-yellow-50/30' : ''}`}>
                     <div className="flex flex-wrap items-start justify-between gap-2">
-                      <span className="min-w-0 font-semibold text-foreground break-words"><Highlight text={a.truckPlate} query={search} /></span>
+                      <span className="min-w-0 text-base font-bold text-foreground break-words"><Highlight text={a.truckPlate} query={search} /></span>
                       <AssignmentStatusBadge assignment={a} />
                       {tab === 'cancelled' && <button type="button" onClick={() => setCancelledDetails(a)}
-                        className="text-xs font-medium text-slate-700 underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-500">Cancellation details</button>}
+                        className="text-sm font-medium text-slate-700 underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-500">Cancellation details</button>}
                     </div>
                     <TruckMetadata assignment={a} truck={truckFor(a)} query={search} />
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-2 min-w-0 text-sm">
-                      <p className="min-w-0 font-semibold text-foreground break-all"><Highlight text={a.driverName} query={search} /></p>
+                      <p className="min-w-0 text-base font-bold text-foreground break-words"><Highlight text={a.driverName} query={search} /></p>
                       <div className="min-w-0 text-sm">
-                        <p className="font-medium text-foreground break-all"><Highlight text={getAssignmentRoute(a)} query={search} /></p>
-                        {a.pickupLocation && <p className="break-words text-xs text-muted-foreground">Pickup: {a.pickupLocation}</p>}
+                        <p className="text-base font-semibold text-foreground break-words"><Highlight text={getAssignmentRoute(a)} query={search} /></p>
+                        {a.pickupLocation && <p className="break-words text-sm text-muted-foreground">Pickup: {a.pickupLocation}</p>}
                         {a.remarks && <RemarksPreview remarks={a.remarks} onOpen={() => setRemarksAssignment(a)} />}
                       </div>
-                      <p className="min-w-0 font-medium text-foreground break-all"><Highlight text={a.company} query={search} /></p>
+                      <p className="min-w-0 text-[15px] font-medium text-foreground break-words"><Highlight text={a.company} query={search} /></p>
                       <DeliveryDateValue assignment={a} tab={tab} timingNow={timingNow} showLabel />
                     </div>
                     <DocumentsAction assignment={a} />
@@ -495,7 +495,7 @@ export default function DeliveryTable({
           <div className="px-5 py-2.5 border-b border-border bg-muted/10 flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-green-500" />
             <span className="text-sm font-semibold text-foreground">Recent Completed Deliveries</span>
-            <span className="bg-green-100 text-green-700 text-xs rounded-full px-2 py-0.5 border border-green-200 ml-1">
+            <span className="bg-green-100 text-green-700 text-sm rounded-full px-2 py-0.5 border border-green-200 ml-1">
               {filteredDone.length} total
             </span>
           </div>
@@ -516,13 +516,13 @@ export default function DeliveryTable({
               <div className="hidden xl:block w-full min-w-0">
                 <table className="w-full table-fixed text-sm">
                   <colgroup>
-                    <col className="w-[14%]" /><col className="w-[10%]" /><col className="w-[20%]" />
-                    <col className="w-[10%]" /><col className="w-[17%]" /><col className="w-[12%]" /><col className="w-[17%]" />
+                    <col className="w-[16%]" /><col className="w-[11%]" /><col className="w-[22%]" />
+                    <col className="w-[11%]" /><col className="w-[14%]" /><col className="w-[12%]" /><col className="w-[14%]" />
                   </colgroup>
                   <thead className="bg-muted/30">
                     <tr>
                       {['TRUCK', 'DRIVER', 'ROUTE', 'CUSTOMER', 'STATUS', deliveryDateHeading('completed'), 'ACTIONS'].map((col) => (
-                        <th key={col} className="px-2 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider break-words">{col}</th>
+                        <th key={col} className="px-2.5 py-3 text-left text-sm font-semibold text-muted-foreground uppercase tracking-wide break-words">{col}</th>
                       ))}
                     </tr>
                   </thead>
@@ -531,20 +531,20 @@ export default function DeliveryTable({
                       <tr key={c.id} data-completed-assignment="" data-assignment-id={c.id} tabIndex={-1}
                         style={newRecordHighlight(c.id, highlightCompletedId ?? newAssignmentId)}
                         className={"hover:bg-accent/50 transition-colors focus:outline-none" + (highlightCompletedId === c.id ? " ring-2 ring-inset ring-primary/40" : "") + (q ? " bg-yellow-50/30" : "")}>
-                        <td className="px-2 py-3 min-w-0 break-words">
-                          <p className="font-semibold text-foreground"><Highlight text={c.truckPlate} query={search} /></p>
+                        <td className="px-2.5 py-4 min-w-0 break-words">
+                          <p className="text-base font-bold text-foreground"><Highlight text={c.truckPlate} query={search} /></p>
                           <TruckMetadata assignment={c} truck={truckFor(c)} query={search} />
                         </td>
-                        <td className="px-2 py-3 font-semibold text-foreground break-all"><Highlight text={c.driverName} query={search} /></td>
-                        <td className="px-2 py-3 min-w-0">
-                          <p className="font-medium text-foreground break-all"><Highlight text={getAssignmentRoute(c)} query={search} /></p>
-                          {c.pickupLocation && <p className="break-words text-xs text-muted-foreground">Pickup: {c.pickupLocation}</p>}
+                        <td className="px-2.5 py-4 text-base font-bold text-foreground break-words"><Highlight text={c.driverName} query={search} /></td>
+                        <td className="px-2.5 py-4 min-w-0">
+                          <p className="text-base font-semibold text-foreground break-words"><Highlight text={getAssignmentRoute(c)} query={search} /></p>
+                          {c.pickupLocation && <p className="break-words text-sm text-muted-foreground">Pickup: {c.pickupLocation}</p>}
                           {c.remarks && <RemarksPreview remarks={c.remarks} onOpen={() => setRemarksAssignment(c)} />}
                         </td>
-                        <td className="px-2 py-3 font-medium text-foreground break-all"><Highlight text={c.company} query={search} /></td>
-                        <td className="px-2 py-3"><AssignmentStatusBadge assignment={c} /></td>
-                        <td className="px-2 py-3"><DeliveryDateValue assignment={c} tab="completed" timingNow={timingNow} /></td>
-                        <td className="px-2 py-3">
+                        <td className="px-2.5 py-4 text-[15px] font-medium text-foreground break-words"><Highlight text={c.company} query={search} /></td>
+                        <td className="px-2.5 py-4"><AssignmentStatusBadge assignment={c} /></td>
+                        <td className="px-2.5 py-4"><DeliveryDateValue assignment={c} tab="completed" timingNow={timingNow} /></td>
+                        <td className="px-2.5 py-4">
                           <SummaryAction onClick={() => setSummaryId(c.id)} />
                         </td>
                       </tr>
@@ -558,20 +558,20 @@ export default function DeliveryTable({
                 {completedPage.pageItems.map((c) => (
                   <div key={c.id} data-completed-assignment="" data-assignment-id={c.id} tabIndex={-1}
                     style={newRecordHighlight(c.id, highlightCompletedId ?? newAssignmentId)}
-                    className={`p-4 min-w-0 space-y-2 focus:outline-none ${highlightCompletedId === c.id ? 'ring-2 ring-inset ring-primary/40' : ''} ${q ? 'bg-yellow-50/30' : ''}`}>
+                    className={`p-4 min-w-0 space-y-2.5 focus:outline-none ${highlightCompletedId === c.id ? 'ring-2 ring-inset ring-primary/40' : ''} ${q ? 'bg-yellow-50/30' : ''}`}>
                     <div className="flex flex-wrap items-start justify-between gap-2">
-                      <span className="min-w-0 font-semibold text-foreground break-words"><Highlight text={c.truckPlate} query={search} /></span>
+                      <span className="min-w-0 text-base font-bold text-foreground break-words"><Highlight text={c.truckPlate} query={search} /></span>
                       <AssignmentStatusBadge assignment={c} />
                     </div>
                     <TruckMetadata assignment={c} truck={truckFor(c)} query={search} />
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-2 min-w-0 text-sm">
-                      <p className="min-w-0 font-semibold text-foreground break-all"><Highlight text={c.driverName} query={search} /></p>
+                      <p className="min-w-0 text-base font-bold text-foreground break-words"><Highlight text={c.driverName} query={search} /></p>
                       <div className="min-w-0">
-                        <p className="font-medium text-foreground break-all"><Highlight text={getAssignmentRoute(c)} query={search} /></p>
-                        {c.pickupLocation && <p className="break-words text-xs text-muted-foreground">Pickup: {c.pickupLocation}</p>}
+                        <p className="text-base font-semibold text-foreground break-words"><Highlight text={getAssignmentRoute(c)} query={search} /></p>
+                        {c.pickupLocation && <p className="break-words text-sm text-muted-foreground">Pickup: {c.pickupLocation}</p>}
                         {c.remarks && <RemarksPreview remarks={c.remarks} onOpen={() => setRemarksAssignment(c)} />}
                       </div>
-                      <p className="min-w-0 font-medium text-foreground break-all"><Highlight text={c.company} query={search} /></p>
+                      <p className="min-w-0 text-[15px] font-medium text-foreground break-words"><Highlight text={c.company} query={search} /></p>
                       <DeliveryDateValue assignment={c} tab="completed" timingNow={timingNow} showLabel />
                     </div>
                     <SummaryAction onClick={() => setSummaryId(c.id)} />
@@ -583,7 +583,7 @@ export default function DeliveryTable({
           )}
         </>
       )}
-      <PaginationFooter page={selectedPage.page} totalItems={selectedCount} pageSize={DELIVERIES_PAGE_SIZE} onPageChange={selectedPage.setPage}
+      <PaginationFooter page={selectedPage.page} totalItems={selectedCount} pageSize={DELIVERIES_PAGE_SIZE} onPageChange={selectedPage.setPage} readable
         singular="delivery" plural="deliveries" className="border-t border-border bg-muted/20" />
       <Dialog open={remarksAssignment !== null} onOpenChange={(open) => { if (!open) setRemarksAssignment(null); }}>
         <DialogContent className="w-[calc(100%-2rem)] max-w-lg min-w-0 max-h-[calc(100dvh-2rem)] overflow-y-auto p-4 sm:p-6">

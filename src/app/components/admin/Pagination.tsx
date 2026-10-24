@@ -82,9 +82,10 @@ interface PaginationFooterProps {
   plural: string;
   className?: string;
   children?: ReactNode;
+  readable?: boolean;
 }
 
-export function PaginationFooter({ page, totalItems, pageSize = PAGE_SIZE, onPageChange, singular, plural, className = '', children }: PaginationFooterProps) {
+export function PaginationFooter({ page, totalItems, pageSize = PAGE_SIZE, onPageChange, singular, plural, className = '', children, readable = false }: PaginationFooterProps) {
   if (totalItems === 0) return null;
 
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
@@ -94,7 +95,7 @@ export function PaginationFooter({ page, totalItems, pageSize = PAGE_SIZE, onPag
   return (
     <div className={`grid grid-cols-1 items-center gap-1.5 px-4 py-2 print:hidden lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:gap-0 lg:py-2.5 ${className}`}>
       <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-        <p className="text-xs text-muted-foreground">
+        <p className={`${readable ? 'text-sm' : 'text-xs'} text-muted-foreground`}>
           <span className="font-semibold text-foreground">{start}–{end}</span> of{' '}
           <span className="font-semibold text-foreground">{totalItems}</span> {totalItems === 1 ? singular : plural}
         </p>
@@ -110,7 +111,7 @@ export function PaginationFooter({ page, totalItems, pageSize = PAGE_SIZE, onPag
           {pageItems(page, totalPages).map(item => typeof item === 'number' ? (
             <button key={item} type="button" onClick={() => onPageChange(item)} aria-label={`Page ${item}`}
               aria-current={item === page ? 'page' : undefined}
-              className={`h-10 min-w-10 rounded-md border px-1 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${item === page ? 'inline-flex' : 'hidden sm:inline-flex'} items-center justify-center ${
+              className={`h-10 min-w-10 rounded-md border px-1 ${readable ? 'text-sm' : 'text-xs'} font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${item === page ? 'inline-flex' : 'hidden sm:inline-flex'} items-center justify-center ${
                 item === page
                   ? 'border-primary bg-primary text-white'
                   : 'border-transparent text-foreground/70 hover:border-border hover:bg-white'
@@ -118,7 +119,7 @@ export function PaginationFooter({ page, totalItems, pageSize = PAGE_SIZE, onPag
               {item}
             </button>
           ) : (
-            <span key={item} aria-hidden="true" className="hidden w-5 text-center text-xs text-muted-foreground sm:inline">…</span>
+            <span key={item} aria-hidden="true" className={`hidden w-5 text-center text-muted-foreground sm:inline ${readable ? 'text-sm' : 'text-xs'}`}>…</span>
           ))}
           <button type="button" onClick={() => onPageChange(page + 1)} disabled={page === totalPages} aria-label="Next page"
             className="flex h-10 w-10 items-center justify-center rounded-md border border-border bg-white text-foreground/70 hover:bg-muted/50 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
