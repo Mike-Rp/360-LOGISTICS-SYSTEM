@@ -52,6 +52,17 @@ export interface StatusPhoto {
   timestamp: string;
   location: string;
   coords?: { lat: number; lng: number };
+  /** Reported GPS accuracy radius in meters, and when that reading was taken —
+   * both from the browser's geolocation API at upload confirmation. Distinct
+   * from `coords`, which is the resulting lat/lng. */
+  gpsAccuracyM?: number | null;
+  gpsObservedAt?: string | null;
+  /** 'camera' | 'gallery' | 'unknown' — a client-reported hint, never proof of origin. */
+  source?: string | null;
+  /** Camera only: when the app received the captured file. Not verified shutter time. */
+  captureObservedAt?: string | null;
+  /** Read-only, server-stamped when this row was actually committed — never set by the client. */
+  uploadedAt?: string | null;
 }
 
 export interface DelayReport {

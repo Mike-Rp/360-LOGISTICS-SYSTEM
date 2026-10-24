@@ -759,7 +759,13 @@ function PhotoSheet({ status, title, instruction, qualityCheck, existingPhoto, o
     }
     setSaving(true);
     setSaveError('');
-    const submission = withoutLocation ? { ...meta, location: '', coords: undefined } : meta;
+    const base = withoutLocation ? { ...meta, location: '', coords: undefined } : meta;
+    // The preview already reads these; they were never carried into what gets saved.
+    const submission: StatusPhoto = {
+      ...base,
+      gpsAccuracyM: withoutLocation ? null : gpsAccuracy,
+      gpsObservedAt: withoutLocation ? null : locationObservedAt,
+    };
     try {
       await onConfirm(submission, source);
     }

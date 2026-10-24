@@ -7,9 +7,16 @@ export function galleryPhotoMetadata(url: string): StatusPhoto {
   return { url, timestamp: '', location: '' };
 }
 
-/** The gallery's existing image timestamp is unknown; stamp only after Storage succeeds. */
+/** The gallery's existing image timestamp is unknown; stamp only after Storage succeeds.
+ * `gpsAccuracyM`/`gpsObservedAt` already live on `photo` (PhotoSheet merges them in before
+ * calling onConfirm) and pass through via the spread. `uploadedAt` here is only the legacy
+ * gallery display timestamp — the real, trustworthy `uploadedAt` is server-stamped on save. */
 export function savedPhotoMetadata(photo: StatusPhoto, source: 'camera' | 'gallery', url: string, uploadedAt: string): StatusPhoto {
-  return { ...photo, url, timestamp: source === 'gallery' ? uploadedAt : photo.timestamp };
+  return {
+    ...photo, url, source,
+    timestamp: source === 'gallery' ? uploadedAt : photo.timestamp,
+    captureObservedAt: source === 'camera' ? photo.timestamp || null : null,
+  };
 }
 
 /** Geolocation API accuracy is a reported radius in meters, not proof of an exact address. */

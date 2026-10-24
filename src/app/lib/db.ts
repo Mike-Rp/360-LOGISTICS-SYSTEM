@@ -356,6 +356,11 @@ const docFromRow = (r: Row): AssignmentDoc => ({
 const photoFromRow = (r: Row): StatusPhoto => ({
   url: displayUrl(r.url), timestamp: r.taken_at ?? '', location: r.location ?? '',
   ...(r.lat != null && r.lng != null ? { coords: { lat: r.lat, lng: r.lng } } : {}),
+  ...(r.gps_accuracy_m != null ? { gpsAccuracyM: r.gps_accuracy_m } : {}),
+  ...(r.gps_observed_at ? { gpsObservedAt: r.gps_observed_at } : {}),
+  ...(r.source ? { source: r.source } : {}),
+  ...(r.capture_observed_at ? { captureObservedAt: r.capture_observed_at } : {}),
+  ...(r.uploaded_at ? { uploadedAt: r.uploaded_at } : {}),
 });
 const delayFromRow = (r: Row): DelayReport => ({ type: r.type, reason: r.reason, reportedAt: r.reported_at ?? '' });
 
@@ -594,6 +599,8 @@ function flatten(d: AdminData): Flat {
       f.photos.set(key2(a.id, status), {
         assignment_id: a.id, status, url: fileRefToStore(p.url), taken_at: p.timestamp ?? '', location: p.location ?? '',
         lat: p.coords?.lat ?? null, lng: p.coords?.lng ?? null,
+        gps_accuracy_m: p.gpsAccuracyM ?? null, gps_observed_at: p.gpsObservedAt ?? null,
+        source: p.source ?? null, capture_observed_at: p.captureObservedAt ?? null,
       });
     }
     if (a.delayReports?.length) {
@@ -1217,6 +1224,8 @@ export async function driverUpdate(
       .map(([status, p]) => ({
         assignment_id: assignmentId, status, url: fileRefToStore(p.url), taken_at: p.timestamp ?? '', location: p.location ?? '',
         lat: p.coords?.lat ?? null, lng: p.coords?.lng ?? null,
+        gps_accuracy_m: p.gpsAccuracyM ?? null, gps_observed_at: p.gpsObservedAt ?? null,
+        source: p.source ?? null, capture_observed_at: p.captureObservedAt ?? null,
       }));
     if (rows.length) {
       const { error } = await supabase.from('status_photos').upsert(rows, { onConflict: 'assignment_id,status' });
