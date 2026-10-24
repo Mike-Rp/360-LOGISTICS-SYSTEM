@@ -82,6 +82,7 @@ export default function App() {
   const adminRoleRef   = useRef<AdminRole | null>(null);
   const [saveError,     setSaveError]     = useState<string | null>(null);
   const [loadError,     setLoadError]     = useState<string | null>(null);
+  const [availabilityRefreshError, setAvailabilityRefreshError] = useState(false);
   const [loginSuccess,  setLoginSuccess]  = useState<string | null>(null);
   const [loginNotice, setLoginNotice] = useState<SessionEndReason | null>(null);
   const sessionTerminationRef = useRef(false);
@@ -128,6 +129,7 @@ export default function App() {
     setArchivedTrucks([]);
     setSaveError(null);
     setLoadError(null);
+    setAvailabilityRefreshError(false);
     setLoginSuccess(null);
     setDataLoading(false);
     setSavingToDb(false);
@@ -246,6 +248,7 @@ export default function App() {
     try {
       const data = await loadAdminData();
       if (sessionEpochRef.current !== epoch) return;
+      setAvailabilityRefreshError(false);
       setDrivers(data.drivers);
       setTrucks(data.trucks);
       setAssignments(data.assignments);
@@ -262,6 +265,7 @@ export default function App() {
       // do NOT clear state on error — leave whatever is already in memory
       /* Without this the screen just rendered empty or stale with no explanation. */
       setLoadError('Could not load your data. Something went wrong, please try again.');
+      setAvailabilityRefreshError(true);
     } finally {
       if (sessionEpochRef.current === epoch) {
         setAdminLoadFinished(true);
@@ -440,6 +444,7 @@ export default function App() {
     try {
       const data = await loadAdminData();
       if (sessionEpochRef.current !== epoch) return;
+      setAvailabilityRefreshError(false);
       isPollUpdate.current = true;
       setAssignments(data.assignments);
       restoreNotifications(data.notifications);
@@ -454,6 +459,7 @@ export default function App() {
       /* The change itself succeeded; keep the immediate local update until the
          next poll can replace it with the database state. */
       if (sessionEpochRef.current === epoch && await checkAppSession()) {
+        setAvailabilityRefreshError(true);
         console.warn('[onServerChange] reload failed, the next poll will retry:', err);
       }
     } finally {
@@ -478,6 +484,7 @@ export default function App() {
         if (saveTimerRef.current || savingRef.current) return;   // an edit started while we were fetching
         /* Mark as poll update so auto-save doesn't fire */
         isPollUpdate.current = true;
+        setAvailabilityRefreshError(false);
         setLoadError(null);        // a good poll means the connection recovered
         setAssignments(data.assignments);
         restoreNotifications(data.notifications);
@@ -494,7 +501,10 @@ export default function App() {
         /* A failed poll is not shown to the user on purpose — the screen keeps the
            last good data and the next tick retries 12 s later. It is logged, though:
            silently swallowing it hid real outages during debugging. */
-        if (sessionEpochRef.current === epoch) console.warn('[poll] refresh failed, keeping last loaded data:', err);
+        if (sessionEpochRef.current === epoch) {
+          setAvailabilityRefreshError(true);
+          console.warn('[poll] refresh failed, keeping last loaded data:', err);
+        }
       }
     }, 12000);
     return () => clearInterval(id);
@@ -623,6 +633,7 @@ export default function App() {
         <AdminDashboard
           initialLoading={dataLoading && !adminLoadFinished}
           contentLoading={dataLoading}
+          availabilityError={!!loadError || availabilityRefreshError}
           drivers={drivers}          setDrivers={setDrivers}
           trucks={trucks}            setTrucks={setTrucks}
           assignments={assignments}  setAssignments={setAssignments}

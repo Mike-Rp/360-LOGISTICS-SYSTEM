@@ -53,6 +53,7 @@ const USE_NEW_DASHBOARD = true;
 interface Props {
   initialLoading: boolean;
   contentLoading: boolean;
+  availabilityError: boolean;
   drivers: LocalDriver[];
   setDrivers: React.Dispatch<React.SetStateAction<LocalDriver[]>>;
   trucks: LocalTruck[];
@@ -86,7 +87,7 @@ interface Props {
 }
 
 export default function AdminDashboard({
-  initialLoading, contentLoading,
+  initialLoading, contentLoading, availabilityError,
   drivers, setDrivers, trucks, setTrucks,
   assignments, setAssignments, completed, setCompleted,
   cancelled, setCancelled,
@@ -256,6 +257,8 @@ export default function AdminDashboard({
             completed={completed}     setCompleted={setCompleted}
             cancelled={cancelled}     setCancelled={setCancelled}
             isViewOnly={operationalReadOnly}
+            availabilityLoading={contentLoading}
+            availabilityError={availabilityError}
             onLogActivity={onLogActivity}
             onServerChange={onServerChange}
             adminEmail={adminEmail}

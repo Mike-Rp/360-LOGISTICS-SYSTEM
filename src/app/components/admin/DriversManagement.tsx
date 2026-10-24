@@ -8,9 +8,8 @@ import {
   Navigation, Timer, Camera, Search,
   Plus, ArrowLeft, ArrowRight, ChevronLeft, ChevronRight,
   Receipt, ClipboardCheck, ScrollText, FileCheck, PackageCheck,
-  Pencil, KeyRound, Eye, EyeOff,
+  Pencil, KeyRound, Eye, EyeOff, Info,
 } from 'lucide-react';
-import { RegisterDriverModal, RegisterTruckModal } from './RegisterModals';
 import { Popover, PopoverAnchor, PopoverContent } from '../ui/popover';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from '../ui/dialog';
 import TruckImage from '../TruckImage';
@@ -511,31 +510,21 @@ function StepProgress({ step, total = 2 }: { step: number; total?: number }) {
   );
 }
 
-/* Dropdown that degrades into a clickable "add one" action when empty */
-function ResourceSelect({ value, onChange, options, placeholder, emptyLabel, onAdd, hasError }: {
+/* Keep an unavailable resource in the same field position without offering registration. */
+function ResourceSelect({ value, onChange, options, placeholder, emptyLabel, disabled = false, hasError }: {
   value: string; onChange: (v: string) => void;
   options: { id: string; label: string }[];
-  placeholder: string; emptyLabel: string; onAdd: () => void; hasError?: boolean;
+  placeholder: string; emptyLabel: string; disabled?: boolean; hasError?: boolean;
 }) {
-  if (options.length === 0) {
-    return (
-      <button type="button" onClick={onAdd}
-        className={`${fieldBase} ${fieldTone(hasError)} text-left flex items-center gap-1.5 hover:bg-accent cursor-pointer`}>
-        <span className="text-muted-foreground">{emptyLabel} —</span>
-        <span className="text-[#1DBF73] font-medium inline-flex items-center gap-0.5">
-          <Plus className="w-3.5 h-3.5" /> Add {emptyLabel.includes('driver') ? 'driver' : 'truck'}
-        </span>
-      </button>
-    );
-  }
+  const unavailable = disabled || options.length === 0;
   return (
     <div className="relative">
-      <select value={value} onChange={(e) => onChange(e.target.value)}
-        className={`${fieldBase} ${fieldTone(hasError)} appearance-none pr-9 cursor-pointer`}>
-        <option value="">{placeholder}</option>
+      <select value={unavailable ? '' : value} onChange={(e) => onChange(e.target.value)} disabled={unavailable}
+        className={`${fieldBase} ${fieldTone(hasError)} appearance-none pr-9 ${unavailable ? 'bg-slate-50 text-slate-600 disabled:opacity-100 disabled:cursor-not-allowed' : 'cursor-pointer'}`}>
+        <option value="">{unavailable ? emptyLabel : placeholder}</option>
         {options.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
       </select>
-      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+      {!unavailable && <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />}
     </div>
   );
 }
@@ -1693,14 +1682,14 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose
               <FieldLabel required>Driver Name</FieldLabel>
               <ResourceSelect value={f.driverId} onChange={(v) => set('driverId', v, 'driver')}
                 options={driverOptions} placeholder="Select a driver…" emptyLabel="No drivers available"
-                onAdd={() => {}} hasError={!!errors.driver} />
+                hasError={!!errors.driver} />
               {errText('driver')}
             </div>
             <div>
               <FieldLabel required>Truck</FieldLabel>
               <ResourceSelect value={f.truckId} onChange={(v) => set('truckId', v, 'truck')}
                 options={truckOptions} placeholder="Select a truck…" emptyLabel="No trucks available"
-                onAdd={() => {}} hasError={!!errors.truck} />
+                hasError={!!errors.truck} />
               {errText('truck')}
             </div>
           </div>
@@ -1884,6 +1873,8 @@ interface Props {
   completed: CompletedTask[]; setCompleted:   React.Dispatch<React.SetStateAction<CompletedTask[]>>;
   cancelled: Assignment[];    setCancelled: React.Dispatch<React.SetStateAction<Assignment[]>>;
   isViewOnly?: boolean;
+  availabilityLoading?: boolean;
+  availabilityError?: boolean;
   onLogActivity?: (entry: AdminActivityInput) => void;
   /* Runs a database-function change (edit / cancel), then reloads — see App.tsx */
   onServerChange: (action: () => Promise<void>, onActionSuccess?: () => void) => Promise<void>;
@@ -1935,7 +1926,7 @@ function reviewQueueRequested() {
 export default function DriversManagement({
   drivers, setDrivers, trucks, setTrucks,
   assignments, setAssignments, notifications, completed, setCompleted, cancelled, setCancelled,
-  isViewOnly = false, onLogActivity, onServerChange, adminEmail,
+  isViewOnly = false, availabilityLoading = false, availabilityError = false, onLogActivity, onServerChange, adminEmail,
   openDispatchOnMount = false, onDispatchOpened, search, onSearchChange, notificationTarget, onNotificationTargetHandled,
 }: Props) {
 
@@ -2017,13 +2008,31 @@ export default function DriversManagement({
   const [taskSaving, setTaskSaving] = useState(false);
   const taskSavingRef = useRef(false);
 
-  /* Quick-add layered over the Assign Task modal — the wizard stays mounted
-     underneath, so anything already typed survives the round trip. */
-  const [quickAdd, setQuickAdd] = useState<null | 'driver' | 'truck'>(null);
-
   const assignedDriverIds = new Set(assignments.map((a) => a.driverId));
   const availableDrivers  = drivers.filter((d) => !assignedDriverIds.has(d.id));
   const availableTrucks   = trucks.filter((t)  => t.status === 'Available');
+  const driverAvailable = availableDrivers.some((d) => d.id === taskDriverId);
+  const truckAvailable = availableTrucks.some((t) => t.id === taskTruckId);
+  const resourcesMissing = availableDrivers.length === 0 || availableTrucks.length === 0;
+  const resourceNotice = availabilityLoading
+    ? { title: 'Loading availability', detail: 'Checking current drivers and trucks.' }
+    : availabilityError
+    ? { title: 'Unable to load availability', detail: 'Please try again. Availability will refresh automatically.' }
+    : availableDrivers.length === 0 && availableTrucks.length === 0
+      ? { title: 'No resources available', detail: 'There are currently no available drivers or trucks for dispatch. Contact your Operations Manager or check fleet availability.' }
+      : availableDrivers.length === 0
+        ? { title: 'No available drivers', detail: drivers.length === 0
+          ? 'No active drivers registered. Contact your Operations Manager.'
+          : drivers.every((d) => assignedDriverIds.has(d.id))
+            ? 'All active drivers are currently assigned to deliveries.'
+            : 'There are currently no available drivers for dispatch.' }
+        : availableTrucks.length === 0
+          ? { title: 'No available trucks', detail: trucks.length === 0
+            ? 'No active trucks registered. Contact your Operations Manager.'
+            : trucks.every((t) => t.status === 'Assigned')
+              ? 'All active trucks are currently assigned to deliveries.'
+              : 'There are currently no available trucks for dispatch.' }
+          : null;
 
   const resetAssignTask = () => {
     setShowAssignTask(false); setTaskStep(1); setTaskDriverId(''); setTaskTruckId('');
@@ -2047,8 +2056,8 @@ export default function DriversManagement({
   /* ── Step 1: Assignment info ── */
   const validateStep1 = () => {
     const e: Record<string, string> = {};
-    if (!taskDriverId)              e.driver         = 'Select a driver.';
-    if (!taskTruckId)               e.truck          = 'Select a truck.';
+    if (!driverAvailable || availabilityLoading || availabilityError) e.driver = 'Select an available driver.';
+    if (!truckAvailable || availabilityLoading || availabilityError) e.truck = 'Select an available truck.';
     if (!taskPickupLocation.trim()) e.pickupLocation = 'Enter a pickup location.';
     if (!taskFrom.trim()) e.from = 'Enter an origin area.';
     if (!taskTo.trim()) e.to = 'Enter a delivery location.';
@@ -2759,12 +2768,12 @@ export default function DriversManagement({
                   <div>
                     <FieldLabel required>Driver Name</FieldLabel>
                     <ResourceSelect
-                      value={taskDriverId}
+                      value={driverAvailable ? taskDriverId : ''}
                       onChange={(v) => { setTaskDriverId(v); setTaskErrors((p) => ({ ...p, driver: '' })); }}
                       options={availableDrivers.map((d) => ({ id: d.id, label: d.name }))}
                       placeholder="Select a driver…"
-                      emptyLabel="No drivers available"
-                      onAdd={() => setQuickAdd('driver')}
+                      emptyLabel={availabilityLoading ? 'Loading availability…' : availabilityError ? 'Unable to load availability' : 'No available drivers'}
+                      disabled={availabilityLoading || availabilityError}
                       hasError={!!taskErrors.driver}
                     />
                     {taskErrors.driver && <p className="text-xs text-red-500 mt-1">{taskErrors.driver}</p>}
@@ -2772,21 +2781,28 @@ export default function DriversManagement({
                   <div>
                     <FieldLabel required>Truck</FieldLabel>
                     <ResourceSelect
-                      value={taskTruckId}
+                      value={truckAvailable ? taskTruckId : ''}
                       onChange={(v) => { setTaskTruckId(v); setTaskErrors((p) => ({ ...p, truck: '' })); }}
                       options={availableTrucks.map((t) => ({ id: t.id, label: t.plateNumber }))}
                       placeholder="Select a truck…"
-                      emptyLabel="No trucks available"
-                      onAdd={() => setQuickAdd('truck')}
+                      emptyLabel={availabilityLoading ? 'Loading availability…' : availabilityError ? 'Unable to load availability' : 'No available trucks'}
+                      disabled={availabilityLoading || availabilityError}
                       hasError={!!taskErrors.truck}
                     />
                     {taskErrors.truck && <p className="text-xs text-red-500 mt-1">{taskErrors.truck}</p>}
                   </div>
                 </div>
+                {resourceNotice && <div role="status" className="flex items-start gap-2 rounded-lg border border-border bg-slate-50 px-3 py-2.5 text-sm text-slate-600">
+                  <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                  <div className="min-w-0">
+                    <p className="font-semibold text-foreground">{resourceNotice.title}</p>
+                    <p>{resourceNotice.detail}</p>
+                  </div>
+                </div>}
 
                 {/* Truck preview — only once a truck is picked */}
                 {(() => {
-                  const t = trucks.find((x) => x.id === taskTruckId);
+                  const t = truckAvailable && !availabilityLoading && !availabilityError ? trucks.find((x) => x.id === taskTruckId) : null;
                   return t ? (
                     <div className="rounded-xl border border-border bg-white p-3">
                       <TruckSummary truck={t} typeFirst />
@@ -2856,8 +2872,8 @@ export default function DriversManagement({
                   className="px-5 py-2.5 border border-border rounded-[10px] hover:bg-accent transition-colors text-sm font-medium text-foreground inline-flex items-center gap-1.5">
                   <ArrowLeft className="w-4 h-4" /> Back
                 </button>
-                <button onClick={handleNextStep}
-                  className="flex-1 px-5 py-2.5 bg-[#1DBF73] text-white rounded-[10px] hover:bg-[#19a865] transition-all shadow-sm hover:shadow active:scale-[0.99] text-sm font-semibold inline-flex items-center justify-center gap-1.5">
+                <button onClick={handleNextStep} disabled={availabilityLoading || availabilityError || resourcesMissing || !driverAvailable || !truckAvailable}
+                  className="flex-1 px-5 py-2.5 bg-[#1DBF73] text-white rounded-[10px] hover:bg-[#19a865] transition-all shadow-sm hover:shadow active:scale-[0.99] text-sm font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[#1DBF73] disabled:hover:shadow-none">
                   Next <ArrowRight className="w-4 h-4" />
                 </button>
               </div>
@@ -2953,26 +2969,6 @@ export default function DriversManagement({
             </div>
           )}
         </ModalShell>
-      )}
-
-      {/* ── Quick-add layered above the Assign Task wizard ── */}
-      {quickAdd === 'driver' && (
-        <RegisterDriverModal
-          layer
-          drivers={drivers}
-          setDrivers={setDrivers}
-          onClose={() => setQuickAdd(null)}
-          onCreated={(d) => { markLocalRecordAdded('driver', d.id); setTaskDriverId(d.id); }}
-        />
-      )}
-      {quickAdd === 'truck' && (
-        <RegisterTruckModal
-          layer
-          trucks={trucks}
-          setTrucks={setTrucks}
-          onClose={() => setQuickAdd(null)}
-          onCreated={(t) => setTaskTruckId(t.id)}
-        />
       )}
 
       {viewDetailsId && (
