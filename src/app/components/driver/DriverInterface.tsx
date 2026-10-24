@@ -18,7 +18,7 @@ import { MILESTONE_NOTIFICATIONS } from '../../lib/notificationEvents';
 import { BLOCKING_ISSUE_REASONS, hasOpenBlockingIssue } from '../../lib/issueWorkflow';
 import { newNotificationIds, notificationSoundEnabled, playNotificationSound, setNotificationSoundEnabled } from '../../lib/notificationSound';
 import { observeDriverCompletion, type DriverCompletionSnapshot } from './driverCompletion';
-import { getRequiredPhotoProgress } from './driverPhotoGuidance';
+import { completedPhotoGroup, getNextRequiredAction, getNextRequiredPhoto, getRequiredPhotoProgress } from './driverPhotoGuidance';
 import { galleryPhotoMetadata, gpsAccuracyLevel, savedPhotoMetadata } from './driverPhotoEvidence';
 import UploadedFilePreviewModal from '../admin/UploadedFilePreviewModal';
 
@@ -1424,7 +1424,9 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   const photoHighlightTimer = useRef<number | null>(null);
   const scrollHideTimer = useRef<number | null>(null);
   const [highlightPhotoKey, setHighlightPhotoKey] = useState<OperationalPhotoKey | null>(null);
-  const [autoGuideAssignmentId, setAutoGuideAssignmentId] = useState<string | null>(null);
+  const [highlightDocuments, setHighlightDocuments] = useState(false);
+  const [autoGuide, setAutoGuide] = useState<{ assignmentId: string; phase: DriverPhase; target: OperationalPhotoKey | 'documents' } | null>(null);
+  const autoScrollRef = useRef<{ scroller: HTMLElement | Window; timer: number } | null>(null);
   const [scrollTopVisible, setScrollTopVisible] = useState(false);
   const [stickyActionHeight, setStickyActionHeight] = useState(0);
   const completionSnapshot = useRef<DriverCompletionSnapshot | null>(null);
@@ -1442,30 +1444,52 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   const closeHistoryDetail = useCallback(() => setSelectedHistoryId(null), []);
   const closeDrawer = useCallback(() => setActiveDrawer(null), []);
 
-  const scrollToPhoto = useCallback((key: OperationalPhotoKey, section = false) => {
+  const scrollToRequirement = useCallback((targetKey: OperationalPhotoKey | 'documents', section = false) => {
     const content = taskScrollRef.current;
-    if (!content) return;
-    const target = content.querySelector<HTMLElement>(section
-      ? `[data-driver-photo-section="${key}"]` : `[data-driver-photo-key="${key}"]`);
-    if (!target) return;
+    if (!content) return false;
+    const target = targetKey === 'documents' ? content.querySelector<HTMLElement>('#driver-required-documents')
+      : content.querySelector<HTMLElement>(section
+        ? `[data-driver-photo-section="${targetKey}"]` : `[data-driver-photo-key="${targetKey}"]`);
+    if (!target) return false;
     const scroller = content.scrollHeight > content.clientHeight + 1 ? content : window;
     const rect = target.getBoundingClientRect();
     const visual = window.visualViewport;
     const visibleTop = Math.max(taskHeaderRef.current?.getBoundingClientRect().bottom ?? 0, visual?.offsetTop ?? 0) + 12;
     const visibleBottom = (visual ? visual.offsetTop + visual.height : window.innerHeight) - (stickyActionRef.current?.getBoundingClientRect().height ?? 0) - 12;
-    const delta = section ? rect.top - visibleTop
+    const delta = section || targetKey === 'documents' ? rect.top - visibleTop
       : rect.top < visibleTop || rect.bottom > visibleBottom
         ? (rect.top + rect.bottom) / 2 - (visibleTop + visibleBottom) / 2 : 0;
-    if (Math.abs(delta) > 8) scroller.scrollBy({ top: delta, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
-    setHighlightPhotoKey(key);
+    if (Math.abs(delta) > 8) {
+      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      scroller.scrollBy({ top: delta, behavior: reducedMotion ? 'instant' : 'smooth' });
+      if (autoScrollRef.current) window.clearTimeout(autoScrollRef.current.timer);
+      autoScrollRef.current = { scroller, timer: window.setTimeout(() => { autoScrollRef.current = null; }, reducedMotion ? 0 : 900) };
+    }
+    setHighlightPhotoKey(targetKey === 'documents' ? null : targetKey);
+    setHighlightDocuments(targetKey === 'documents');
     if (photoHighlightTimer.current) window.clearTimeout(photoHighlightTimer.current);
-    photoHighlightTimer.current = window.setTimeout(() => setHighlightPhotoKey(null), 1800);
+    photoHighlightTimer.current = window.setTimeout(() => {
+      setHighlightPhotoKey(null);
+      setHighlightDocuments(false);
+    }, 1800);
+    return true;
   }, []);
+
+  const scrollToPhoto = useCallback((key: OperationalPhotoKey, section = false) => {
+    scrollToRequirement(key, section);
+  }, [scrollToRequirement]);
 
   useEffect(() => () => {
     if (photoHighlightTimer.current) window.clearTimeout(photoHighlightTimer.current);
     if (scrollHideTimer.current) window.clearTimeout(scrollHideTimer.current);
+    if (autoScrollRef.current) window.clearTimeout(autoScrollRef.current.timer);
   }, []);
+
+  useEffect(() => {
+    setAutoGuide(null);
+    setHighlightPhotoKey(null);
+    setHighlightDocuments(false);
+  }, [driverId, data?.assignment?.id]);
 
   useEffect(() => {
     if (screen !== 'task') { setScrollTopVisible(false); return; }
@@ -1717,6 +1741,9 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
     if (!online) throw new Error(t('workflow.noConnection'));
     setUpdating(true);
     try {
+      const pickupGroupCompleted = getDriverPhase(assignment) === 'pickup'
+        && completedPhotoGroup(OPERATIONAL_PHOTOS.pickup, assignment.statusPhotos, category)
+        && !assignment.statusPhotos?.loading_before?.url;
       const url = await uploadImage(photo.url, `photos/${assignment.id}/${category}_${Date.now()}.jpg`);
       if (!sessionActiveRef.current) return;
       const stored = savedPhotoMetadata(photo, source, url, new Date().toISOString());
@@ -1730,6 +1757,9 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
       setOperationalPhotoTarget(null);
       setActionError('');
       await fetchData(true);
+      if (pickupGroupCompleted && sessionActiveRef.current) {
+        setAutoGuide({ assignmentId: assignment.id, phase: 'pickup', target: 'loading_before' });
+      }
     } catch (error) {
       if (!await onCheckSession() || !sessionActiveRef.current) throw error;
       console.error('[operational photo] save failed:', error);
@@ -1790,9 +1820,13 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
       // Let the shared slider show its short success state before changing screens.
       return () => {
         if (!sessionActiveRef.current) return;
-        if (phase === 'assigned' && fresh.assignment?.id === assignment.id
-          && getDriverPhase(fresh.assignment) === 'pickup') setAutoGuideAssignmentId(assignment.id);
         setData(fresh);
+        if (fresh.assignment?.id !== assignment.id) return;
+        const confirmedPhase = getDriverPhase(fresh.assignment);
+        if (confirmedPhase === phase) return;
+        const target = getNextRequiredAction(confirmedPhase, fresh.assignment.statusPhotos,
+          fresh.assignment.documents, REQUIRED_DOCS) as OperationalPhotoKey | 'documents' | null;
+        if (target) setAutoGuide({ assignmentId: assignment.id, phase: confirmedPhase, target });
       };
     } catch (error) {
       if (!await onCheckSession() || !sessionActiveRef.current) return false;
@@ -1925,14 +1959,72 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   const postDelivery = isDelivered || displayStatus === 'Awaiting Documents' || displayStatus === 'Under Review'
     || displayStatus === 'Needs Correction' || displayStatus === 'Completed';
 
+  // Only explicit successful actions queue guidance. Polling and refreshes never do.
   useEffect(() => {
-    if (!autoGuideAssignmentId || screen !== 'task' || a?.id !== autoGuideAssignmentId || phase !== 'pickup') return;
+    if (!autoGuide) return;
+    if (screen !== 'task' || a?.id !== autoGuide.assignmentId || phase !== autoGuide.phase) {
+      setAutoGuide(null);
+      return;
+    }
+    if (photoTarget || operationalPhotoTarget || delaySheet || issueSheet || logoutDlg
+      || selectedHistoryId || completionNotice || activeDrawer || languageNotice || statusNotice) {
+      setAutoGuide(null);
+      return;
+    }
+    const actualTarget = getNextRequiredAction(phase, a.statusPhotos, a.documents, REQUIRED_DOCS);
+    if (actualTarget !== autoGuide.target) {
+      setAutoGuide(null);
+      return;
+    }
+    // The stage-specific section is rendered in the same commit as the fresh assignment.
+    // A frame lets layout settle before measuring its visible area.
     const frame = window.requestAnimationFrame(() => {
-      scrollToPhoto('pickup_front', true);
-      setAutoGuideAssignmentId(null);
+      const section = autoGuide.target !== 'documents'
+        && (autoGuide.target === 'pickup_front' || autoGuide.target === 'pretrip_front');
+      scrollToRequirement(autoGuide.target, section);
+      setAutoGuide(null);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [autoGuideAssignmentId, screen, a?.id, phase, scrollToPhoto]);
+  }, [autoGuide, screen, a, phase, photoTarget, operationalPhotoTarget, delaySheet, issueSheet,
+    logoutDlg, selectedHistoryId, completionNotice, activeDrawer, languageNotice, statusNotice, scrollToRequirement]);
+
+  useEffect(() => {
+    if (screen !== 'task') return;
+    const stopAutomaticNavigation = () => {
+      setAutoGuide(null);
+      const current = autoScrollRef.current;
+      if (!current) return;
+      window.clearTimeout(current.timer);
+      const scroller = current.scroller;
+      scroller.scrollTo({ top: scroller instanceof Window ? scroller.scrollY : scroller.scrollTop, behavior: 'instant' });
+      autoScrollRef.current = null;
+    };
+    window.addEventListener('wheel', stopAutomaticNavigation, { passive: true });
+    window.addEventListener('touchstart', stopAutomaticNavigation, { passive: true });
+    window.addEventListener('pointerdown', stopAutomaticNavigation, { passive: true });
+    window.addEventListener('keydown', stopAutomaticNavigation);
+    return () => {
+      window.removeEventListener('wheel', stopAutomaticNavigation);
+      window.removeEventListener('touchstart', stopAutomaticNavigation);
+      window.removeEventListener('pointerdown', stopAutomaticNavigation);
+      window.removeEventListener('keydown', stopAutomaticNavigation);
+    };
+  }, [screen]);
+
+  useEffect(() => {
+    if (screen === 'task' && !photoTarget && !operationalPhotoTarget && !delaySheet
+      && !issueSheet && !logoutDlg && !selectedHistoryId && !completionNotice
+      && !activeDrawer && !languageNotice && !statusNotice) return;
+    setAutoGuide(null);
+    const current = autoScrollRef.current;
+    if (current) {
+      window.clearTimeout(current.timer);
+      const scroller = current.scroller;
+      scroller.scrollTo({ top: scroller instanceof Window ? scroller.scrollY : scroller.scrollTop, behavior: 'instant' });
+      autoScrollRef.current = null;
+    }
+  }, [screen, photoTarget, operationalPhotoTarget, delaySheet, issueSheet, logoutDlg,
+    selectedHistoryId, completionNotice, activeDrawer, languageNotice, statusNotice]);
 
   /* Normalized docs (all 6 required, merged with actual data) */
   const normalizedDocs: NormDoc[] = useMemo(() => {
@@ -2415,8 +2507,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
     .some((key) => !a.statusPhotos?.[key]?.url);
   const guideKeys = phase === 'pickup' ? OPERATIONAL_PHOTOS.pickup : requiredPhotoKeys;
   const photoProgress = getRequiredPhotoProgress(guideKeys, a?.statusPhotos);
-  const nextPhotoKey = (phase === 'pickup' && !photoProgress.nextMissing && !a?.statusPhotos?.loading_before?.url
-    ? 'loading_before' : photoProgress.nextMissing) as OperationalPhotoKey | null;
+  const nextPhotoKey = getNextRequiredPhoto(phase ?? '', a?.statusPhotos) as OperationalPhotoKey | null;
   const photoLabel = (key: OperationalPhotoKey) => key.endsWith('_front') ? t('workflow.front')
     : key.endsWith('_left') ? t('workflow.left') : key.endsWith('_right') ? t('workflow.right')
       : key.endsWith('_rear') ? t('workflow.rear') : key === 'loading_before' ? t('workflow.beforeLoading')
@@ -2677,7 +2768,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
             )}
 
             {/* ── Documents (always visible; locked until delivered) ── */}
-            <div id="driver-required-documents" className="space-y-3 scroll-mt-24">
+            <div id="driver-required-documents" className={`space-y-3 rounded-2xl outline outline-2 outline-offset-2 transition-colors duration-700 motion-reduce:transition-none ${highlightDocuments ? 'outline-green-500 bg-green-50/50' : 'outline-transparent'}`}>
               <div className="flex items-center justify-between px-1">
                 <h3 className="text-xl font-bold text-foreground">{t('task.documents')}</h3>
                 <span className="text-base text-gray-500 font-semibold">{t('doc.approvedCount', { count: approvedCt, total: REQUIRED_DOCS.length })}</span>
