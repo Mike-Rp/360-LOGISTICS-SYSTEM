@@ -36,6 +36,16 @@ export function completedPhotoGroup(
     && keys.every((key) => key === savedKey || !!before?.[key]?.url);
 }
 
+/** Navigation priority matches the existing document shortcut: corrections, then missing uploads. */
+export function getNextRequiredDocument(
+  documents: Assignment['documents'] | undefined, requiredDocumentTypes: readonly string[],
+): string | null {
+  return requiredDocumentTypes.find((type) => documents?.some((document) =>
+    document.type === type && document.uploaded && document.docStatus === 'rejected'))
+    ?? requiredDocumentTypes.find((type) => !documents?.find((document) => document.type === type)?.uploaded)
+    ?? null;
+}
+
 /** Documents become an on-page action only after delivery is persisted. */
 export function getNextRequiredAction(
   phase: string,
@@ -45,6 +55,5 @@ export function getNextRequiredAction(
 ): string | null {
   const photo = getNextRequiredPhoto(phase, photos);
   if (photo) return photo;
-  return phase === 'delivered' && requiredDocumentTypes.some((type) =>
-    !documents?.find((document) => document.type === type)?.uploaded) ? 'documents' : null;
+  return phase === 'delivered' && getNextRequiredDocument(documents, requiredDocumentTypes) ? 'documents' : null;
 }

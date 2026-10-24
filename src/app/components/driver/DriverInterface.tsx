@@ -18,7 +18,7 @@ import { MILESTONE_NOTIFICATIONS } from '../../lib/notificationEvents';
 import { BLOCKING_ISSUE_REASONS, hasOpenBlockingIssue } from '../../lib/issueWorkflow';
 import { newNotificationIds, notificationSoundEnabled, playNotificationSound, setNotificationSoundEnabled } from '../../lib/notificationSound';
 import { observeDriverCompletion, type DriverCompletionSnapshot } from './driverCompletion';
-import { completedPhotoGroup, getNextRequiredAction, getNextRequiredPhoto, getRequiredPhotoProgress } from './driverPhotoGuidance';
+import { completedPhotoGroup, getNextRequiredAction, getNextRequiredDocument, getNextRequiredPhoto, getRequiredPhotoProgress } from './driverPhotoGuidance';
 import { galleryPhotoMetadata, gpsAccuracyLevel, isCurrentPhotoLocationRequest, isPhotoLocationStale, savedPhotoMetadata } from './driverPhotoEvidence';
 import UploadedFilePreviewModal from '../admin/UploadedFilePreviewModal';
 
@@ -965,8 +965,8 @@ function ReasonSheet({ title, subtitle, reasons, variant, onSubmit, onCancel }: 
 /* ════════════════════════════════════════════════════════════
    DOCUMENT ROW (redesigned)
    ════════════════════════════════════════════════════════════ */
-function DocRow({ doc, onUpload, isDelivered, isBlurry, isFocused }: {
-  doc: NormDoc; onUpload: (type: string, file: File) => void; isDelivered: boolean; isBlurry?: boolean; isFocused?: boolean;
+function DocRow({ doc, onUpload, isDelivered, isBlurry, isFocused, isHighlighted }: {
+  doc: NormDoc; onUpload: (type: string, file: File) => void; isDelivered: boolean; isBlurry?: boolean; isFocused?: boolean; isHighlighted?: boolean;
 }) {
   const { t, document: documentText } = useDriverI18n();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -985,7 +985,7 @@ function DocRow({ doc, onUpload, isDelivered, isBlurry, isFocused }: {
   const canUpload   = isDelivered && (!doc.uploaded || isRejected);
 
   return (
-    <div ref={rowRef} tabIndex={-1} className={`rounded-2xl border p-4 space-y-3 ${isFocused ? 'ring-2 ring-green-600 ring-offset-2' : ''} ${
+    <div ref={rowRef} tabIndex={-1} data-driver-doc-type={doc.type} className={`rounded-2xl border p-4 space-y-3 transition-shadow duration-500 motion-reduce:transition-none ${isFocused || isHighlighted ? 'ring-2 ring-green-600 ring-offset-2' : ''} ${
       isApproved  ? 'bg-green-50 border-green-200' :
       isRejected  ? 'bg-red-50 border-red-200' :
       isPending   ? 'bg-cyan-50 border-cyan-200' :
@@ -1479,6 +1479,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   const scrollHideTimer = useRef<number | null>(null);
   const [highlightPhotoKey, setHighlightPhotoKey] = useState<OperationalPhotoKey | null>(null);
   const [highlightDocuments, setHighlightDocuments] = useState(false);
+  const [highlightDocumentType, setHighlightDocumentType] = useState<string | null>(null);
   const [autoGuide, setAutoGuide] = useState<{ assignmentId: string; phase: DriverPhase; target: OperationalPhotoKey | 'documents' } | null>(null);
   const autoScrollRef = useRef<{ scroller: HTMLElement | Window; timer: number } | null>(null);
   const [scrollTopVisible, setScrollTopVisible] = useState(false);
@@ -1498,10 +1499,13 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   const closeHistoryDetail = useCallback(() => setSelectedHistoryId(null), []);
   const closeDrawer = useCallback(() => setActiveDrawer(null), []);
 
-  const scrollToRequirement = useCallback((targetKey: OperationalPhotoKey | 'documents', section = false) => {
+  const scrollToRequirement = useCallback((targetKey: OperationalPhotoKey | 'documents', section = false, documentType?: string) => {
     const content = taskScrollRef.current;
     if (!content) return false;
-    const target = targetKey === 'documents' ? content.querySelector<HTMLElement>('#driver-required-documents')
+    const target = targetKey === 'documents' ? (documentType
+      ? Array.from(content.querySelectorAll<HTMLElement>('[data-driver-doc-type]'))
+        .find((row) => row.dataset.driverDocType === documentType) : null)
+      ?? content.querySelector<HTMLElement>('#driver-required-documents')
       : content.querySelector<HTMLElement>(section
         ? `[data-driver-photo-section="${targetKey}"]` : `[data-driver-photo-key="${targetKey}"]`);
     if (!target) return false;
@@ -1510,7 +1514,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
     const visual = window.visualViewport;
     const visibleTop = Math.max(taskHeaderRef.current?.getBoundingClientRect().bottom ?? 0, visual?.offsetTop ?? 0) + 12;
     const visibleBottom = (visual ? visual.offsetTop + visual.height : window.innerHeight) - (stickyActionRef.current?.getBoundingClientRect().height ?? 0) - 12;
-    const delta = section || targetKey === 'documents' ? rect.top - visibleTop
+    const delta = section || (targetKey === 'documents' && !documentType) ? rect.top - visibleTop
       : rect.top < visibleTop || rect.bottom > visibleBottom
         ? (rect.top + rect.bottom) / 2 - (visibleTop + visibleBottom) / 2 : 0;
     if (Math.abs(delta) > 8) {
@@ -1521,10 +1525,12 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
     }
     setHighlightPhotoKey(targetKey === 'documents' ? null : targetKey);
     setHighlightDocuments(targetKey === 'documents');
+    setHighlightDocumentType(targetKey === 'documents' ? documentType ?? null : null);
     if (photoHighlightTimer.current) window.clearTimeout(photoHighlightTimer.current);
     photoHighlightTimer.current = window.setTimeout(() => {
       setHighlightPhotoKey(null);
       setHighlightDocuments(false);
+      setHighlightDocumentType(null);
     }, 1800);
     return true;
   }, []);
@@ -1543,6 +1549,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
     setAutoGuide(null);
     setHighlightPhotoKey(null);
     setHighlightDocuments(false);
+    setHighlightDocumentType(null);
   }, [driverId, data?.assignment?.id]);
 
   useEffect(() => {
@@ -1574,7 +1581,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
     observer.observe(action);
     setStickyActionHeight(action.getBoundingClientRect().height);
     return () => observer.disconnect();
-  }, [screen, data?.assignment?.id, data?.assignment?.taskStatus, data?.assignment?.operationalStage]);
+  }, [screen, data?.assignment?.id, data?.assignment?.taskStatus, data?.assignment?.operationalStage, data?.assignment?.documents]);
 
   useEffect(() => {
     if (screen !== 'history' || !historyHighlightId) return;
@@ -2035,7 +2042,9 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
     const frame = window.requestAnimationFrame(() => {
       const section = autoGuide.target !== 'documents'
         && (autoGuide.target === 'pickup_front' || autoGuide.target === 'pretrip_front');
-      scrollToRequirement(autoGuide.target, section);
+      const documentType = autoGuide.target === 'documents'
+        ? getNextRequiredDocument(a.documents, REQUIRED_DOCS) ?? undefined : undefined;
+      scrollToRequirement(autoGuide.target, section, documentType);
       setAutoGuide(null);
     });
     return () => window.cancelAnimationFrame(frame);
@@ -2091,6 +2100,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
 
   const uploadedCt = normalizedDocs.filter((d) => d.uploaded).length;
   const approvedCt = normalizedDocs.filter((d) => d.docStatus === 'approved' && d.uploaded).length;
+  const nextRequiredDocType = getNextRequiredDocument(a?.documents, REQUIRED_DOCS);
 
   /* Current document review summaries are useful shortcuts, but they are not
      persisted Driver notification records and have no read state. */
@@ -2620,28 +2630,24 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
             <TaskLocationsCard assignment={a} />
 
             {isDelivered && (
-              <div className={`rounded-2xl border px-4 py-4 space-y-3 ${statusColors.Delivered.badge}`}>
-                {(a.unloadingCompletedAt || a.statusPhotos?.Delivered?.timestamp) &&
-                  <p className="text-sm font-semibold text-emerald-900">{t('workflow.deliveryDone', {
-                    time: a.unloadingCompletedAt ? manilaStamp(a.unloadingCompletedAt) : a.statusPhotos?.Delivered?.timestamp ?? '',
-                  })}</p>}
-                {displayStatus === 'Awaiting Documents' && (
-                  <p className="text-sm font-semibold leading-snug text-emerald-900">{t('task.deliveryCompletedUploadPrompt')}</p>
-                )}
-                <button type="button" onClick={() => {
-                  const target = displayStatus === 'Needs Correction'
-                    ? normalizedDocs.find((doc) => doc.uploaded && doc.docStatus === 'rejected')
-                    : normalizedDocs.find((doc) => !doc.uploaded) ?? normalizedDocs[0];
-                  setFocusedDocType(target?.type ?? null);
-                  document.getElementById('driver-required-documents')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                }} className="w-full min-h-14 rounded-xl bg-green-700 px-4 py-3 text-base font-bold text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-green-700">
-                  {t(displayStatus === 'Awaiting Documents'
-                    ? documentProgress?.uploaded ? 'home.continueUploading' : 'home.uploadDocuments'
-                    : displayStatus === 'Needs Correction'
-                      ? documentProgress?.rejected === 1 ? 'home.fixDocument' : 'home.fixDocuments'
-                      : 'home.viewDocuments')}
-                </button>
-              </div>
+              <section role="status" className="rounded-2xl border border-gray-200 bg-white px-4 py-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex min-w-0 items-start gap-2.5">
+                    <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-green-700" aria-hidden="true" />
+                    <div className="min-w-0">
+                      <h2 className="text-base font-bold leading-snug text-gray-900">{t('workflow.shipmentDelivered')}</h2>
+                      <p className="mt-0.5 text-sm leading-snug text-gray-600">
+                        {a.unloadingCompletedAt
+                          ? manilaStamp(a.unloadingCompletedAt)
+                          : t('workflow.deliveryTimeUnavailable')}
+                      </p>
+                    </div>
+                  </div>
+                  <span className="shrink-0 rounded-full border border-green-200 bg-green-50 px-2.5 py-1 text-sm font-semibold leading-none text-green-800">
+                    {statusText('Delivered')}
+                  </span>
+                </div>
+              </section>
             )}
 
             {/* The same schedule condition shown on Home and in Dispatch. */}
@@ -2836,7 +2842,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
                 </div>
               )}
               {normalizedDocs.map((doc) => (
-                <DocRow key={doc.type} doc={doc} onUpload={handleDocUpload} isDelivered={isDelivered} isBlurry={!!docBlurErrors[doc.type]} isFocused={focusedDocType === doc.type} />
+                <DocRow key={doc.type} doc={doc} onUpload={handleDocUpload} isDelivered={isDelivered} isBlurry={!!docBlurErrors[doc.type]} isFocused={focusedDocType === doc.type} isHighlighted={highlightDocumentType === doc.type} />
               ))}
             </div>
 
@@ -2887,6 +2893,25 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
                 return handleOperationalSlide();
               }}
             />
+          </div>
+        </div>
+      )}
+
+      {a && isDelivered && nextRequiredDocType && (
+        <div ref={stickyActionRef} className="fixed bottom-0 left-0 right-0 z-20 border-t border-gray-200 bg-white px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-[0_-4px_20px_rgba(0,0,0,0.10)]">
+          <div className="mx-auto max-w-2xl">
+            <button type="button" onClick={() => scrollToRequirement('documents', false, nextRequiredDocType)}
+              className="flex min-h-14 w-full items-center gap-3 rounded-xl border border-gray-200 bg-white px-3 py-2 text-left text-gray-800 transition-colors hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-green-700">
+              <FileText className="h-5 w-5 shrink-0 text-gray-600" aria-hidden="true" />
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-bold">{t('workflow.requiredDocuments')}</span>
+                <span className="block break-words text-sm text-gray-600">{t('workflow.documentNext', { document: documentText(nextRequiredDocType) })}</span>
+              </span>
+              <span className="max-w-28 shrink-0 text-right text-sm font-semibold">
+                {documentProgress?.rejected ? statusText('Needs Correction') : `${uploadedCt}/${REQUIRED_DOCS.length}`}
+              </span>
+              <ArrowDown className="h-4 w-4 shrink-0 text-gray-500" aria-hidden="true" />
+            </button>
           </div>
         </div>
       )}

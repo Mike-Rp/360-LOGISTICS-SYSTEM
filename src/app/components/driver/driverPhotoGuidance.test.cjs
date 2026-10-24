@@ -9,7 +9,7 @@ const source = ts.transpileModule(readFileSync(join(__dirname, 'driverPhotoGuida
 }).outputText;
 const moduleExports = { exports: {} };
 new Function('module', 'exports', source)(moduleExports, moduleExports.exports);
-const { completedPhotoGroup, getNextRequiredAction, getNextRequiredPhoto, getRequiredPhotoProgress } = moduleExports.exports;
+const { completedPhotoGroup, getNextRequiredAction, getNextRequiredDocument, getNextRequiredPhoto, getRequiredPhotoProgress } = moduleExports.exports;
 
 const keys = ['pickup_front', 'pickup_left', 'pickup_right', 'pickup_rear'];
 
@@ -51,7 +51,7 @@ test('group-completion guidance runs only for the final newly saved slot', () =>
   assert.equal(completedPhotoGroup(keys, firstThree, 'loading_before'), false);
 });
 
-test('documents are guided only when delivery unlocks a genuinely missing upload', () => {
+test('documents are guided when delivery unlocks a genuinely missing upload', () => {
   const required = ['Proof of Delivery', 'Dispatch Slip'];
   const oneUploaded = [{ type: 'Proof of Delivery', uploaded: true }];
   assert.equal(getNextRequiredAction('unloading', {}, oneUploaded, required), 'unloading_after');
@@ -60,4 +60,16 @@ test('documents are guided only when delivery unlocks a genuinely missing upload
   assert.equal(getNextRequiredAction('delivered', {}, [
     ...oneUploaded, { type: 'Dispatch Slip', uploaded: true },
   ], required), null);
+});
+
+test('document guidance selects a real correction before the first missing upload', () => {
+  const required = ['Proof of Delivery', 'Dispatch Slip', 'Sales Invoice'];
+  const documents = [
+    { type: 'Proof of Delivery', uploaded: true, docStatus: 'pending' },
+    { type: 'Dispatch Slip', uploaded: true, docStatus: 'rejected' },
+  ];
+  assert.equal(getNextRequiredDocument(documents, required), 'Dispatch Slip');
+  assert.equal(getNextRequiredAction('delivered', {}, documents, required), 'documents');
+  assert.equal(getNextRequiredDocument([{ ...documents[0], docStatus: 'approved' }], required), 'Dispatch Slip');
+  assert.equal(getNextRequiredDocument(required.map((type) => ({ type, uploaded: true, docStatus: 'pending' })), required), null);
 });
