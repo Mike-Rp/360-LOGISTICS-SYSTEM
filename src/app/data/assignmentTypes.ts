@@ -113,6 +113,8 @@ export interface Assignment {
   /** Read from the existing cancellation audit record for historical detail. */
   cancelledBy?: string | null;
   cancelledAt?: string | null;
+  /** Set once the driver has seen and dismissed this cancellation's notice. */
+  cancelAcknowledgedAt?: string | null;
   departedAt?: string | null;
   destinationArrivedAt?: string | null;
   unloadingStartedAt?: string | null;

@@ -395,6 +395,7 @@ function assignmentFromRow(r: Row, docs: Row[], photos: Row[], delays: Row[], is
     } } : {}),
     ...(delays.length ? { delayReports: [...delays].sort((a, b) => a.id - b.id).map(delayFromRow) } : {}),
     ...(r.driver_acknowledged_at ? { driverAcknowledgedAt: r.driver_acknowledged_at } : {}),
+    ...(r.cancel_acknowledged_at ? { cancelAcknowledgedAt: r.cancel_acknowledged_at } : {}),
     ...(r.created_at ? { createdAt: r.created_at } : {}),
   };
 }
@@ -1067,6 +1068,8 @@ export interface DriverViewData {
   driver: { id: string; name: string; phone: string; status: string; currentLocation: string };
   assignment: Assignment | null;
   completedHistory: Array<{ id: string; destination: string; destinationArea?: string | null; company: string; deliveryDate: string; completedAt: string; truckPlate: string; taskStatus: string }>;
+  /** Most recent cancelled assignment the driver hasn't dismissed yet, or null. */
+  cancelledNotice: { id: string; reason: string | null; cancelledAt: string } | null;
 }
 
 /* The driver's active job (or the latest finished one, so documents can still be uploaded)
@@ -1109,9 +1112,15 @@ export async function loadDriverData(driverId: string): Promise<DriverViewData> 
       completedAt: r.completed_at ?? '', truckPlate: r.truck_plate, taskStatus: r.task_status,
     }));
 
+  const unacknowledgedCancellation = rows.filter((r) => r.state === 'cancelled' && !r.cancel_acknowledged_at)
+    .sort((a, b) => (b.cancelled_at ?? '').localeCompare(a.cancelled_at ?? ''))[0];
+  const cancelledNotice = unacknowledgedCancellation
+    ? { id: unacknowledgedCancellation.id, reason: unacknowledgedCancellation.cancel_reason ?? null, cancelledAt: unacknowledgedCancellation.cancelled_at ?? '' }
+    : null;
+
   return {
     driver: { id: drv.data.id, name: drv.data.name, phone: drv.data.phone, status: drv.data.status, currentLocation: drv.data.current_location ?? '—' },
-    assignment, completedHistory,
+    assignment, completedHistory, cancelledNotice,
   };
 }
 
@@ -1237,6 +1246,7 @@ export async function driverUpdate(
   if (updates.taskStatus            !== undefined) cols.task_status = updates.taskStatus;
   if (updates.issueReason           !== undefined) cols.issue_reason = updates.issueReason;
   if (updates.driverAcknowledgedAt  !== undefined) cols.driver_acknowledged_at = updates.driverAcknowledgedAt;
+  if (updates.cancelAcknowledgedAt  !== undefined) cols.cancel_acknowledged_at = updates.cancelAcknowledgedAt;
   if (Object.keys(cols).length) {
     const { data, error } = await supabase.from('assignments').update(cols).eq('id', assignmentId).select('id');
     if (error) throw new Error(`assignment: ${error.message}`);

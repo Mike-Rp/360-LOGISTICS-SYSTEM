@@ -31,6 +31,7 @@ interface DriverData {
   driver: { id: string; name: string; phone: string; status: string; currentLocation: string };
   assignment: Assignment | null;
   completedHistory?: CompletedHistoryItem[];
+  cancelledNotice?: { id: string; reason: string | null; cancelledAt: string } | null;
 }
 interface NormDoc {
   type: string; uploaded: boolean; docStatus: DocStatus; rejectReason?: string; fileUrl?: string;
@@ -1164,6 +1165,44 @@ function DeliveryCompleteDialog({ item, onClose, onViewHistory }: {
   );
 }
 
+function CancellationNoticeDialog({ notice, onAcknowledge, acknowledging }: {
+  notice: { id: string; reason: string | null; cancelledAt: string };
+  onAcknowledge: () => void; acknowledging: boolean;
+}) {
+  const { t } = useDriverI18n();
+  const actionRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    document.body.style.overflow = 'hidden';
+    actionRef.current?.focus();
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      previousFocus?.focus();
+    };
+  }, []);
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/35 px-4 py-6 [padding-bottom:max(1.5rem,env(safe-area-inset-bottom))]">
+      <div role="dialog" aria-modal="true" aria-labelledby="cancellation-notice-title"
+        className="w-full max-w-md max-h-[calc(100dvh-3rem)] overflow-y-auto rounded-2xl bg-white px-5 py-6 text-center shadow-xl motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95 motion-safe:duration-200 sm:px-7">
+        <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-red-100 text-red-700">
+          <XCircle className="h-8 w-8" aria-hidden="true" />
+        </span>
+        <h2 id="cancellation-notice-title" className="mt-4 text-2xl font-bold text-foreground">{t('cancelNotice.title')}</h2>
+        <p className="mt-2 break-words text-base font-semibold text-foreground">{t('cancelNotice.assignment', { id: notice.id })}</p>
+        {notice.reason && <p className="mt-2 text-base leading-relaxed text-gray-600">{notice.reason}</p>}
+        {notice.cancelledAt && <p className="mt-3 text-sm text-gray-500">{manilaStamp(notice.cancelledAt)}</p>}
+        <button ref={actionRef} type="button" onClick={onAcknowledge} disabled={acknowledging}
+          className="mt-6 min-h-12 w-full rounded-xl bg-red-700 px-4 py-3 text-base font-bold text-white hover:bg-red-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700 disabled:opacity-60">
+          {acknowledging ? t('cancelNotice.saving') : t('cancelNotice.acknowledge')}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function DriverPageControls({ page, pages, onPage }: { page: number; pages: number; onPage: (page: number) => void }) {
   const { t } = useDriverI18n();
   if (pages <= 1) return null;
@@ -1473,6 +1512,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   const [historyPage, setHistoryPage] = useState(1);
   const [historyHighlightId, setHistoryHighlightId] = useState<string | null>(null);
   const [completionNotice, setCompletionNotice] = useState<CompletedHistoryItem | null>(null);
+  const [acknowledgingCancellation, setAcknowledgingCancellation] = useState(false);
   const [notificationPage, setNotificationPage] = useState(1);
   const [activeDrawer, setActiveDrawer] = useState<'notifications' | 'menu' | 'language' | null>(null);
   const [languageNotice, setLanguageNotice] = useState<DriverLanguage | null>(null);
@@ -1733,6 +1773,26 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
       return false;
     }
     finally { setUpdating(false); }
+  };
+
+  /* The cancelled assignment being acknowledged is never the active one tracked by
+     pushUpdate (it's in state='cancelled', excluded from data.assignment), so this
+     writes directly to its own row by id instead of going through pushUpdate. */
+  const acknowledgeCancellation = async () => {
+    const notice = data?.cancelledNotice;
+    if (!notice) return;
+    setAcknowledgingCancellation(true);
+    try {
+      await driverUpdate(driverName, notice.id, { cancelAcknowledgedAt: new Date().toISOString() });
+      if (!sessionActiveRef.current) return;
+      setData((prev) => prev ? { ...prev, cancelledNotice: null } : prev);
+      await fetchData(true);
+    } catch (err) {
+      if (!await onCheckSession() || !sessionActiveRef.current) return;
+      console.error('[driverUpdate] cancellation acknowledge error:', err);
+    } finally {
+      setAcknowledgingCancellation(false);
+    }
   };
 
   const notifyMilestone = async (assignment: Assignment, event: keyof typeof MILESTONE_NOTIFICATIONS) => {
@@ -2034,7 +2094,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
       return;
     }
     if (photoTarget || operationalPhotoTarget || delaySheet || issueSheet || logoutDlg
-      || selectedHistoryId || completionNotice || activeDrawer || languageNotice || statusNotice) {
+      || selectedHistoryId || completionNotice || data?.cancelledNotice || activeDrawer || languageNotice || statusNotice) {
       setAutoGuide(null);
       return;
     }
@@ -2055,7 +2115,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
     });
     return () => window.cancelAnimationFrame(frame);
   }, [autoGuide, screen, a, phase, photoTarget, operationalPhotoTarget, delaySheet, issueSheet,
-    logoutDlg, selectedHistoryId, completionNotice, activeDrawer, languageNotice, statusNotice, scrollToRequirement]);
+    logoutDlg, selectedHistoryId, completionNotice, data?.cancelledNotice, activeDrawer, languageNotice, statusNotice, scrollToRequirement]);
 
   useEffect(() => {
     if (screen !== 'task') return;
@@ -2082,7 +2142,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
 
   useEffect(() => {
     if (screen === 'task' && !photoTarget && !operationalPhotoTarget && !delaySheet
-      && !issueSheet && !logoutDlg && !selectedHistoryId && !completionNotice
+      && !issueSheet && !logoutDlg && !selectedHistoryId && !completionNotice && !data?.cancelledNotice
       && !activeDrawer && !languageNotice && !statusNotice) return;
     setAutoGuide(null);
     const current = autoScrollRef.current;
@@ -2093,7 +2153,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
       autoScrollRef.current = null;
     }
   }, [screen, photoTarget, operationalPhotoTarget, delaySheet, issueSheet, logoutDlg,
-    selectedHistoryId, completionNotice, activeDrawer, languageNotice, statusNotice]);
+    selectedHistoryId, completionNotice, data?.cancelledNotice, activeDrawer, languageNotice, statusNotice]);
 
   /* Normalized docs (all 6 required, merged with actual data) */
   const normalizedDocs: NormDoc[] = useMemo(() => {
@@ -2233,6 +2293,11 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
     <DeliveryCompleteDialog item={completionNotice}
       onClose={() => { setCompletionNotice(null); setScreen('dashboard'); }}
       onViewHistory={() => openCompletedHistory(completionNotice)} />
+  );
+
+  const CancellationPopup = data?.cancelledNotice && (
+    <CancellationNoticeDialog notice={data.cancelledNotice}
+      onAcknowledge={acknowledgeCancellation} acknowledging={acknowledgingCancellation} />
   );
 
   /* ── Shared logout dialog ── */
@@ -2516,6 +2581,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
         {LanguageNotice}
         {StatusNotice}
         {CompletionPopup}
+        {CancellationPopup}
       </div>
     );
   }
@@ -2545,6 +2611,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
       {LanguageNotice}
       {StatusNotice}
       {CompletionPopup}
+      {CancellationPopup}
     </div>;
   }
 
@@ -2972,6 +3039,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
       {LanguageNotice}
       {StatusNotice}
       {CompletionPopup}
+      {CancellationPopup}
     </div>
   );
 }
