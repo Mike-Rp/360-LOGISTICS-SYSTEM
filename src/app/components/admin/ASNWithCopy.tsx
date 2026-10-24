@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Check, Copy } from 'lucide-react';
 
-export default function ASNWithCopy({ value, children, noWrap = false, label, alignTextStart = false }: { value: string; children?: ReactNode; noWrap?: boolean; label?: string; alignTextStart?: boolean }) {
+export default function ASNWithCopy({ value, children, noWrap = false, label, alignTextStart = false, readableFeedback = false }: { value: string; children?: ReactNode; noWrap?: boolean; label?: string; alignTextStart?: boolean; readableFeedback?: boolean }) {
   const asn = value.trim();
   const [feedback, setFeedback] = useState<'copied' | 'error' | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -53,7 +53,7 @@ export default function ASNWithCopy({ value, children, noWrap = false, label, al
           </span>
         </span>
       </button>
-      {feedback && <span role="status" className={`pointer-events-none absolute left-0 top-full z-20 -mt-0.5 whitespace-nowrap rounded-md border border-border bg-white px-2 py-1 text-xs font-medium shadow-sm ${feedback === 'copied' ? 'text-foreground' : 'text-red-700'}`}>
+      {feedback && <span role="status" className={`pointer-events-none absolute left-0 top-full z-20 -mt-0.5 whitespace-nowrap rounded-md border border-border bg-white px-2 py-1 font-medium shadow-sm ${readableFeedback ? 'text-sm' : 'text-xs'} ${feedback === 'copied' ? 'text-foreground' : 'text-red-700'}`}>
         {feedback === 'copied' ? 'Copied!' : 'Unable to copy'}
       </span>}
     </span>

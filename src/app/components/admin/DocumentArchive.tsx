@@ -90,7 +90,7 @@ interface DocGroup {
 function AssignmentStatusBadge({ status }: { status: AssignmentDisplayStatus }) {
   const cfg = assignmentDisplayStatusConfig[status];
   return (
-    <span className={`inline-flex max-w-full items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-medium ${cfg.badge}`}>
+    <span className={`inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-sm font-medium ${cfg.badge}`}>
       <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
       <span className="min-w-0 break-words">{cfg.label}</span>
     </span>
@@ -103,8 +103,8 @@ function DocumentStatusSummary({ summary }: {
   const badge = summary.tone === 'missing' ? statusColors['Awaiting Documents'].badge : STATUS_CFG[summary.tone].badge;
   return (
     <div className="min-w-0 space-y-1">
-      <span className={`inline-flex max-w-full break-words rounded-full border px-2 py-0.5 text-xs font-medium ${badge}`}>{summary.label}</span>
-      <p className="text-xs leading-relaxed text-muted-foreground break-words">{summary.breakdown}</p>
+      <span className={`inline-flex max-w-full break-words rounded-full border px-2.5 py-1 text-sm font-medium ${badge}`}>{summary.label}</span>
+      <p className="break-words text-sm leading-5 text-muted-foreground">{summary.breakdown}</p>
     </div>
   );
 }
@@ -139,42 +139,42 @@ function GroupRow({
           ${open ? 'bg-primary/5' : 'bg-white hover:bg-muted/30'}`}
       >
         {/* Chevron + Assignment ID */}
-        <td className="px-4 py-3 whitespace-nowrap">
-          <div className="flex items-center gap-2">
+        <td className="px-4 py-5 align-middle">
+          <div className="flex min-w-0 items-center gap-2">
             <div className={`w-5 h-5 flex items-center justify-center flex-shrink-0 transition-colors ${open ? 'text-primary' : 'text-muted-foreground'}`}>
               {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
             </div>
             <div className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 bg-muted">
               <Package className="w-3.5 h-3.5 text-muted-foreground" />
             </div>
-            <span className="font-bold font-mono text-sm text-foreground">
-              <ASNWithCopy value={group.assignmentId}><Hi text={group.assignmentId} q={q} /></ASNWithCopy>
+            <span className="min-w-0 font-mono text-[15px] font-semibold text-foreground">
+              <ASNWithCopy value={group.assignmentId} readableFeedback><Hi text={group.assignmentId} q={q} /></ASNWithCopy>
             </span>
           </div>
         </td>
 
         {/* Driver */}
-        <td className="px-4 py-3 whitespace-nowrap text-sm text-foreground font-semibold">
+        <td className="break-words px-4 py-5 align-middle text-base font-bold text-foreground">
           <Hi text={group.driverName} q={q} />
         </td>
 
         {/* Truck */}
-        <td className="px-4 py-3 whitespace-nowrap">
-          <span className="font-mono text-sm font-semibold text-foreground bg-slate-100 px-2 py-0.5 rounded-md">
+        <td className="px-4 py-5 align-middle">
+          <span className="inline-block max-w-full break-words rounded-md bg-slate-100 px-2 py-1 font-mono text-[15px] font-semibold text-foreground">
             <Hi text={group.truckPlate} q={q} />
           </span>
         </td>
 
         {/* Date */}
-        <td className="px-4 py-3 whitespace-nowrap text-sm text-foreground">
+        <td className="break-words px-4 py-5 align-middle text-[15px] font-medium text-foreground">
           {group.deliveryDate || '—'}
         </td>
 
         {/* Delivery progress and document review are separate statuses. */}
-        <td className="px-4 py-3"><AssignmentStatusBadge status={group.deliveryStatus} /></td>
+        <td className="px-4 py-5 align-middle"><AssignmentStatusBadge status={group.deliveryStatus} /></td>
 
         {/* Document review summary */}
-        <td className="px-4 py-3">
+        <td className="px-4 py-5 align-middle">
           <DocumentStatusSummary summary={group.documentSummary} />
         </td>
       </tr>
@@ -186,17 +186,17 @@ function GroupRow({
             <div className="ml-10 border-l-2 border-primary/20">
 
               {/* Sub-header: DOCUMENT · STATUS · REASON/NOTES · FILE */}
-              <div className="flex items-center gap-3 px-4 py-1.5 bg-muted/40 border-b border-border/40">
-                <div className="flex-1 min-w-0 text-[12px] font-semibold text-muted-foreground uppercase tracking-wide">
+              <div className="flex items-center gap-3 border-b border-border/40 bg-muted/40 px-4 py-2">
+                <div className="min-w-0 flex-1 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
                   Document
                 </div>
-                <div className="w-24 flex-shrink-0 text-[12px] font-semibold text-muted-foreground uppercase tracking-wide">
+                <div className="w-28 flex-shrink-0 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
                   Status
                 </div>
-                <div className="w-44 flex-shrink-0 text-[12px] font-semibold text-muted-foreground uppercase tracking-wide">
+                <div className="w-44 flex-shrink-0 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
                   Remarks
                 </div>
-                <div className="w-16 flex-shrink-0 text-[12px] font-semibold text-muted-foreground uppercase tracking-wide text-right">
+                <div className="w-20 flex-shrink-0 text-right text-sm font-semibold uppercase tracking-wide text-muted-foreground">
                   File
                 </div>
               </div>
@@ -213,7 +213,7 @@ function GroupRow({
                     data-assignment-id={group.assignmentId}
                     data-doc-type={doc.type}
                     tabIndex={-1}
-                    className={`flex items-center gap-3 px-4 py-2 ${!isLast ? 'border-b border-border/30' : ''} ${
+                    className={`flex items-center gap-3 px-4 py-3 ${!isLast ? 'border-b border-border/30' : ''} ${
                       highlightDoc === `${group.assignmentId}|${doc.type}` ? 'bg-primary/10 ring-2 ring-inset ring-primary/40' :
                       doc.docStatus === 'rejected' ? 'bg-red-50/40'
                       : doc.docStatus === 'approved' ? 'bg-green-50/20'
@@ -225,14 +225,14 @@ function GroupRow({
                       <div className="w-5 h-5 bg-primary/10 rounded flex items-center justify-center flex-shrink-0">
                         <FileText className="w-3 h-3 text-primary" />
                       </div>
-                      <span className="text-sm text-foreground font-medium truncate">
+                      <span className="min-w-0 break-words text-[15px] font-medium text-foreground">
                         <Hi text={doc.type} q={q} />
                       </span>
                     </div>
 
                     {/* Status */}
-                    <div className="w-24 flex-shrink-0">
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${cfg.badge}`}>
+                    <div className="w-28 flex-shrink-0">
+                      <span className={`inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-1 text-sm font-medium ${cfg.badge}`}>
                         {cfg.icon} {cfg.label}
                       </span>
                     </div>
@@ -242,26 +242,26 @@ function GroupRow({
                       {doc.docStatus === 'rejected' && doc.rejectReason ? (
                         <div className="flex items-start gap-1">
                           <AlertCircle className="w-3 h-3 text-red-500 flex-shrink-0 mt-0.5" />
-                          <span className="text-xs text-red-600 leading-snug line-clamp-2">
+                          <span className="line-clamp-2 break-words text-sm leading-snug text-red-700">
                             {doc.rejectReason}
                           </span>
                         </div>
                       ) : (
-                        <span className="text-xs text-muted-foreground/40">—</span>
+                        <span className="text-sm text-muted-foreground">—</span>
                       )}
                     </div>
 
                     {/* File */}
-                    <div className="w-16 flex-shrink-0 text-right">
+                    <div className="w-20 flex-shrink-0 text-right">
                       {doc.fileUrl && doc.fileUrl !== '[image-data-stripped]' ? (
                         <button
                           onClick={(e) => { e.stopPropagation(); onPreview(doc.fileUrl!, doc.type, group.assignmentId, doc.uploadedAt); }}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 bg-primary/8 hover:bg-primary/15 border border-primary/20 text-primary rounded-lg text-xs font-medium transition-colors"
+                          className="inline-flex min-h-9 items-center gap-1 rounded-lg border border-primary/20 bg-primary/8 px-2.5 py-1 text-sm font-medium text-primary transition-colors hover:bg-primary/15"
                         >
                           <Eye className="w-3 h-3" /> View
                         </button>
                       ) : (
-                        <span className="text-xs text-muted-foreground/40 italic">No file</span>
+                        <span className="text-sm italic text-muted-foreground">No file</span>
                       )}
                     </div>
                   </div>
@@ -275,7 +275,7 @@ function GroupRow({
   );
 }
 
-/* ── Mobile card (replaces GroupRow's table markup below `sm`) ── */
+/* ── Compact card (replaces GroupRow's table markup below `xl`) ── */
 function GroupCard({
   group, filter, search, open, onToggle, onPreview, highlightDoc, highlightAssignment, newAssignmentId,
 }: {
@@ -295,7 +295,7 @@ function GroupCard({
   if (visibleDocs.length === 0 && group.docs.length > 0) return null;
 
   return (
-    <div className="rounded-xl border border-border bg-white overflow-hidden">
+    <div className="overflow-hidden rounded-xl border border-border bg-white">
       <div data-document-assignment="" data-assignment-id={group.assignmentId} tabIndex={-1} onClick={onToggle} style={newRecordHighlight(group.assignmentId, highlightAssignment === group.assignmentId ? highlightAssignment : newAssignmentId ?? null)} className={`flex items-start gap-3 p-4 cursor-pointer select-none transition-colors ${open ? 'bg-primary/5' : 'hover:bg-muted/30'}`}>
         <div className={`w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors ${open ? 'text-primary' : 'text-muted-foreground'}`}>
           {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
@@ -305,14 +305,16 @@ function GroupCard({
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="font-bold font-mono text-sm text-foreground"><ASNWithCopy value={group.assignmentId}><Hi text={group.assignmentId} q={q} /></ASNWithCopy></span>
+            <span className="min-w-0 font-mono text-[15px] font-semibold text-foreground"><ASNWithCopy value={group.assignmentId} readableFeedback><Hi text={group.assignmentId} q={q} /></ASNWithCopy></span>
           </div>
-          <p className="text-xs text-muted-foreground mt-0.5 break-words">
-            <span className="font-semibold text-foreground"><Hi text={group.driverName} q={q} /></span> · <Hi text={group.truckPlate} q={q} /> · {group.deliveryDate || '—'}
-          </p>
-          <div className="mt-2 space-y-2">
-            <div><p className="mb-1 text-xs text-muted-foreground">Status</p><AssignmentStatusBadge status={group.deliveryStatus} /></div>
-            <div><p className="mb-1 text-xs text-muted-foreground">Document Status</p><DocumentStatusSummary summary={group.documentSummary} /></div>
+          <p className="mt-1 break-words text-base font-bold text-foreground"><Hi text={group.driverName} q={q} /></p>
+          <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+            <span className="max-w-full break-words rounded-md bg-slate-100 px-2 py-1 font-mono text-[15px] font-semibold text-foreground"><Hi text={group.truckPlate} q={q} /></span>
+            <span className="break-words text-[15px] font-medium">{group.deliveryDate || '—'}</span>
+          </div>
+          <div className="mt-3 grid min-w-0 gap-3 sm:grid-cols-2">
+            <div><p className="mb-1 text-sm font-medium text-muted-foreground">Status</p><AssignmentStatusBadge status={group.deliveryStatus} /></div>
+            <div><p className="mb-1 text-sm font-medium text-muted-foreground">Document Status</p><DocumentStatusSummary summary={group.documentSummary} /></div>
           </div>
         </div>
       </div>
@@ -324,30 +326,32 @@ function GroupCard({
             const cfg = STATUS_CFG[doc.docStatus];
             return (
               <div key={`${group.assignmentId}-${doc.type}`} data-notification-document="" data-assignment-id={group.assignmentId} data-doc-type={doc.type} tabIndex={-1}
-                className={`flex items-center gap-2 px-4 py-2.5 ${highlightDoc === `${group.assignmentId}|${doc.type}` ? 'bg-primary/10 ring-2 ring-inset ring-primary/40' : ''}`}>
+                className={`flex items-start gap-2 px-4 py-3 ${highlightDoc === `${group.assignmentId}|${doc.type}` ? 'bg-primary/10 ring-2 ring-inset ring-primary/40' : ''}`}>
                 <div className="w-5 h-5 bg-primary/10 rounded flex items-center justify-center flex-shrink-0">
                   <FileText className="w-3 h-3 text-primary" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <span className="text-sm text-foreground font-medium truncate block"><Hi text={doc.type} q={q} /></span>
+                  <span className="block break-words text-[15px] font-medium text-foreground"><Hi text={doc.type} q={q} /></span>
                   {doc.docStatus === 'rejected' && doc.rejectReason && (
                     <div className="flex items-start gap-1 mt-0.5">
                       <AlertCircle className="w-3 h-3 text-red-500 flex-shrink-0 mt-0.5" />
-                      <span className="text-xs text-red-600 leading-snug">{doc.rejectReason}</span>
+                      <span className="break-words text-sm leading-snug text-red-700">{doc.rejectReason}</span>
                     </div>
                   )}
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span className={`inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-1 text-sm font-medium ${cfg.badge}`}>
+                      {cfg.icon} {cfg.label}
+                    </span>
+                    {doc.fileUrl && doc.fileUrl !== '[image-data-stripped]' && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onPreview(doc.fileUrl!, doc.type, group.assignmentId, doc.uploadedAt); }}
+                        className="inline-flex min-h-9 items-center gap-1 rounded-lg border border-primary/20 bg-primary/8 px-2.5 py-1 text-sm font-medium text-primary transition-colors hover:bg-primary/15"
+                      >
+                        <Eye className="h-3.5 w-3.5" /> View
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <span className={`flex-shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${cfg.badge}`}>
-                  {cfg.icon} {cfg.label}
-                </span>
-                {doc.fileUrl && doc.fileUrl !== '[image-data-stripped]' && (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); onPreview(doc.fileUrl!, doc.type, group.assignmentId, doc.uploadedAt); }}
-                    className="flex-shrink-0 inline-flex items-center gap-1 px-2.5 py-1 bg-primary/8 hover:bg-primary/15 border border-primary/20 text-primary rounded-lg text-xs font-medium transition-colors"
-                  >
-                    <Eye className="w-3 h-3" /> View
-                  </button>
-                )}
               </div>
             );
           })}
@@ -582,7 +586,7 @@ export default function DocumentArchive({ assignments, completed, cancelled = []
             }`}
           >
             {label}
-            <span className={`text-xs rounded-full px-1.5 min-w-[18px] text-center ${
+            <span className={`min-w-6 rounded-full px-1.5 text-center text-sm leading-5 ${
               displayedFilter === key ? badgeOn : badge
             }`}>
               {counts[key]}
@@ -601,10 +605,10 @@ export default function DocumentArchive({ assignments, completed, cancelled = []
       </div>
 
       {focusedId && (
-        <div role="status" className="flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 py-0.5 text-xs text-muted-foreground">
-          <span className="min-w-0">Showing <span className="font-semibold text-foreground break-all"><ASNWithCopy value={focusedId} /></span></span>
+        <div role="status" className="flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 py-0.5 text-sm text-muted-foreground">
+          <span className="min-w-0">Showing <span className="font-semibold text-foreground break-all"><ASNWithCopy value={focusedId} readableFeedback /></span></span>
           <button type="button" onClick={clearFocus}
-            className="inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-white px-2.5 text-xs font-medium text-foreground hover:bg-muted/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:min-h-8">
+            className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-white px-2.5 text-sm font-medium text-foreground hover:bg-muted/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
             <X className="h-3.5 w-3.5" aria-hidden="true" /> Clear focus
           </button>
         </div>
@@ -634,26 +638,30 @@ export default function DocumentArchive({ assignments, completed, cancelled = []
       ) : (
         <div className="bg-white rounded-2xl border border-border shadow-sm overflow-hidden">
           <div ref={pageArea}>
-          <div className="hidden sm:block overflow-x-auto">
-            <table className="w-full text-sm border-collapse">
+          <div className="hidden xl:block">
+            <table className="w-full table-fixed border-collapse text-sm">
+              <colgroup>
+                <col className="w-[24%]" /><col className="w-[15%]" /><col className="w-[14%]" />
+                <col className="w-[13%]" /><col className="w-[16%]" /><col className="w-[18%]" />
+              </colgroup>
               <thead>
                 <tr className="bg-muted/40 border-b border-border">
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">
+                  <th className="px-4 py-3 text-left text-sm font-semibold uppercase tracking-wide text-muted-foreground">
                     <div className="flex items-center gap-1.5 pl-7"><Package className="w-3.5 h-3.5" /> Assignment</div>
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">
+                  <th className="px-4 py-3 text-left text-sm font-semibold uppercase tracking-wide text-muted-foreground">
                     <div className="flex items-center gap-1.5"><User className="w-3.5 h-3.5" /> Driver</div>
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">
+                  <th className="px-4 py-3 text-left text-sm font-semibold uppercase tracking-wide text-muted-foreground">
                     <div className="flex items-center gap-1.5"><Truck className="w-3.5 h-3.5" /> Truck</div>
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">
+                  <th className="px-4 py-3 text-left text-sm font-semibold uppercase tracking-wide text-muted-foreground">
                     <div className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5" /> Date</div>
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">
+                  <th className="px-4 py-3 text-left text-sm font-semibold uppercase tracking-wide text-muted-foreground">
                     Status
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">
+                  <th className="px-4 py-3 text-left text-sm font-semibold uppercase tracking-wide text-muted-foreground">
                     Document Status
                   </th>
                 </tr>
@@ -677,8 +685,8 @@ export default function DocumentArchive({ assignments, completed, cancelled = []
             </table>
           </div>
 
-          {/* Mobile card list */}
-          <div className="sm:hidden p-3 space-y-3">
+          {/* Mobile and tablet card list */}
+          <div className="space-y-3 p-3 xl:hidden">
             {pageGroups.map((group) => (
               <GroupCard
                 key={group.assignmentId}
@@ -697,12 +705,12 @@ export default function DocumentArchive({ assignments, completed, cancelled = []
           </div>
 
           {/* Footer */}
-          <PaginationFooter page={currentPage} totalItems={visibleGroups.length} onPageChange={setPage}
+          <PaginationFooter page={currentPage} totalItems={visibleGroups.length} onPageChange={setPage} readable
             singular="assignment" plural="assignments" className="border-t border-border bg-muted/20">
             {displayedFilter !== 'all' && (
               <>
-                <span className="text-xs text-muted-foreground"><span className="capitalize">{filter}</span> filter active</span>
-                <button onClick={() => selectStatusFilter('all')} className="text-xs text-primary hover:underline font-medium">
+                <span className="text-sm text-muted-foreground"><span className="capitalize">{filter}</span> filter active</span>
+                <button onClick={() => selectStatusFilter('all')} className="text-sm font-medium text-primary hover:underline">
                   Show all
                 </button>
               </>
