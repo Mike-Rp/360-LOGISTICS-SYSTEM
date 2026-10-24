@@ -41,7 +41,7 @@ and their SQL test files passed (each test rolls itself back).
 |---|---|---|---|
 | REQ-001 Destination / delivery location | `20261017000000`–`000003` | — | Implemented |
 | REQ-002 Driver stages + photo/status gates | `20261018000000`, `000001`, `20261021000002`, `20261023000011` | `req002_driver_gates` 11/11 | In Progress (gates live; see entry) |
-| REQ-003 Cancel: reason + password + Loading cutoff | `20261021000000` | `req003_cancel_cutoff` 16/16 | Implemented |
+| REQ-003 Cancel: reason + password + Loading cutoff + driver notice | `20261021000000`, `20261018000002`, `20261025000001`, `000002` | `req003_cancel_cutoff` 16/16 | Implemented |
 | REQ-004 OPM role | `20261018000003`, `000004`, `20261019000000`, `20261023000004`, `000007`, `000010` | — | In Progress (follow-ups below) |
 | REQ-005 Exact pickup/delivery coordinates | `20261020000000`, `000001` | 20/20 | Completed |
 | REQ-006 CSR password reset via OPM link | `20261020000002`, `000003` + Edge Function | `req006` 32/32 | Backend live; live CSR reset test pending |
@@ -850,22 +850,50 @@ text field plus the existing password-confirm pattern (the
 call `cancelAssignment(id, reasonText)` with both arguments instead of just
 `id`.
 
-**Frontend impact — driver side (BLOCKED, data layer not ready yet):**
-`loadDriverData()` in `src/app/lib/db.ts` does not currently read or return
-anything about a cancellation — `DriverViewData` has no field for it. Before
-any driver-side UI for this can be built, `loadDriverData()` needs a change
-to query the driver's own assignments for the most recent row where
-`state = 'cancelled' and cancel_acknowledged_at is null`, and return it as a
-new field (e.g. `cancelledNotice: { id, reason, cancelledAt } | null`) on
-`DriverViewData`. Only after that exists can the driver screen display
-`cancel_reason` and call `driverUpdate` with `cancelAcknowledgedAt` set (now,
-client-stamped, same as the existing `driver_acknowledged_at` pattern) to
-dismiss it. Whoever does this `db.ts` change first unblocks the other.
+**Frontend impact — driver side (Implemented and verified, 2026-10-25):**
+`supabase/migrations/20261025000001_driver_cancellation_notice.sql` and
+`20261025000002_fix_cancel_ack_guard.sql` — applied and verified live.
 
-**Migration required:** Yes — applied and verified against the development
+The two still-missing pieces when this was picked back up turned out not to
+be what the note above expected:
+- **`assignments_select` RLS had already been fixed** by this very migration
+  back on 2026-10-18 (see above) — a driver could already read their own
+  cancelled row. The actual remaining gap was `assignments_update`'s `USING`
+  clause, in `init.sql`, which still required `state = 'active'` for the
+  driver branch — so a driver could never reach a cancelled row to write
+  `cancel_acknowledged_at`, even though that column was already in the
+  trigger's driver-writable allow-list. `20261025000001` widens the driver
+  branch to `state in ('active', 'cancelled')`. No column permissions change.
+- **A second, unrelated bug surfaced during live testing**: even after the
+  RLS fix, the acknowledge write still silently failed. `guard_assignment_update()`
+  (current version as of `20261023000002`) unconditionally rejected any driver
+  update where `task_status` wasn't one of `('Assigned', 'Picked Up',
+  'In Transit', 'Delivered', 'Failed / Issue')` — with no "is it actually
+  changing" guard, unlike every other check in that function. A cancelled
+  row's `task_status` is `'Cancelled'`, which isn't in that list, so
+  acknowledging (which never touches `task_status`) tripped the exception
+  every time. `20261025000002` adds the missing `is distinct from old.task_status`
+  guard to that one check, matching the pattern already used elsewhere in the
+  same function. Behavior is otherwise identical — a driver still can never
+  set `task_status` outside the allowed list.
+
+`loadDriverData()` now derives `cancelledNotice: { id, reason, cancelledAt } | null`
+from the assignment rows it already fetches (no new query) — the most recent
+`state === 'cancelled' && !cancel_acknowledged_at`. `driverUpdate()` maps
+`cancelAcknowledgedAt` to the column. The driver UI
+(`src/app/components/driver/DriverInterface.tsx`) shows a dismissible
+`CancellationNoticeDialog` (styled like the existing delivery-complete
+dialog) on all three driver screens whenever `cancelledNotice` is present;
+pressing "Got it" writes `cancel_acknowledged_at` to that specific row (not
+necessarily the driver's active assignment) and the notice does not return.
+Verified end-to-end live: cancelled a test assignment as admin, confirmed the
+notice appeared in the driver app with the correct reason/timestamp, dismissed
+it, and confirmed `cancel_acknowledged_at` was persisted in the database.
+
+**Migration required:** Yes — both applied and verified against the shared
 project.
 
-**Approval:** Approved — local development (2026-10-18).
+**Approval:** Approved — local development (2026-10-18, driver-side completed 2026-10-25).
 
 ---
 
