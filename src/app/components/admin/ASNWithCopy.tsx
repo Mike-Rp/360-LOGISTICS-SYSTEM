@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Check, Copy } from 'lucide-react';
 
-export default function ASNWithCopy({ value, children, noWrap = false, label, alignTextStart = false, readableFeedback = false }: { value: string; children?: ReactNode; noWrap?: boolean; label?: string; alignTextStart?: boolean; readableFeedback?: boolean }) {
+export default function ASNWithCopy({ value, children, noWrap = false, label, alignTextStart = false, readableFeedback = false, copyDescription = 'assignment number' }: { value: string; children?: ReactNode; noWrap?: boolean; label?: string; alignTextStart?: boolean; readableFeedback?: boolean; copyDescription?: string }) {
   const asn = value.trim();
   const [feedback, setFeedback] = useState<'copied' | 'error' | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -24,7 +24,7 @@ export default function ASNWithCopy({ value, children, noWrap = false, label, al
 
   return (
     <span className={`relative inline-flex min-w-0 max-w-full align-middle ${startOffset}`}>
-      <button type="button" aria-label={`Copy assignment number ${asn}`}
+      <button type="button" aria-label={`Copy ${copyDescription} ${asn}`}
         onKeyDown={event => event.stopPropagation()}
         onClick={async event => {
           event.stopPropagation();
@@ -42,7 +42,7 @@ export default function ASNWithCopy({ value, children, noWrap = false, label, al
             timer.current = setTimeout(() => setFeedback(null), 1800);
           }
         }}
-        className={`asn-copy-target inline-flex min-h-10 min-w-0 max-w-full cursor-pointer flex-wrap items-center gap-x-1 gap-y-0 rounded-lg text-foreground transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary motion-reduce:transition-none ${label ? 'px-3 py-1.5' : 'px-2 py-1'}`}>
+        className={`asn-copy-target inline-flex min-h-10 min-w-0 max-w-full cursor-pointer items-center gap-x-1 gap-y-0 rounded-lg text-foreground transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary motion-reduce:transition-none ${noWrap ? 'flex-nowrap' : 'flex-wrap'} ${label ? 'px-3 py-1.5' : 'px-2 py-1'}`}>
         {label && <span className="shrink-0 whitespace-nowrap font-medium text-slate-600">{label}</span>}
         <span className="inline-flex min-w-0 items-center gap-1">
           <span className={`asn-copy-value ${noWrap ? 'whitespace-nowrap' : 'min-w-0 break-all whitespace-normal'}`}>{children ?? asn}</span>

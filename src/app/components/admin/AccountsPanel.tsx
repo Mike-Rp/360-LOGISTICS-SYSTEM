@@ -13,6 +13,7 @@ import { archiveDriver, archiveTruck, resetDriverPin, AssignmentActionError } fr
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
 import { sortNewestFirst, markLocalRecordAdded, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
 import { capacityKgOnly } from '../../data/truckTypes';
+import ASNWithCopy from './ASNWithCopy';
 
 /* Plain-language text for the errors the archive / PIN database functions can return */
 const accountActionError = (err: unknown): string => {
@@ -42,10 +43,10 @@ function StatusTabs({ value, onChange, activeCount, archivedCount }: {
   activeCount: number; archivedCount: number;
 }) {
   return (
-    <div className="inline-flex items-center bg-muted/40 border border-border rounded-lg p-0.5 gap-0.5">
+    <div className="inline-flex max-w-full flex-wrap items-center gap-0.5 rounded-lg border border-border bg-muted/40 p-0.5">
       {(['active', 'archived'] as const).map((v) => (
         <button key={v} onClick={() => onChange(v)}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+          className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-all ${
             value === v ? 'bg-white shadow-sm text-foreground border border-border' : 'text-muted-foreground hover:text-foreground'}`}>
           {v === 'active' ? 'Active' : 'Archived'}
           <span className="tabular-nums text-muted-foreground">{v === 'active' ? activeCount : archivedCount}</span>
@@ -74,13 +75,30 @@ function AvailabilityFilters({ value, onChange, allCount, availableCount, onDeli
       ] as const).map(([filter, text, count]) => (
         <button key={filter} type="button" aria-pressed={value === filter}
           onClick={() => onChange(filter)}
-          className={`inline-flex min-h-10 items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-medium shadow-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${value === filter ? 'border-primary bg-primary text-white' : 'border-border bg-white text-foreground hover:bg-muted/50'}`}>
+          className={`inline-flex min-h-10 items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-sm font-medium shadow-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${value === filter ? 'border-primary bg-primary text-white' : 'border-border bg-white text-foreground hover:bg-muted/50'}`}>
           {filter !== 'all' && <span aria-hidden="true" className={`h-2.5 w-2.5 shrink-0 rounded-full ${filter === 'available' ? 'bg-green-500' : 'bg-blue-500'} ${value === filter ? 'ring-2 ring-white' : ''}`} />}
           {text} <span className="ml-1 tabular-nums">{count}</span>
         </button>
       ))}
     </div>
   );
+}
+
+function IdentifierCopy({ value, description, className = '' }: { value: string; description: string; className?: string }) {
+  return <span className={`inline-flex max-w-full shrink-0 whitespace-nowrap ${className}`}>
+    <ASNWithCopy value={value} copyDescription={description} alignTextStart readableFeedback noWrap>{value}</ASNWithCopy>
+  </span>;
+}
+
+function PhoneContact({ driver }: { driver: LocalDriver }) {
+  if (!driver.phone || driver.phone === '—') return <span className="text-sm italic text-muted-foreground">No number</span>;
+  return <div className="flex max-w-full flex-nowrap items-center gap-x-1 whitespace-nowrap">
+    <IdentifierCopy value={driver.phone} description="driver phone number" className="text-[15px] font-medium" />
+    <a href={`tel:${driver.phone}`} aria-label={`Call ${driver.name}`} title={`Call ${driver.name}`}
+      className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-primary hover:bg-muted/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+      <Phone className="h-4 w-4" aria-hidden="true" />
+    </a>
+  </div>;
 }
 
 /* ── Helpers ── */
@@ -92,7 +110,7 @@ const isAvailable = (status: string) => status !== 'Assigned';
 /* ── PIN Cell — hold eye to reveal, auto-hides on release/mouse-leave ── */
 function PinCell({ pin }: { pin?: string }) {
   const [visible, setVisible] = useState(false);
-  if (!pin) return <span className="text-xs text-muted-foreground italic">No PIN</span>;
+  if (!pin) return <span className="text-sm italic text-muted-foreground">No PIN</span>;
   return (
     <div className="flex items-center gap-2">
       <span
@@ -102,13 +120,15 @@ function PinCell({ pin }: { pin?: string }) {
         {visible ? pin : '••••'}
       </span>
       <button
+        type="button"
         onMouseDown={() => setVisible(true)}
         onMouseUp={() => setVisible(false)}
         onMouseLeave={() => setVisible(false)}
         onTouchStart={() => setVisible(true)}
         onTouchEnd={() => setVisible(false)}
-        className="p-1 rounded text-muted-foreground hover:text-foreground transition-colors select-none cursor-pointer"
+        className="inline-flex h-10 w-10 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground select-none cursor-pointer"
         title="Hold to reveal PIN"
+        aria-label="Hold to reveal PIN"
       >
         {visible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
       </button>
@@ -194,8 +214,8 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
     archivedTrucksPage.setPage(1);
   };
   const driverTableLayout = !canManageFleetAccounts
-    ? { gridTemplateColumns: 'minmax(160px, 1.7fr) minmax(135px, 1.4fr) minmax(120px, 1fr) minmax(130px, 1fr)', minWidth: '600px' }
-    : { gridTemplateColumns: 'minmax(160px, 2fr) minmax(130px, 1.5fr) 120px 115px 190px', minWidth: '810px' };
+    ? { gridTemplateColumns: 'minmax(160px, 1.5fr) minmax(205px, 1.6fr) minmax(120px, 1fr) minmax(130px, 1fr)', minWidth: '700px' }
+    : { gridTemplateColumns: 'minmax(160px, 1.6fr) minmax(205px, 1.6fr) 120px 115px 190px', minWidth: '870px' };
 
   /* Success message after an archive / PIN change — hides itself after 4 s */
   const [toast, setToast] = useState<string | null>(null);
@@ -284,7 +304,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
               >
                 {t === 'Drivers' ? <Users className="w-4 h-4" /> : <Truck className="w-4 h-4" />}
                 {t}
-                <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold ${
+                <span className={`rounded-full px-1.5 py-0.5 text-sm font-semibold ${
                   tab === t ? 'bg-white/20 text-primary-foreground' : 'bg-muted text-muted-foreground'
                 }`}>
                   {t === 'Drivers' ? drivers.length : trucks.length}
@@ -331,17 +351,20 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                         <Users className="w-4 h-4 text-muted-foreground" />
                       </div>
                       <div className="min-w-0">
-                        <p className="text-sm font-semibold text-foreground break-words">{d.name}</p>
-                        <p className="text-xs text-muted-foreground break-words">{d.id} · {d.phone}</p>
+                        <p className="break-words text-base font-bold text-foreground">{d.name}</p>
+                        <div className="flex min-w-0 flex-wrap items-center gap-x-2 text-sm">
+                          <span className="whitespace-nowrap font-medium text-muted-foreground">{d.id}</span>
+                          {d.phone && d.phone !== '—' ? <PhoneContact driver={d} /> : <span className="text-muted-foreground">—</span>}
+                        </div>
                       </div>
                     </div>
-                    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/50 border border-border rounded-full px-2.5 py-1">
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/50 px-2.5 py-1 text-sm text-muted-foreground">
                       <Archive className="w-3 h-3" /> Archived {fmtArchived(d.archivedAt)}
                     </span>
                   </div>
                 ))}
                 </div>
-                <PaginationFooter page={archivedDriversPage.page} totalItems={visibleArchivedDrivers.length}
+                <PaginationFooter page={archivedDriversPage.page} totalItems={visibleArchivedDrivers.length} readable
                   onPageChange={archivedDriversPage.setPage} singular="driver" plural="drivers" className="bg-muted/20" />
               </div>
             )
@@ -365,10 +388,10 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
           ) : (
             <div className="bg-white rounded-2xl border border-border shadow-sm overflow-hidden">
               <div ref={activeDriversArea}>
-              {/* Desktop/tablet table */}
-              <div className="hidden sm:block overflow-x-auto">
+              {/* Wide-screen table */}
+              <div className="hidden xl:block overflow-x-auto">
               {/* Table head */}
-              <div style={driverTableLayout} className="grid gap-3 px-5 py-3 bg-muted/30 border-b border-border text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              <div style={driverTableLayout} className="grid gap-3 border-b border-border bg-muted/30 px-5 py-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
                 <span>Driver</span>
                 <span className="flex items-center gap-1"><Phone className="w-3.5 h-3.5" /> Contact</span>
                 <span>Availability</span>
@@ -384,34 +407,25 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                   return (
                     <div key={d.id}
                       style={{ ...driverTableLayout, ...newRecordHighlight(d.id, newDriverId) }}
-                      className="grid gap-3 items-center px-5 py-4 hover:bg-muted/10 transition-colors">
+                      className="grid gap-3 items-center px-5 py-3.5 hover:bg-muted/10 transition-colors">
                       {/* Name */}
                       <div className="flex items-center gap-3 min-w-0">
                         <div className="w-9 h-9 bg-[#0d9488]/15 rounded-full flex items-center justify-center flex-shrink-0 border border-[#0d9488]/20">
                           <Users className="w-4 h-4 text-[#0d9488]" />
                         </div>
                         <div className="min-w-0">
-                          <p className="text-sm font-semibold text-foreground truncate">{d.name}</p>
-                          <p className="text-xs text-muted-foreground">{d.id}</p>
+                          <p className="break-words text-base font-bold text-foreground">{d.name}</p>
+                          <p className="mt-0.5 whitespace-nowrap text-sm font-medium text-muted-foreground">{d.id}</p>
                         </div>
                       </div>
 
                       {/* Contact / Phone */}
                       <div className="min-w-0">
-                        {d.phone && d.phone !== '—' ? (
-                          <a href={`tel:${d.phone}`}
-                            className="inline-flex items-center gap-2 text-sm text-primary hover:text-primary/80 hover:underline transition-colors font-medium truncate"
-                            title={`Call ${d.name}`}>
-                            <Phone className="w-4 h-4 flex-shrink-0" />
-                            <span className="truncate">{d.phone}</span>
-                          </a>
-                        ) : (
-                          <span className="text-xs text-muted-foreground italic">No number</span>
-                        )}
+                        <PhoneContact driver={d} />
                       </div>
 
                       {/* Available / On Delivery badge */}
-                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-medium w-fit ${
+                      <span className={`inline-flex w-fit items-center rounded-full border px-2.5 py-1 text-sm font-medium ${
                         avail
                           ? availabilityConfig.available.badge
                           : availabilityConfig.onDelivery.badge
@@ -429,14 +443,14 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                           <button
                             onClick={() => setPinTarget({ id: d.id, name: d.name })}
                             title="Regenerate PIN"
-                            className="flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors whitespace-nowrap"
+                            className="flex min-h-10 items-center gap-1.5 whitespace-nowrap rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                           >
                             <RefreshCw className="w-3.5 h-3.5" /> New PIN
                           </button>
                           <button
                             onClick={() => setDeleteTarget({ id: d.id, name: d.name })}
                             title="Move driver to archive"
-                            className="flex items-center gap-1.5 px-3 py-1.5 border border-red-200 rounded-lg text-xs text-red-500 hover:bg-red-50 hover:text-red-600 hover:border-red-300 transition-colors whitespace-nowrap"
+                            className="flex min-h-10 items-center gap-1.5 whitespace-nowrap rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 transition-colors hover:border-red-300 hover:bg-red-50"
                           >
                             <Archive className="w-3.5 h-3.5" /> Archive
                           </button>
@@ -448,21 +462,21 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
               </div>
               </div>{/* end overflow-x-auto */}
 
-              {/* Mobile card list */}
-              <div className="sm:hidden divide-y divide-border">
+              {/* Mobile and tablet card list */}
+              <div className="divide-y divide-border xl:hidden">
                 {activeDriversPage.pageItems.map((d) => {
                   const avail = isAvailable(d.status);
                   return (
-                    <div key={d.id} style={newRecordHighlight(d.id, newDriverId)} className="p-3.5">
-                      <div className="flex items-center gap-3">
+                    <div key={d.id} style={newRecordHighlight(d.id, newDriverId)} className="p-4">
+                      <div className="flex flex-wrap items-start gap-3">
                         <div className="w-9 h-9 bg-[#0d9488]/15 rounded-full flex items-center justify-center flex-shrink-0 border border-[#0d9488]/20">
                           <Users className="w-4 h-4 text-[#0d9488]" />
                         </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-semibold text-foreground truncate">{d.name}</p>
-                          <p className="text-xs text-muted-foreground">{d.id}</p>
+                        <div className="min-w-[140px] flex-1">
+                          <p className="break-words text-base font-bold text-foreground">{d.name}</p>
+                          <p className="mt-0.5 whitespace-nowrap text-sm font-medium text-muted-foreground">{d.id}</p>
                         </div>
-                        <span className={`flex-shrink-0 inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-medium ${
+                        <span className={`inline-flex max-w-full items-center rounded-full border px-2.5 py-1 text-sm font-medium ${
                           avail
                             ? availabilityConfig.available.badge
                             : availabilityConfig.onDelivery.badge
@@ -472,21 +486,13 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                         </span>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-3 mt-2.5 pt-2.5 border-t border-border/60 text-xs">
+                      <div className="mt-3 grid grid-cols-1 gap-3 border-t border-border/60 pt-3 text-sm sm:grid-cols-2">
                         <div>
-                          <p className="text-muted-foreground mb-1">Contact</p>
-                          {d.phone && d.phone !== '—' ? (
-                            <a href={`tel:${d.phone}`}
-                              className="inline-flex items-center gap-1.5 text-primary font-medium truncate">
-                              <Phone className="w-3 h-3 flex-shrink-0" />
-                              <span className="truncate">{d.phone}</span>
-                            </a>
-                          ) : (
-                            <span className="text-muted-foreground italic">No number</span>
-                          )}
+                          <p className="mb-1 font-medium text-muted-foreground">Contact</p>
+                          <PhoneContact driver={d} />
                         </div>
                         <div>
-                          <p className="text-muted-foreground mb-1">{canManageFleetAccounts ? 'PIN' : 'Current Truck'}</p>
+                          <p className="mb-1 font-medium text-muted-foreground">{canManageFleetAccounts ? 'PIN' : 'Current Truck'}</p>
                           {canManageFleetAccounts ? <PinCell pin={d.pin} />
                             : <span className="text-foreground font-medium break-words">{currentTruckFor(d.id)}</span>}
                         </div>
@@ -496,13 +502,13 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                         <div className="flex gap-2 mt-2.5">
                           <button
                             onClick={() => setPinTarget({ id: d.id, name: d.name })}
-                            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 border border-border rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                            className="flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                           >
                             <RefreshCw className="w-3.5 h-3.5" /> New PIN
                           </button>
                           <button
                             onClick={() => setDeleteTarget({ id: d.id, name: d.name })}
-                            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 border border-red-200 rounded-lg text-xs text-red-500 hover:bg-red-50 hover:text-red-600 hover:border-red-300 transition-colors"
+                            className="flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:border-red-300 hover:bg-red-50"
                           >
                             <Archive className="w-3.5 h-3.5" /> Archive
                           </button>
@@ -513,14 +519,14 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                 })}
               </div>
               </div>
-              <PaginationFooter page={activeDriversPage.page} totalItems={visibleDrivers.length}
+              <PaginationFooter page={activeDriversPage.page} totalItems={visibleDrivers.length} readable
                 onPageChange={activeDriversPage.setPage} singular="driver" plural="drivers"
                 className="border-t border-border bg-muted/20" />
             </div>
           ))}
 
           {driverView === 'active' && (
-          <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+          <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
             <Shield className="w-3.5 h-3.5" />
             Status is <strong className="text-blue-600">On Delivery</strong> when the driver has an active task.{canManageFleetAccounts && ' Hold the eye icon to reveal a PIN.'}
           </p>
@@ -574,17 +580,20 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                         <TruckImage zoom className="w-full h-full" classification={t.classification} iconClassName="w-4 h-4 text-muted-foreground" />
                       </div>
                       <div className="min-w-0">
-                        <p className="font-mono font-semibold text-foreground tracking-wider break-words">{t.plateNumber}</p>
-                        <p className="text-xs text-muted-foreground break-words">{t.classification || 'Type not set'} · {t.id}</p>
+                        <IdentifierCopy value={t.plateNumber} description="truck plate number" className="font-mono text-base font-bold tracking-wide" />
+                        <div className="flex min-w-0 flex-wrap items-center gap-x-2 text-sm">
+                          <span className="break-words text-[15px] font-medium text-muted-foreground">{t.classification || 'Type not set'}</span>
+                          <span className="whitespace-nowrap font-medium text-muted-foreground">{t.id}</span>
+                        </div>
                       </div>
                     </div>
-                    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/50 border border-border rounded-full px-2.5 py-1">
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/50 px-2.5 py-1 text-sm text-muted-foreground">
                       <Archive className="w-3 h-3" /> Archived {fmtArchived(t.archivedAt)}
                     </span>
                   </div>
                 ))}
                 </div>
-                <PaginationFooter page={archivedTrucksPage.page} totalItems={visibleArchivedTrucks.length}
+                <PaginationFooter page={archivedTrucksPage.page} totalItems={visibleArchivedTrucks.length} readable
                   onPageChange={archivedTrucksPage.setPage} singular="truck" plural="trucks" className="bg-muted/20" />
               </div>
             )
@@ -607,9 +616,9 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
           ) : (
             <div className="bg-white rounded-2xl border border-border shadow-sm overflow-hidden">
               <div ref={activeTrucksArea}>
-              {/* Desktop/tablet table */}
-              <div className="hidden sm:block overflow-x-auto">
-              <div className={`grid ${!canManageFleetAccounts ? 'grid-cols-[minmax(140px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px] min-w-[560px]' : 'grid-cols-[minmax(140px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px_auto] min-w-[660px]'} gap-4 px-5 py-3 bg-muted/30 border-b border-border text-xs font-semibold text-muted-foreground uppercase tracking-wide`}>
+              {/* Wide-screen table */}
+              <div className="hidden overflow-x-auto xl:block">
+              <div className={`grid ${!canManageFleetAccounts ? 'grid-cols-[minmax(180px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px] min-w-[640px]' : 'grid-cols-[minmax(180px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px_auto] min-w-[720px]'} gap-4 border-b border-border bg-muted/30 px-5 py-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground`}>
                 <span>Plate Number</span>
                 <span className="flex items-center gap-1"><Package className="w-3.5 h-3.5" /> Classification</span>
                 <span className="flex items-center gap-1"><Weight className="w-3.5 h-3.5" /> Payload Capacity</span>
@@ -619,37 +628,37 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
               <div className="divide-y divide-border">
                 {activeTrucksPage.pageItems.map((t) => (
                   <div key={t.id}
-                    className={`grid ${!canManageFleetAccounts ? 'grid-cols-[minmax(140px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px] min-w-[560px]' : 'grid-cols-[minmax(140px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px_auto] min-w-[660px]'} gap-4 items-center px-5 py-4 hover:bg-muted/10 transition-colors`}>
+                    className={`grid ${!canManageFleetAccounts ? 'grid-cols-[minmax(180px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px] min-w-[640px]' : 'grid-cols-[minmax(180px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px_auto] min-w-[720px]'} gap-4 items-center px-5 py-3.5 hover:bg-muted/10 transition-colors`}>
                     {/* Plate */}
-                    <div className="flex items-center gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
                       <div className="w-9 h-9 bg-[#0d9488]/15 rounded-full flex items-center justify-center flex-shrink-0 border border-[#0d9488]/20 overflow-hidden">
                         <TruckImage zoom className="w-full h-full" classification={t.classification} iconClassName="w-4 h-4 text-[#0d9488]" />
                       </div>
-                      <div>
-                        <p className="font-mono font-semibold text-foreground tracking-wider">{t.plateNumber}</p>
-                        <p className="text-xs text-muted-foreground">{t.id}</p>
+                      <div className="min-w-0">
+                        <div><IdentifierCopy value={t.plateNumber} description="truck plate number" className="font-mono text-base font-bold tracking-wide" /></div>
+                        <p className="mt-0.5 whitespace-nowrap text-sm font-medium text-muted-foreground">{t.id}</p>
                       </div>
                     </div>
                     {/* Classification */}
                     <div>
                       {t.classification ? (
-                        <span className="text-sm text-foreground font-medium">{t.classification}</span>
+                        <span className="break-words text-[15px] font-medium text-foreground">{t.classification}</span>
                       ) : (
-                        <span className="text-xs text-muted-foreground italic">—</span>
+                        <span className="text-sm italic text-muted-foreground">—</span>
                       )}
                     </div>
                     {/* Capacity */}
                     <div>
                       {t.capacity ? (
-                        <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded-full">
+                        <span className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-sm font-medium text-blue-700">
                           <Weight className="w-3 h-3" /> {capacityKgOnly(t.capacity)}
                         </span>
                       ) : (
-                        <span className="text-xs text-muted-foreground italic">—</span>
+                        <span className="text-sm italic text-muted-foreground">—</span>
                       )}
                     </div>
                     {/* Status */}
-                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-medium w-fit ${t.status === 'Available' ? availabilityConfig.available.badge : availabilityConfig.onDelivery.badge}`}>
+                    <span className={`inline-flex w-fit items-center rounded-full border px-2.5 py-1 text-sm font-medium ${t.status === 'Available' ? availabilityConfig.available.badge : availabilityConfig.onDelivery.badge}`}>
                       <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${t.status === 'Available' ? availabilityConfig.available.dot : availabilityConfig.onDelivery.dot}`} />
                       {t.status === 'Available' ? availabilityConfig.available.label : availabilityConfig.onDelivery.label}
                     </span>
@@ -657,7 +666,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                       <button
                         onClick={() => setTruckTarget({ id: t.id, plate: t.plateNumber })}
                         title="Move truck to archive"
-                        className="flex items-center gap-1.5 px-3 py-1.5 border border-red-200 rounded-lg text-xs text-red-500 hover:bg-red-50 hover:text-red-600 hover:border-red-300 transition-colors whitespace-nowrap w-fit"
+                        className="flex min-h-10 w-fit items-center gap-1.5 whitespace-nowrap rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 transition-colors hover:border-red-300 hover:bg-red-50"
                       >
                         <Archive className="w-3.5 h-3.5" /> Archive
                       </button>
@@ -667,36 +676,36 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
               </div>
               </div>{/* end overflow-x-auto */}
 
-              {/* Mobile card list */}
-              <div className="sm:hidden divide-y divide-border">
+              {/* Mobile and tablet card list */}
+              <div className="divide-y divide-border xl:hidden">
                 {activeTrucksPage.pageItems.map((t) => (
-                  <div key={t.id} className="p-3.5">
-                    <div className="flex items-center gap-3">
+                  <div key={t.id} className="p-4">
+                    <div className="flex flex-wrap items-start gap-3">
                       <div className="w-9 h-9 bg-[#0d9488]/15 rounded-full flex items-center justify-center flex-shrink-0 border border-[#0d9488]/20 overflow-hidden">
                         <TruckImage zoom className="w-full h-full" classification={t.classification} iconClassName="w-4 h-4 text-[#0d9488]" />
                       </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="font-mono font-semibold text-foreground tracking-wider truncate">{t.plateNumber}</p>
-                        <p className="text-xs text-muted-foreground">{t.id}</p>
+                      <div className="min-w-[150px] flex-1">
+                        <div><IdentifierCopy value={t.plateNumber} description="truck plate number" className="font-mono text-base font-bold tracking-wide" /></div>
+                        <p className="mt-0.5 whitespace-nowrap text-sm font-medium text-muted-foreground">{t.id}</p>
                       </div>
-                      <span className={`flex-shrink-0 inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-medium ${t.status === 'Available' ? availabilityConfig.available.badge : availabilityConfig.onDelivery.badge}`}>
+                      <span className={`inline-flex max-w-full items-center rounded-full border px-2.5 py-1 text-sm font-medium ${t.status === 'Available' ? availabilityConfig.available.badge : availabilityConfig.onDelivery.badge}`}>
                         <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${t.status === 'Available' ? availabilityConfig.available.dot : availabilityConfig.onDelivery.dot}`} />
                         {t.status === 'Available' ? availabilityConfig.available.label : availabilityConfig.onDelivery.label}
                       </span>
                     </div>
-                    <div className="grid grid-cols-2 gap-3 mt-2.5 pt-2.5 border-t border-border/60 text-xs">
+                    <div className="mt-3 grid grid-cols-1 gap-3 border-t border-border/60 pt-3 text-sm sm:grid-cols-2">
                       <div>
-                        <p className="text-muted-foreground mb-1 flex items-center gap-1"><Package className="w-3 h-3" /> Classification</p>
+                        <p className="mb-1 flex items-center gap-1 font-medium text-muted-foreground"><Package className="w-3.5 h-3.5" /> Classification</p>
                         {t.classification ? (
-                          <span className="text-foreground font-medium">{t.classification}</span>
+                          <span className="break-words text-[15px] font-medium text-foreground">{t.classification}</span>
                         ) : (
                           <span className="text-muted-foreground italic">—</span>
                         )}
                       </div>
                       <div>
-                        <p className="text-muted-foreground mb-1 flex items-center gap-1"><Weight className="w-3 h-3" /> Capacity</p>
+                        <p className="mb-1 flex items-center gap-1 font-medium text-muted-foreground"><Weight className="w-3.5 h-3.5" /> Capacity</p>
                         {t.capacity ? (
-                          <span className="inline-flex items-center gap-1.5 font-medium px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-full">
+                          <span className="inline-flex max-w-full items-center gap-1.5 break-words rounded-full border border-blue-200 bg-blue-50 px-2 py-1 text-sm font-medium text-blue-700">
                             {capacityKgOnly(t.capacity)}
                           </span>
                         ) : (
@@ -707,7 +716,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                     {canManageFleetAccounts && (
                       <button
                         onClick={() => setTruckTarget({ id: t.id, plate: t.plateNumber })}
-                        className="w-full flex items-center justify-center gap-1.5 mt-2.5 px-3 py-2 border border-red-200 rounded-lg text-xs text-red-500 hover:bg-red-50 hover:text-red-600 hover:border-red-300 transition-colors"
+                        className="mt-3 flex min-h-10 w-full items-center justify-center gap-1.5 rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:border-red-300 hover:bg-red-50"
                       >
                         <Archive className="w-3.5 h-3.5" /> Archive
                       </button>
@@ -716,7 +725,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                 ))}
               </div>
               </div>
-              <PaginationFooter page={activeTrucksPage.page} totalItems={visibleTrucks.length}
+              <PaginationFooter page={activeTrucksPage.page} totalItems={visibleTrucks.length} readable
                 onPageChange={activeTrucksPage.setPage} singular="truck" plural="trucks"
                 className="border-t border-border bg-muted/20" />
             </div>

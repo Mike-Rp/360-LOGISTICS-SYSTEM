@@ -77,7 +77,7 @@
     opacity: 1;
   }
 
-  @media (max-width: 1023px) {
+  @media (max-width: 1023px), (hover: none) and (pointer: coarse) {
     .asn-copy-icon {
       opacity: 1;
     }
