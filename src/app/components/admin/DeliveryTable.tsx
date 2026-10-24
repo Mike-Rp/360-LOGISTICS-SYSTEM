@@ -129,7 +129,7 @@ function TruckMetadata({ assignment, truck, query }: { assignment: Assignment; t
   return (
     <div className="min-w-0 leading-4">
       {(truck?.classification || capacity) && <p className="break-words text-xs text-muted-foreground">{truck?.classification}{truck?.classification && capacity && ' · '}{capacity}</p>}
-      <p className="break-all text-xs text-muted-foreground/75"><ASNWithCopy value={assignment.id}><Highlight text={assignment.id} query={query} /></ASNWithCopy></p>
+      <p className="break-all text-xs text-muted-foreground/75"><ASNWithCopy value={assignment.id} alignTextStart><Highlight text={assignment.id} query={query} /></ASNWithCopy></p>
     </div>
   );
 }

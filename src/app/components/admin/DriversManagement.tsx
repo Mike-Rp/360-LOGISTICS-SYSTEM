@@ -2551,7 +2551,9 @@ export default function DriversManagement({
                       <p className="mt-1 w-fit max-w-full rounded-md bg-muted/70 px-2 py-0.5 text-base font-semibold text-foreground break-words">
                         <Highlight text={a.truckPlate} query={search} />
                       </p>
-                      <p className="mt-1 text-xs text-muted-foreground break-words"><ASNWithCopy value={a.id}><Highlight text={a.id} query={search} /></ASNWithCopy></p>
+                      <div className="mt-2 min-w-0 text-sm font-semibold text-foreground">
+                        <ASNWithCopy value={a.id} label="Assignment number:" alignTextStart><Highlight text={a.id} query={search} /></ASNWithCopy>
+                      </div>
                     </div>
                     <div className="ml-auto shrink-0"><DispatchStatusBadge assignment={a} /></div>
                   </div>
