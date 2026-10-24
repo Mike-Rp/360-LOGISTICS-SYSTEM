@@ -9,7 +9,7 @@ const source = ts.transpileModule(readFileSync(join(__dirname, 'driverPhotoEvide
 }).outputText;
 const loaded = { exports: {} };
 new Function('module', 'exports', source)(loaded, loaded.exports);
-const { galleryPhotoMetadata, gpsAccuracyLevel, savedPhotoMetadata } = loaded.exports;
+const { galleryPhotoMetadata, gpsAccuracyLevel, isCurrentPhotoLocationRequest, isPhotoLocationStale, savedPhotoMetadata } = loaded.exports;
 
 test('gallery evidence does not claim a fresh capture or current device location', () => {
   assert.deepEqual(galleryPhotoMetadata('saved-path'), {
@@ -35,4 +35,19 @@ test('Gallery uses the successful Storage upload time; Camera retains its app-ob
   assert.deepEqual(savedPhotoMetadata({ ...pending, timestamp: '2026-10-22T11:25:00.000Z' }, 'camera', 'stored/camera', uploadedAt), {
     ...pending, url: 'stored/camera', timestamp: '2026-10-22T11:25:00.000Z',
   });
+});
+
+test('a late GPS result cannot populate a retaken photo or supersede a newer refresh', () => {
+  assert.equal(isCurrentPhotoLocationRequest(2, 4, 2, 4), true);
+  assert.equal(isCurrentPhotoLocationRequest(1, 4, 2, 4), false);
+  assert.equal(isCurrentPhotoLocationRequest(2, 3, 2, 4), false);
+});
+
+test('preview GPS freshness uses the actual reading time', () => {
+  const now = Date.parse('2026-10-24T08:00:00.000Z');
+  assert.equal(isPhotoLocationStale('2026-10-24T07:59:00.000Z', now), false);
+  assert.equal(isPhotoLocationStale('2026-10-24T07:54:59.000Z', now), true);
+  assert.equal(isPhotoLocationStale('2026-10-24T08:02:00.000Z', now), true);
+  assert.equal(isPhotoLocationStale('invalid', now), true);
+  assert.equal(isPhotoLocationStale(null, now), false);
 });

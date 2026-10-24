@@ -19,3 +19,17 @@ export function gpsAccuracyLevel(meters?: number | null): GpsAccuracyLevel | nul
   if (meters <= 100) return 'approximate';
   return 'low';
 }
+
+/** Keep a delayed GPS response tied to both the selected image and latest refresh. */
+export function isCurrentPhotoLocationRequest(
+  selection: number, request: number, currentSelection: number, currentRequest: number,
+): boolean {
+  return selection === currentSelection && request === currentRequest;
+}
+
+/** A preview reading older than five minutes needs a fresh check before submission. */
+export function isPhotoLocationStale(observedAt: string | null, now: number): boolean {
+  if (!observedAt) return false;
+  const time = Date.parse(observedAt);
+  return !Number.isFinite(time) || now - time > 5 * 60_000 || time - now > 60_000;
+}

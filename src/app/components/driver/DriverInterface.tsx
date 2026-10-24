@@ -19,7 +19,7 @@ import { BLOCKING_ISSUE_REASONS, hasOpenBlockingIssue } from '../../lib/issueWor
 import { newNotificationIds, notificationSoundEnabled, playNotificationSound, setNotificationSoundEnabled } from '../../lib/notificationSound';
 import { observeDriverCompletion, type DriverCompletionSnapshot } from './driverCompletion';
 import { completedPhotoGroup, getNextRequiredAction, getNextRequiredPhoto, getRequiredPhotoProgress } from './driverPhotoGuidance';
-import { galleryPhotoMetadata, gpsAccuracyLevel, savedPhotoMetadata } from './driverPhotoEvidence';
+import { galleryPhotoMetadata, gpsAccuracyLevel, isCurrentPhotoLocationRequest, isPhotoLocationStale, savedPhotoMetadata } from './driverPhotoEvidence';
 import UploadedFilePreviewModal from '../admin/UploadedFilePreviewModal';
 
 /* ── Types ── */
@@ -536,7 +536,7 @@ function DriverBottomSheet({ label, onBackdrop, children }: { label: string; onB
   </div>;
 }
 
-type DevicePhotoLocation = { location: string; coords: { lat: number; lng: number }; accuracy: number | null };
+type DevicePhotoLocation = { location: string; coords: { lat: number; lng: number }; accuracy: number | null; observedAt: string };
 
 async function readFreshPhotoLocation(): Promise<DevicePhotoLocation> {
   if (!navigator.geolocation) throw new Error('geolocation_unavailable');
@@ -547,26 +547,35 @@ async function readFreshPhotoLocation(): Promise<DevicePhotoLocation> {
   });
   const { latitude, longitude, accuracy } = position.coords;
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) throw new Error('geolocation_invalid');
+  const observedAt = Number.isFinite(position.timestamp) && position.timestamp > 0
+    ? new Date(position.timestamp).toISOString() : new Date().toISOString();
   let location = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+  const geocodeController = new AbortController();
+  const geocodeTimeout = window.setTimeout(() => geocodeController.abort(), 5000);
   try {
     const res = await fetch(
       `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=16&addressdetails=1`,
-      { headers: { 'Accept-Language': 'en' } },
+      { headers: { 'Accept-Language': 'en' }, signal: geocodeController.signal },
     );
     if (res.ok) {
       const data = await res.json();
       const addr = data.address ?? {};
-      const parts = [addr.road || addr.amenity || addr.building,
+      const parts = [accuracy <= 20 ? addr.road || addr.amenity || addr.building : null,
         addr.suburb || addr.village || addr.neighbourhood,
         addr.city || addr.town || addr.municipality].filter(Boolean);
       if (parts.length) location = parts.join(', ');
     }
   } catch { /* The measured coordinates remain available without an address. */ }
-  return { location, coords: { lat: latitude, lng: longitude },
+  finally { window.clearTimeout(geocodeTimeout); }
+  return { location, coords: { lat: latitude, lng: longitude }, observedAt,
     accuracy: Number.isFinite(accuracy) && accuracy >= 0 ? accuracy : null };
 }
 
-function PhotoDetails({ photo, source, accuracy }: { photo: StatusPhoto; source: 'camera' | 'gallery' | 'unknown'; accuracy?: number | null }) {
+function PhotoDetails({ photo, source, accuracy, selectedAt, locationLoading = false, locationObservedAt, locationStale = false, onRefresh, refreshDisabled = false, retryLocation = false }: {
+  photo: StatusPhoto; source: 'camera' | 'gallery' | 'unknown'; accuracy?: number | null;
+  selectedAt?: string | null; locationLoading?: boolean; locationObservedAt?: string | null; locationStale?: boolean;
+  onRefresh?: () => void; refreshDisabled?: boolean; retryLocation?: boolean;
+}) {
   const { t } = useDriverI18n();
   const accuracyLevel = gpsAccuracyLevel(accuracy);
   const locationText = photo.location && photo.location !== 'Location unavailable' && photo.location !== 'Location not supported'
@@ -577,27 +586,42 @@ function PhotoDetails({ photo, source, accuracy }: { photo: StatusPhoto; source:
     <div className="mt-3 flex items-start gap-3">
       <CalendarDays className="mt-0.5 h-4 w-4 shrink-0 text-gray-500" aria-hidden="true" />
       <div className="min-w-0">
-        <p className="text-xs font-semibold text-gray-500">{source === 'gallery' ? t('photo.uploadedAt')
+        <p className="text-xs font-semibold text-gray-500">{source === 'gallery' && selectedAt ? t('photo.selectedAt')
           : source === 'camera' ? t('photo.appObservedAt') : t('photo.recordedAt')}</p>
-        <p className="mt-0.5 text-sm font-semibold text-gray-900">{photo.timestamp ? manilaStamp(photo.timestamp) : t('photo.pendingUpload')}</p>
+        <p className="mt-0.5 text-sm font-semibold text-gray-900">{selectedAt || photo.timestamp ? manilaStamp(selectedAt || photo.timestamp) : t('photo.pendingUpload')}</p>
       </div>
     </div>
     <div className="mt-3 flex items-start gap-3 border-t border-gray-100 pt-3">
       <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-gray-500" aria-hidden="true" />
       <div className="min-w-0">
-        <p className="text-xs font-semibold text-gray-500">{source === 'gallery' ? t('photo.deviceLocationAtUpload')
-          : source === 'camera' ? t('photo.deviceLocation') : photo.coords ? t('photo.photoGpsLocation') : t('photo.recordedLocation')}</p>
-        {locationAvailable && <p className="mt-0.5 break-words text-sm font-semibold text-gray-900">{locationText || `${photo.coords!.lat.toFixed(5)}, ${photo.coords!.lng.toFixed(5)}`}</p>}
-        {!locationAvailable && <p className="mt-0.5 text-sm text-gray-600">{t('photo.locationUnavailable')}</p>}
-        {photo.coords && accuracyLevel && <p className="mt-1 text-xs text-gray-500">
-          {t(`photo.accuracy.${accuracyLevel}`, { meters: Math.round(accuracy!) })}
+        <p className="text-xs font-semibold text-gray-500">{source === 'unknown'
+          ? photo.coords ? t('photo.photoGpsLocation') : t('photo.recordedLocation')
+          : t('photo.currentDeviceLocation')}</p>
+        {locationLoading && <p role="status" className="mt-1 flex items-center gap-2 text-sm text-gray-600">
+          <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-cyan-600 border-t-transparent motion-reduce:animate-none" aria-hidden="true" />
+          {t('photo.detectingLocation')}
         </p>}
+        {locationAvailable && <p className="mt-0.5 break-words text-sm font-semibold text-gray-900">
+          {locationLoading && locationObservedAt && <span className="font-medium text-gray-500">{t('photo.previousReading')}: </span>}
+          {locationText || `${photo.coords!.lat.toFixed(5)}, ${photo.coords!.lng.toFixed(5)}`}
+        </p>}
+        {!locationAvailable && !locationLoading && <p className="mt-0.5 text-sm text-gray-600">{t('photo.locationUnavailable')}</p>}
+        {photo.coords && <p className="mt-1 text-xs text-gray-600">
+          <span className="font-semibold">{t('photo.gpsAccuracy')}: </span>
+          {accuracyLevel ? t(`photo.accuracy.${accuracyLevel}`, { meters: Math.round(accuracy!) }) : t('common.notAvailable')}
+        </p>}
+        {locationObservedAt && <p className="mt-1 text-xs text-gray-600">{t('photo.locationCheckedAt', { time: manilaStamp(locationObservedAt) })}</p>}
+        {locationStale && <p className="mt-1 text-xs font-semibold text-amber-700">{t('photo.locationStale')}</p>}
       </div>
     </div>
     <div className="mt-3 border-t border-gray-100 pt-3 text-xs text-gray-600">
       <span className="font-semibold">{t('photo.source')}: </span>
       {source === 'unknown' ? t('photo.sourceUnavailable') : t(source === 'camera' ? 'photo.sourceCamera' : 'photo.sourceGallery')}
     </div>
+    {onRefresh && <button type="button" disabled={refreshDisabled} onClick={onRefresh}
+      className="mt-3 inline-flex min-h-11 items-center gap-2 rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-green-700 disabled:opacity-50">
+      <RefreshCw className="h-4 w-4" aria-hidden="true" />{t(retryLocation ? 'photo.retryLocation' : 'photo.refreshLocation')}
+    </button>}
   </section>;
 }
 
@@ -620,28 +644,48 @@ function PhotoSheet({ status, title, instruction, qualityCheck, existingPhoto, o
   const [source, setSource] = useState<'camera' | 'gallery' | null>(null);
   const [replacing, setReplacing] = useState(false);
   const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
+  const [locationObservedAt, setLocationObservedAt] = useState<string | null>(null);
+  const [selectedAt, setSelectedAt] = useState<string | null>(null);
   const [locationError, setLocationError] = useState(false);
+  const [locationStale, setLocationStale] = useState(false);
+  const [withoutLocation, setWithoutLocation] = useState(false);
   const attemptRef = useRef(0);
+  const locationRequestRef = useRef(0);
+  const staleLocationTimer = useRef<number | null>(null);
 
   useEffect(() => {
     if (qualityCheck === 'truck') void loadVehicleDetector().catch(() => { /* The capture shows the retry error. */ });
-    return () => { attemptRef.current++; };
+    return () => {
+      attemptRef.current++;
+      locationRequestRef.current++;
+      if (staleLocationTimer.current) window.clearTimeout(staleLocationTimer.current);
+    };
   }, [qualityCheck]);
 
-  const requestDeviceLocation = (imageUrl: string, stamp: string, attempt: number) => {
-    const isCurrent = () => attempt === attemptRef.current;
+  const requestDeviceLocation = (imageUrl: string, attempt: number) => {
+    const request = ++locationRequestRef.current;
+    const isCurrent = () => isCurrentPhotoLocationRequest(attempt, request, attemptRef.current, locationRequestRef.current);
     setLocLoading(true);
     setLocationError(false);
-    void readFreshPhotoLocation().then(({ location, coords, accuracy }) => {
+    setWithoutLocation(false);
+    void readFreshPhotoLocation().then(({ location, coords, accuracy, observedAt }) => {
       if (isCurrent()) {
         setGpsAccuracy(accuracy);
-        setMeta({ url: imageUrl, timestamp: stamp, location, coords });
+        setLocationObservedAt(observedAt);
+        if (staleLocationTimer.current) window.clearTimeout(staleLocationTimer.current);
+        const staleNow = isPhotoLocationStale(observedAt, Date.now());
+        setLocationStale(staleNow);
+        if (!staleNow) {
+          const remaining = Math.max(1, 5 * 60_000 - (Date.now() - Date.parse(observedAt)) + 1);
+          staleLocationTimer.current = window.setTimeout(() => setLocationStale(true), remaining);
+        }
+        setMeta((previous) => previous?.url === imageUrl ? { ...previous, location, coords } : previous);
         setLocLoading(false);
       }
     }).catch(() => {
       if (isCurrent()) {
-        setGpsAccuracy(null);
-        setMeta({ url: imageUrl, timestamp: stamp, location: '' });
+        // A failed refresh leaves an earlier valid reading intact. New selections
+        // start with empty metadata, so they cannot inherit an old photo's GPS.
         setLocationError(true);
         setLocLoading(false);
       }
@@ -650,10 +694,15 @@ function PhotoSheet({ status, title, instruction, qualityCheck, existingPhoto, o
 
   const handleFile = (file: File, selectedSource: 'camera' | 'gallery') => {
     const attempt = ++attemptRef.current;
+    locationRequestRef.current++;
+    if (staleLocationTimer.current) window.clearTimeout(staleLocationTimer.current);
     const isCurrent = () => attempt === attemptRef.current;
     setSource(selectedSource);
     setGpsAccuracy(null);
+    setLocationObservedAt(null);
     setLocationError(false);
+    setLocationStale(false);
+    setWithoutLocation(false);
     setSaveError('');
     setQualityError(null);
     setPhoto(null);
@@ -661,6 +710,7 @@ function PhotoSheet({ status, title, instruction, qualityCheck, existingPhoto, o
     setLocLoading(false);
     setChecking(!!qualityCheck);
     const observedAt = new Date().toISOString();
+    setSelectedAt(observedAt);
     const reader = new FileReader();
     reader.onload = async () => {
       let compressed: string;
@@ -683,11 +733,11 @@ function PhotoSheet({ status, title, instruction, qualityCheck, existingPhoto, o
         }
         setChecking(false);
       }
-      if (selectedSource === 'gallery') {
-        // The selected image's original time and place are not verified by this app.
-        // Do not write current device GPS into its persisted capture fields.
-        setMeta(galleryPhotoMetadata(compressed));
-      } else requestDeviceLocation(compressed, observedAt, attempt);
+      // Gallery's original capture time/place remain unknown. The displayed
+      // selection time and measured device GPS describe this upload session.
+      setMeta(selectedSource === 'gallery' ? galleryPhotoMetadata(compressed)
+        : { url: compressed, timestamp: observedAt, location: '' });
+      requestDeviceLocation(compressed, attempt);
     };
     reader.onerror = () => {
       if (isCurrent()) { setChecking(false); setSaveError(t('photo.saveError')); }
@@ -696,29 +746,21 @@ function PhotoSheet({ status, title, instruction, qualityCheck, existingPhoto, o
   };
 
   const canConfirm = !!photo && !!meta && meta.url === photo && !checking && !qualityError && !locLoading && !saving;
-  const confirmPhoto = async (continueWithoutLocation = false) => {
+  const confirmPhoto = async () => {
     if (!canConfirm || !meta || !source) return;
+    if (!withoutLocation && meta.coords
+      && (!locationObservedAt || isPhotoLocationStale(locationObservedAt, Date.now()))) {
+      setLocationStale(true);
+      return;
+    }
+    if (!withoutLocation && source === 'gallery' && !meta.coords) {
+      setLocationError(true);
+      return;
+    }
     setSaving(true);
     setSaveError('');
-    let submission = meta;
+    const submission = withoutLocation ? { ...meta, location: '', coords: undefined } : meta;
     try {
-      if (source === 'gallery' && !continueWithoutLocation) {
-        setLocLoading(true);
-        setLocationError(false);
-        try {
-          const { location, coords, accuracy } = await readFreshPhotoLocation();
-          submission = { ...meta, location, coords };
-          setMeta(submission);
-          setGpsAccuracy(accuracy);
-        } catch {
-          setLocationError(true);
-          return;
-        } finally { setLocLoading(false); }
-      }
-      if (source === 'gallery' && continueWithoutLocation) {
-        submission = { ...meta, location: '', coords: undefined };
-        setGpsAccuracy(null);
-      }
       await onConfirm(submission, source);
     }
     catch (err) {
@@ -726,21 +768,36 @@ function PhotoSheet({ status, title, instruction, qualityCheck, existingPhoto, o
       setSaveError(status === 'Delivered' ? t('photo.deliveryError') : t('photo.saveError'));
     } finally { setSaving(false); }
   };
-  const cancelPhoto = () => { if (!saving) { attemptRef.current++; onCancel(); } };
+  const cancelPhoto = () => {
+    if (!saving) {
+      attemptRef.current++;
+      locationRequestRef.current++;
+      if (staleLocationTimer.current) window.clearTimeout(staleLocationTimer.current);
+      onCancel();
+    }
+  };
   const retakePhoto = () => {
     attemptRef.current++;
+    locationRequestRef.current++;
+    if (staleLocationTimer.current) window.clearTimeout(staleLocationTimer.current);
     setReplacing(true);
     setPhoto(null);
     setMeta(null);
     setSource(null);
     setGpsAccuracy(null);
+    setLocationObservedAt(null);
+    setSelectedAt(null);
     setLocationError(false);
+    setLocationStale(false);
+    setWithoutLocation(false);
     setChecking(false);
     setLocLoading(false);
     setQualityError(null);
     setSaveError('');
   };
   const qualityMessage = qualityError ? t(`photo.${qualityError}`) : null;
+  const canSubmitPrimary = canConfirm && (withoutLocation
+    || (!locationStale && !(source === 'gallery' && !meta?.coords)));
 
   return (
     <DriverBottomSheet label={title ?? (status === 'Delivered' ? t('photo.deliveryRequired') : t('photo.take'))} onBackdrop={cancelPhoto}>
@@ -814,32 +871,29 @@ function PhotoSheet({ status, title, instruction, qualityCheck, existingPhoto, o
                   <div className="w-5 h-5 border-2 border-green-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
                   <span className="text-base text-gray-600">{t('photo.checking')}</span>
                 </div>
-              ) : locLoading ? (
-                <div className="bg-gray-50 border border-gray-200 rounded-2xl px-5 py-5 flex items-center gap-3">
-                  <div className="w-5 h-5 border-2 border-green-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                  <span className="text-base text-gray-500">{t('photo.gettingLocationLong')}</span>
-                </div>
               ) : meta && <>
-                <PhotoDetails photo={meta} source={source ?? 'unknown'} accuracy={gpsAccuracy} />
-                {source === 'camera' && <button type="button" onClick={() => requestDeviceLocation(meta.url, meta.timestamp, attemptRef.current)}
-                  className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-green-700">
-                  <RefreshCw className="h-4 w-4" aria-hidden="true" />{t(locationError ? 'photo.retryLocation' : 'photo.refreshLocation')}
-                </button>}
+                <PhotoDetails photo={meta} source={source ?? 'unknown'} accuracy={gpsAccuracy}
+                  selectedAt={source === 'gallery' ? selectedAt : null} locationLoading={locLoading}
+                  locationObservedAt={locationObservedAt} locationStale={locationStale}
+                  onRefresh={() => requestDeviceLocation(meta.url, attemptRef.current)}
+                  refreshDisabled={locLoading || saving} retryLocation={locationError} />
               </>}
             </>
           )}
 
           {qualityMessage && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{qualityMessage}</p>}
-          {locationError && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{t('photo.locationError')}</p>}
+          {locationError && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            {meta?.coords ? t('photo.locationRefreshFailed') : t('photo.locationError')}
+          </p>}
           {saveError && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{saveError}</p>}
 
         </div>
         {photo && <div className="shrink-0 border-t border-gray-100 bg-white px-5 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
           <button
-            disabled={!canConfirm}
+            disabled={!canSubmitPrimary}
             onClick={() => void confirmPhoto()}
             className={`w-full py-5 rounded-2xl font-bold text-xl transition-all ${
-              canConfirm
+              canSubmitPrimary
                 ? 'bg-green-700 text-white active:bg-green-800 shadow-md'
                 : 'bg-gray-100 text-gray-400 cursor-not-allowed'
             }`}
@@ -848,14 +902,14 @@ function PhotoSheet({ status, title, instruction, qualityCheck, existingPhoto, o
              !photo       ? t('photo.takeFirst')  :
              locLoading   ? t('photo.gettingLocation') :
              saving       ? t('photo.saving') :
-             source === 'gallery' && locationError ? t('photo.retryLocation') :
-             status === 'Delivered' ? t('photo.confirmDelivered') : t('photo.confirm')}
+             status === 'Delivered' ? t('photo.confirmDelivered') : t('photo.confirmUpload')}
           </button>
-          {source === 'gallery' && locationError && <button type="button" disabled={saving}
-            onClick={() => void confirmPhoto(true)}
+          {((source === 'gallery' && locationError && !meta?.coords) || locationStale) && !withoutLocation && <button type="button" disabled={saving || locLoading}
+            onClick={() => setWithoutLocation(true)}
             className="mt-2 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-4 text-sm font-semibold text-gray-700 hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-green-700">
             {t('photo.continueWithoutLocation')}
           </button>}
+          {withoutLocation && <p role="status" className="mt-2 text-center text-sm text-gray-600">{t('photo.locationOmitted')}</p>}
         </div>}
     </DriverBottomSheet>
   );

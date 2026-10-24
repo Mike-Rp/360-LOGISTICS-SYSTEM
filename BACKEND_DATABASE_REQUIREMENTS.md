@@ -296,6 +296,34 @@ and denial of other drivers' assignments.
 
 ---
 
+## DRIVER PHOTO GPS PREVIEW — REQ13
+
+**BACKEND REQUIRED — PENDING IMPLEMENTATION** for durable accuracy, GPS reading
+time, source, and server-confirmed upload time. The frontend preview itself uses
+the existing browser geolocation API and requires no backend change.
+
+The current `status_photos` row and `driverUpdate()` path persist the assignment
+and photo slot, private Storage URL, legacy `taken_at` and `location` text, and
+individual device `lat`/`lng`. They do not persist the browser-reported accuracy,
+GPS observation time, Camera/Gallery source, or a server-confirmed upload time.
+The preview may show those values from the current selection, but a reload or
+CSR/OPM viewer cannot truthfully reconstruct them. The Gallery selection time
+must not be stored as its original capture or final upload time. Existing
+photo-group reference coordinates remain distinct from each photo's GPS.
+
+Implement the additive metadata and guarded photo-finalization contract already
+specified in **DRIVER PHOTO UPLOAD METADATA — REQ09**. Return the committed slot
+with `uploaded_at`, `capture_observed_at` where applicable, `source`,
+`gps_accuracy_m`, device GPS observation time, `lat`/`lng`, and derived display
+location to Driver and authorized staff fetches. The server must validate Driver
+ownership, assignment and slot, preserve the prior evidence on failed
+replacement, and keep the private media bucket private. Test Camera and Gallery
+metadata, no-GPS saves under current rules, stale/retried preview readings,
+cross-driver denial, failed replacement, and staff reads. Do not infer missing
+historical metadata or change existing photo quality and stage gates.
+
+---
+
 ## DRIVER NOTIFICATIONS — REQ10
 
 **BACKEND REQUIRED — PENDING IMPLEMENTATION.** The Driver drawer cannot truthfully
