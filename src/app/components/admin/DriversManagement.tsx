@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { Popover, PopoverAnchor, PopoverContent } from '../ui/popover';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from '../ui/dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '../ui/alert-dialog';
 import TruckImage from '../TruckImage';
 import ASNWithCopy from './ASNWithCopy';
 import DocumentsSummaryCard from './DocumentsSummaryCard';
@@ -30,6 +31,7 @@ import { DISPATCH_STATUS_OPTIONS, matchesDispatchStatus, type DispatchStatus } f
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
 import { sortNewestFirst, markLocalRecordAdded } from '../../lib/recordOrdering';
 import { advanceDispatchHighlight, dispatchHighlightPage, type DispatchHighlight } from '../../lib/dispatchHighlight';
+import { hasUnsavedDispatchDetails } from '../../lib/dispatchDraft';
 import { ADMIN_NAVIGATION_EVENT, pushAdminNavigation } from '../../lib/adminNavigation';
 import type { ActivityKey } from '../../lib/notificationEvents';
 import { hasOpenBlockingIssue } from '../../lib/issueWorkflow';
@@ -1937,10 +1939,22 @@ export default function DriversManagement({
   }, []);
 
   const [showAssignTask, setShowAssignTask] = useState(false);
+  const [confirmDiscardDispatch, setConfirmDiscardDispatch] = useState(false);
+  const dispatchOpenerRef = useRef<HTMLElement | null>(null);
+  const dispatchFallbackButtonRef = useRef<HTMLButtonElement | null>(null);
+  const dispatchCloseButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  const openDispatch = () => {
+    dispatchOpenerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setShowAssignTask(true);
+  };
 
   useEffect(() => {
     if (!openDispatchOnMount) return;
-    if (!isViewOnly) setShowAssignTask(true);
+    if (!isViewOnly) {
+      dispatchOpenerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      setShowAssignTask(true);
+    }
     onDispatchOpened?.();
   }, [openDispatchOnMount]); // eslint-disable-line react-hooks/exhaustive-deps
   const [viewDetailsId,  setViewDetailsId]  = useState<string | null>(null);
@@ -2007,6 +2021,14 @@ export default function DriversManagement({
   const [taskBadDates,    setTaskBadDates]    = useState<BadDates>({ pickup: false, delivery: false });
   const [taskSaving, setTaskSaving] = useState(false);
   const taskSavingRef = useRef(false);
+  const dispatchDirty = hasUnsavedDispatchDetails({
+    driverId: taskDriverId, truckId: taskTruckId,
+    originArea: taskFrom, pickupLocation: taskPickupLocation,
+    destinationArea: taskDestinationArea, deliveryLocation: taskTo,
+    company: taskCompany, pickupDate: taskPickedUpDate, deliveryDate: taskDate,
+    pickupTime: taskPickupTime, eta: taskEta, remarks: taskRemarks,
+    pickupDateInvalid: taskBadDates.pickup, deliveryDateInvalid: taskBadDates.delivery,
+  });
 
   const assignedDriverIds = new Set(assignments.map((a) => a.driverId));
   const availableDrivers  = drivers.filter((d) => !assignedDriverIds.has(d.id));
@@ -2035,12 +2057,19 @@ export default function DriversManagement({
           : null;
 
   const resetAssignTask = () => {
+    setConfirmDiscardDispatch(false);
     setShowAssignTask(false); setTaskStep(1); setTaskDriverId(''); setTaskTruckId('');
     setTaskFrom(''); setTaskTo(''); setTaskDestinationArea('');
     setTaskCompany(''); setTaskDate(''); setTaskPickedUpDate(''); setTaskRemarks('');
     setTaskPickupLocation('');
     setTaskPickupTime(''); setTaskEta('');
     setTaskErrors({}); setTaskBadDates({ pickup: false, delivery: false });
+  };
+
+  const requestCloseDispatch = () => {
+    if (taskSavingRef.current) return;
+    if (dispatchDirty) setConfirmDiscardDispatch(true);
+    else resetAssignTask();
   };
 
   /* Live date check as the admin types or picks — shows the inline error straight away */
@@ -2528,7 +2557,7 @@ export default function DriversManagement({
             <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           </div>
           {!isViewOnly && (
-            <button onClick={() => setShowAssignTask(true)}
+            <button ref={dispatchFallbackButtonRef} onClick={openDispatch}
               className="flex h-12 w-full items-center justify-center gap-3 rounded-xl bg-primary px-6 text-sm font-semibold text-white shadow-md transition-all hover:bg-primary/90 hover:shadow-lg active:scale-[0.98] xl:w-auto">
               <Plus className="w-5 h-5" /> Dispatch Truck
             </button>
@@ -2576,7 +2605,7 @@ export default function DriversManagement({
             <p className="text-sm text-muted-foreground mb-5">
               Click <strong>Dispatch Truck</strong> to dispatch a driver and truck.
             </p>
-            <button onClick={() => setShowAssignTask(true)}
+            <button onClick={openDispatch}
               className="px-5 py-2.5 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 transition-colors">
               + Dispatch Truck
             </button>
@@ -2752,8 +2781,28 @@ export default function DriversManagement({
 
       {/* ════ MODALS ════ */}
 
-      {showAssignTask && !isViewOnly && (
-        <ModalShell title="Dispatch Truck" onClose={resetAssignTask}>
+      <Dialog open={showAssignTask && !isViewOnly}>
+        <DialogContent hideCloseButton aria-describedby={undefined}
+          overlayClassName="bg-black/40 backdrop-blur-sm"
+          className="flex max-h-[94dvh] w-[calc(100%-1.5rem)] max-w-md flex-col gap-0 overflow-hidden rounded-xl border-0 bg-white p-0 shadow-2xl sm:max-h-[92dvh] sm:rounded-2xl"
+          onPointerDownOutside={(event) => event.preventDefault()}
+          onInteractOutside={(event) => event.preventDefault()}
+          onEscapeKeyDown={(event) => event.preventDefault()}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            const opener = dispatchOpenerRef.current;
+            if (opener?.isConnected && opener !== document.body) opener.focus();
+            else dispatchFallbackButtonRef.current?.focus();
+          }}>
+          <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-4 sm:px-7 sm:py-5">
+            <DialogTitle className="text-lg font-semibold text-foreground sm:text-xl">Dispatch Truck</DialogTitle>
+            <button ref={dispatchCloseButtonRef} type="button" aria-label="Close Dispatch Truck"
+              onClick={requestCloseDispatch} disabled={taskSaving}
+              className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1DBF73] disabled:cursor-not-allowed disabled:opacity-50">
+              <X className="h-5 w-5" aria-hidden="true" />
+            </button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5 sm:p-7">
           <StepProgress step={taskStep} />
           {taskErrors.submit && <p role="alert" className="text-xs text-red-700 mb-4">{taskErrors.submit}</p>}
 
@@ -2868,10 +2917,6 @@ export default function DriversManagement({
 
               {/* Buttons */}
               <div className="flex flex-col-reverse sm:flex-row gap-3 pt-6 sm:pt-7">
-                <button onClick={resetAssignTask}
-                  className="px-5 py-2.5 border border-border rounded-[10px] hover:bg-accent transition-colors text-sm font-medium text-foreground inline-flex items-center gap-1.5">
-                  <ArrowLeft className="w-4 h-4" /> Back
-                </button>
                 <button onClick={handleNextStep} disabled={availabilityLoading || availabilityError || resourcesMissing || !driverAvailable || !truckAvailable}
                   className="flex-1 px-5 py-2.5 bg-[#1DBF73] text-white rounded-[10px] hover:bg-[#19a865] transition-all shadow-sm hover:shadow active:scale-[0.99] text-sm font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[#1DBF73] disabled:hover:shadow-none">
                   Next <ArrowRight className="w-4 h-4" />
@@ -2968,8 +3013,29 @@ export default function DriversManagement({
               </div>
             </div>
           )}
-        </ModalShell>
-      )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={confirmDiscardDispatch} onOpenChange={setConfirmDiscardDispatch}>
+        <AlertDialogContent className="max-w-sm" onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          if (dispatchCloseButtonRef.current?.isConnected) dispatchCloseButtonRef.current.focus();
+        }}>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-foreground">Discard dispatch details?</AlertDialogTitle>
+            <AlertDialogDescription>
+              You have unsaved information. Closing this form will discard your changes.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setConfirmDiscardDispatch(false)}>Keep Editing</AlertDialogCancel>
+            <AlertDialogAction onClick={resetAssignTask} className="bg-red-600 text-white hover:bg-red-700 focus-visible:ring-red-600">
+              Discard Changes
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {viewDetailsId && (
         <ViewDetailsModal
