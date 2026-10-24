@@ -169,8 +169,16 @@ superseded by the two-part version — do not run both.
 
 ## DRIVER OPERATIONAL PHOTO EVIDENCE — BACKEND REQUIREMENTS
 
-**BACKEND REQUIRED — PENDING IMPLEMENTATION.** This extends the existing REQ-002
-operational photo model; it does not change the current photo or stage gates.
+**Status:** Partially implemented (2026-10-25) — per-photo metadata done via
+**DRIVER PHOTO UPLOAD METADATA — REQ09** below; the group-reference table
+described in this entry (one independently-measured location per
+pickup/loading/pretrip/unloading group, distinct from each photo's own GPS)
+was deliberately **not** built — out of scope for REQ09/REQ13, still open if
+wanted later.
+
+**BACKEND REQUIRED — PENDING IMPLEMENTATION** for the group-reference piece
+only. This extends the existing REQ-002 operational photo model; it does not
+change the current photo or stage gates.
 
 ### Current contract and gap
 
@@ -235,8 +243,43 @@ blocked until this contract is implemented.
 
 ## DRIVER PHOTO UPLOAD METADATA — REQ09
 
-**BACKEND REQUIRED — PENDING IMPLEMENTATION.** This narrows the operational
-photo evidence requirements above to the Camera/Gallery submission contract.
+**Status:** Implemented and verified live (2026-10-25)
+
+**2026-10-25 — Implementation:** `supabase/migrations/20261025000000_status_photo_metadata.sql`.
+Fully additive — 5 new nullable columns on `public.status_photos`:
+`uploaded_at`, `capture_observed_at`, `gps_observed_at`, `gps_accuracy_m`
+(check `>= 0`), `source` (check in `camera`/`gallery`/`unknown`). No RLS
+change — the existing `photos_insert`/`photos_update` policies already
+authorize exactly the right callers. `uploaded_at` is server-stamped via a
+`BEFORE INSERT OR UPDATE` trigger (`stamp_status_photo_upload()`) rather than
+a new RPC — simpler than REQ-013's flag-per-RPC pattern since this isn't
+"only one function may set it," it's "every write gets stamped," so a plain
+trigger suffices. The other 4 columns stay client-reported, same trust level
+as the existing `taken_at`/`location`/`lat`/`lng`. Legacy rows keep all 5
+null — never backfilled or inferred.
+
+Frontend: the GPS-preview screen (already live, built separately) was
+already reading and displaying accuracy/GPS-time/source at confirmation —
+none of it previously survived into the saved row. `assignmentTypes.ts`'s
+`StatusPhoto` gained `gpsAccuracyM`, `gpsObservedAt`, `source`,
+`captureObservedAt`, `uploadedAt` (read-only). `DriverInterface.tsx`'s
+`PhotoSheet.confirmPhoto()` now merges the already-captured accuracy/GPS-time
+into the submitted object instead of discarding them.
+`driverPhotoEvidence.ts`'s `savedPhotoMetadata()` sets `source` and derives
+`captureObservedAt` from the existing camera timestamp (no new tracking
+needed — reuses data already present). `db.ts` reads/writes all 5 columns in
+both write paths (`driverUpdate()`'s upsert and the generic auto-save
+`flatten()`).
+
+Verified live on `ASN28950`: retook photos via Gallery — `source: 'gallery'`,
+`gps_accuracy_m: 5000`, `gps_observed_at` populated, `uploaded_at`
+server-stamped a moment after each save, `capture_observed_at` correctly
+null (camera-only field). Camera-specific `capture_observed_at` wasn't
+live-tested (no webcam on the test machine) but is a one-line, already
+type-checked derivation (`source === 'camera' ? photo.timestamp : null`)
+using the exact same data-flow already proven by the Gallery test.
+
+**Original request (superseded by the above):**
 
 ### Existing backend support
 
@@ -298,7 +341,13 @@ and denial of other drivers' assignments.
 
 ## DRIVER PHOTO GPS PREVIEW — REQ13
 
-**BACKEND REQUIRED — PENDING IMPLEMENTATION** for durable accuracy, GPS reading
+**Status:** Implemented and verified live (2026-10-25) — see
+**DRIVER PHOTO UPLOAD METADATA — REQ09** above for the full implementation;
+this item had no backend task of its own beyond REQ09's contract, which it
+now consumes end-to-end (confirmed: accuracy/GPS-time/source shown by this
+preview screen now actually persist past the moment of upload).
+
+**Original request (superseded by the above):** durable accuracy, GPS reading
 time, source, and server-confirmed upload time. The frontend preview itself uses
 the existing browser geolocation API and requires no backend change.
 
