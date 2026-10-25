@@ -13,6 +13,9 @@ import { useModalFocus } from './useModalFocus';
 import type { StaffSession } from '../../lib/db';
 import AccountRoleBadge from './AccountRoleBadge';
 
+/* Mirrors update_own_display_name()'s server-side rule exactly. */
+const NAME_PATTERN = /^[A-Za-z][A-Za-z\s'.-]*$/;
+
 /* ── Field row ── */
 const Field = ({ label, htmlFor, children }: { label: string; htmlFor?: string; children: React.ReactNode }) => (
   <div className="space-y-1.5">
@@ -77,6 +80,12 @@ export default function SettingsPanel({ open, onClose, profile, avatarUrl, onPro
     setNameError('');
     const trimmed = nameInput.trim();
     if (!trimmed) { setNameError('Name is required.'); return; }
+    // Same rule update_own_display_name() enforces server-side — catches it before
+    // a round trip, but the server is the real gate (never trust this check alone).
+    if (!NAME_PATTERN.test(trimmed)) {
+      setNameError('Enter a valid name — letters, spaces, apostrophes, hyphens and periods only.');
+      return;
+    }
     setNameBusy(true);
     try {
       const result = await updateOwnDisplayName(trimmed);
@@ -84,7 +93,10 @@ export default function SettingsPanel({ open, onClose, profile, avatarUrl, onPro
       setEditingName(false);
     } catch (e) {
       console.error('[updateOwnDisplayName] error:', e);
-      setNameError('Could not update your name. Check your connection and try again.');
+      const message = e instanceof Error ? e.message : '';
+      setNameError(message.includes('invalid_name')
+        ? 'Enter a valid name — letters, spaces, apostrophes, hyphens and periods only.'
+        : 'Could not update your name. Check your connection and try again.');
     } finally {
       setNameBusy(false);
     }
@@ -95,6 +107,14 @@ export default function SettingsPanel({ open, onClose, profile, avatarUrl, onPro
     e.target.value = '';
     if (!file || !profile) return;
     setAvatarError('');
+    // accept="image/*" on the input is only a browser hint — drag-and-drop or
+    // "All Files" bypasses it. The real gate is the server (RLS now checks the
+    // upload's actual recorded mimetype), but check here too for a fast, clear
+    // message instead of a round trip just to get rejected.
+    if (!file.type.startsWith('image/')) {
+      setAvatarError('Please choose an image file (JPG, PNG, etc.).');
+      return;
+    }
     setAvatarBusy(true);
     const reader = new FileReader();
     reader.onload = async () => {
