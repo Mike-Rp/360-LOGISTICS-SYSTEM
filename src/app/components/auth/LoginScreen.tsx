@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import imgLogo from 'figma:asset/5e73e3c08e898d68c86717993c6e7442d03e9ac4.png';
-import { Eye, EyeOff, AlertCircle, Phone, Loader2, X } from 'lucide-react';
+import { Eye, EyeOff, AlertCircle, CheckCircle2, Phone, Loader2, X } from 'lucide-react';
 import { signInStaff, signInDriver, LoginError, requestCsrPasswordReset } from '../../lib/db';
 import type { StaffSession } from '../../lib/db';
 import { getLastDriverLanguage, translateDriver } from '../driver/driverI18n';
@@ -24,7 +24,8 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
     new URLSearchParams(window.location.search).get('account') === 'staff' ? 'admin' : 'driver');
   const [passwordFlow, setPasswordFlow] = useState<'login' | 'request'>('login');
   const [resetEmail, setResetEmail] = useState('');
-  const [resetMessage, setResetMessage] = useState('');
+  const [resetError, setResetError] = useState('');
+  const [resetSubmitted, setResetSubmitted] = useState(false);
   const [resetBusy, setResetBusy] = useState(false);
   const driverLanguage = getLastDriverLanguage();
   const tr = (key: Parameters<typeof translateDriver>[1]) => translateDriver(driverLanguage, key);
@@ -54,12 +55,14 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
   const [adminLoading, setAdminLoading] = useState(false);
 
   const submitResetRequest = async () => {
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(resetEmail.trim())) { setResetMessage('Enter a valid email address.'); return; }
-    setResetBusy(true); setResetMessage('');
+    if (resetBusy || resetSubmitted) return;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(resetEmail.trim())) { setResetError('Enter a valid email address.'); return; }
+    setResetBusy(true);
+    setResetError('');
     try {
       await requestCsrPasswordReset(resetEmail);
-      setResetMessage('If this account is eligible, a password reset request has been submitted for approval.');
-    } catch (error) { setResetMessage(error instanceof Error ? error.message : 'Could not submit the request.'); }
+      setResetSubmitted(true);
+    } catch { setResetError('Could not submit the request. Please try again.'); }
     finally { setResetBusy(false); }
   };
 
@@ -174,9 +177,9 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
             {/* Logo */}
             <div className="flex flex-col items-center gap-3">
               <img src={imgLogo} alt="360 Logistics" className="h-16 object-contain" />
-              <p className="text-base text-muted-foreground text-center">
+              {passwordFlow === 'login' && <p className="text-base text-muted-foreground text-center">
                 {view === 'driver' ? tr('login.welcome') : 'Welcome Back, Please enter your details'}
-              </p>
+              </p>}
             </div>
 
             {/* ══ DRIVER / ADMIN SEGMENTED TOGGLE ══
@@ -364,18 +367,43 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
                 >
                   {adminLoading ? <><Loader2 className="w-5 h-5 animate-spin" /> Signing in…</> : 'Log In'}
                 </button>
-                <button type="button" onClick={() => { setResetEmail(email); setResetMessage(''); setPasswordFlow('request'); }} className="block mx-auto text-sm text-primary underline underline-offset-2">Forgot password?</button>
+                <button type="button" onClick={() => { setResetEmail(email); setResetError(''); setResetSubmitted(false); setPasswordFlow('request'); }} className="block mx-auto text-sm text-primary underline underline-offset-2">Forgot password?</button>
               </div>
             )}
 
             {passwordFlow === 'request' && <div className="space-y-4">
               <h1 className="text-xl font-semibold">Forgot Password</h1>
-              <p className="text-sm text-muted-foreground">Enter your registered 360 Logistics login identifier. This request is for CSR accounts.</p>
-              <label className="block text-sm font-medium" htmlFor="reset-email">Email</label>
-              <input id="reset-email" type="email" autoComplete="email" value={resetEmail} onChange={(event) => setResetEmail(event.target.value)} className="w-full rounded-xl border px-4 py-3 text-base" />
-              <button type="button" disabled={resetBusy} onClick={submitResetRequest} className="w-full min-h-12 rounded-xl bg-primary text-white font-semibold disabled:opacity-50">Submit Request</button>
-              {resetMessage && <p role="status" className="text-sm">{resetMessage}</p>}
-              <button type="button" onClick={() => { setPasswordFlow('login'); setView('admin'); setResetMessage(''); }} className="text-sm text-primary">Back to Login</button>
+              {resetSubmitted ? (
+                <div role="status" className="rounded-xl border border-primary/20 bg-primary/5 p-4 text-sm leading-6 text-foreground">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 aria-hidden="true" className="h-5 w-5 shrink-0 text-primary" />
+                    <h2 className="text-base font-semibold">Request Submitted</h2>
+                  </div>
+                  <p className="mt-2">Your request has been processed.</p>
+                  <p className="mt-2">If your email belongs to an eligible CSR account, the request will be available for OPM review. After approval, OPM can provide your password reset link.</p>
+                </div>
+              ) : (
+                <form noValidate onSubmit={(event) => { event.preventDefault(); void submitResetRequest(); }} className="space-y-4">
+                  <p className="text-sm text-muted-foreground">Enter the email you use to sign in as a CSR.</p>
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium" htmlFor="reset-email">Email</label>
+                    <input id="reset-email" type="email" autoComplete="email" placeholder="Enter your CSR email"
+                      value={resetEmail} disabled={resetBusy} aria-invalid={!!resetError || undefined}
+                      aria-describedby={resetError ? 'reset-request-error' : undefined}
+                      onChange={(event) => { setResetEmail(event.target.value); if (resetError) setResetError(''); }}
+                      className={`w-full rounded-xl border px-4 py-3 text-base placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-60 ${resetError ? 'border-red-500' : 'border-border'}`} />
+                  </div>
+                  {resetError && <p id="reset-request-error" role="alert" className="flex items-start gap-2 text-sm text-red-600">
+                    <AlertCircle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />{resetError}
+                  </p>}
+                  <button type="submit" disabled={resetBusy}
+                    className="flex w-full min-h-12 items-center justify-center gap-2 rounded-xl bg-primary text-white font-semibold hover:bg-primary/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-50">
+                    {resetBusy ? <><Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />Submitting...</> : 'Submit Request'}
+                  </button>
+                </form>
+              )}
+              <button type="button" onClick={() => { setPasswordFlow('login'); setView('admin'); setResetError(''); setResetSubmitted(false); }}
+                className="min-h-10 text-sm font-medium text-primary hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Back to Login</button>
             </div>}
 
           </div>
