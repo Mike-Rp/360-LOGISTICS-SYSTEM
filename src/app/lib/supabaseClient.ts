@@ -23,3 +23,8 @@ if (!url || !anonKey) {
 }
 
 export const supabase = createClient(url, anonKey);
+
+/* Dev-only convenience: lets you call supabase.from(...)/rpc(...) directly from the
+   browser console to test RLS/guards as the signed-in user. Never included in a
+   production build — import.meta.env.DEV is false and this branch is dropped. */
+if (import.meta.env.DEV) (window as unknown as { supabase: typeof supabase }).supabase = supabase;
