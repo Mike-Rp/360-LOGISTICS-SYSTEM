@@ -57,10 +57,11 @@ and their SQL test files passed (each test rolls itself back).
 
 ### Still needed (backend / database)
 
-1. **Activity-log gaps** (REQ-004 follow-up) — PIN reset done (2026-10-23).
-   Still needed: convert driver/truck add, driver/truck edit, and document
-   approve/reject from the client-driven auto-save path to dedicated
-   server-side RPCs that log atomically (large scope, see REQ-004 entry).
+1. **Activity-log gaps** (REQ-004 follow-up) — PIN reset done (2026-10-23);
+   document approve/reject done (2026-10-25). Still needed: convert driver
+   add and truck add from the client-driven auto-save path to dedicated
+   server-side RPCs that log atomically (see REQ-004 entry — no edit UI
+   exists for either today, so this is "add" only despite the old wording).
    Never log PINs, passwords or tokens.
 2. **REQ-006** live test — one real CSR reset end-to-end on the live site.
 3. **Optional:** move files copied before REQ-010 so that old 10-year links
@@ -599,6 +600,37 @@ saved normally, confirming the check only blocks true duplicates.
 project, plus one Edge Function deployed.
 
 **Approval:** Approved — local development (2026-10-25).
+
+**2026-10-26 — bug found and fixed (frontend only, no new migration):** live
+testing surfaced gallery-sourced operational photos saving with a blank
+`taken_at`. Cause: a gallery pick's `photo.timestamp` starts empty
+(`galleryPhotoMetadata()`) and is normally filled in with "now" by
+`savedPhotoMetadata()` before being persisted — but that fill-in happened
+*after* the call to `uploadOperationalPhoto()` in `handleOperationalPhotoConfirmed`,
+so the Edge Function (which now owns the actual write) received and saved the
+still-empty value. Fixed by computing the "now" fallback before sending, so
+the Edge Function receives the same corrected value `savedPhotoMetadata()`
+uses for the local state. Verified live: a fresh gallery upload after the fix
+showed a correct timestamp in the admin preview; photos uploaded before the
+fix (while the bug was live) keep showing "Date unavailable" permanently,
+since the real capture time was never captured — expected, not fixable after
+the fact, same as any other historical-data gap in this project.
+
+**2026-10-26 — separate, pre-existing bug found and fixed while investigating
+the one above (unrelated to REQ-015 itself):** `assignment_documents.uploaded_at`
+has been server-stamped by a trigger since `20261017000001_document_uploaded_at.sql`,
+but `db.ts`'s shared `docFromRow()` — used by every document list in the app
+except one — never actually read that column into the frontend's
+`AssignmentDoc` objects, so "Date unavailable" showed for every document
+everywhere, including ones uploaded seconds earlier, regardless of whether
+the database actually had a real timestamp. Only `loadDriverCompletedDelivery()`
+had a manual, duplicate patch adding it back in for that one screen. Fixed
+`docFromRow()` to include `uploadedAt` (matching how `photoFromRow()` already
+did for operational photos), added `uploadedAt` to the `AssignmentDoc` type,
+and removed the now-redundant patch. No migration needed — purely a
+frontend mapping gap; the server-side timestamp was always being captured
+correctly. Verified live: a document uploaded minutes earlier correctly
+showed its real timestamp after the fix.
 
 ---
 
@@ -1289,6 +1321,37 @@ actor/role/timestamp in the Activity tab.
 **Still open (not attempted — large scope, separate task):** driver/truck
 add/edit and document approve/reject converted to dedicated server-side RPCs
 instead of the client-driven auto-save path.
+
+**2026-10-25 — Document approve/reject converted (1 of 3), applied and
+verified live:** `supabase/migrations/20261025000006_document_review_rpcs.sql`.
+New `approve_document(assignment_id, doc_type)` / `reject_document(assignment_id,
+doc_type, reason)` validate the document is uploaded and still `pending`,
+change `doc_status`, and write the `activity_log` row (actor resolved
+server-side from `auth.uid()`, never trusted from the client) in one
+transaction. A new guard trigger (`guard_document_review()`, same
+transaction-local-flag technique as `guard_assignment_cancel()`) blocks any
+direct `doc_status`/`reject_reason` change outside these two functions — the
+driver's own document re-upload path (`file_url`/`uploaded`/`uploaded_at`
+only) is untouched, since it was never part of this guard.
+`db.ts` gained `approveDocument()`/`rejectDocument()`; `DriversManagement.tsx`'s
+`handleApproveDoc`/`handleRejectDoc` now go through the same `onServerChange()`
+pattern already used for issue resolution/cancellation, with real busy/error
+states on the Approve/Reject buttons (previously these had none at all).
+`AssignmentActionErrorCode` gained `already_reviewed`/`not_uploaded`.
+
+Verified live: approved one document and rejected another (with a reason) on
+`ASN82575` — both actions correctly updated `doc_status` and produced
+"Document Approved"/"Document Rejected" entries in the Activity tab with the
+real actor's name/role/email and timestamp. Confirmed the guard actually
+blocks a bypass: a raw `supabase.from('assignment_documents').update({...})`
+call from the live, signed-in app's browser console correctly failed with
+`42501: doc_status may only change through approve_document()/reject_document()`
+(a first attempt via the Supabase SQL editor had misleadingly appeared to
+succeed — the SQL editor runs as an unauthenticated system connection, which
+every guard trigger in this project deliberately exempts, so it was never a
+valid way to test this; re-tested from an actual authenticated session instead).
+Driver/truck registration (2 of 3, 3 of 3) remain open — see REQ-004
+follow-up item 1 in "Still needed" above.
 
 **2026-10-23 — CSR setup link applied and verified (closes the "CSR setup
 link" backlog item):** `supabase/migrations/20261023000010_csr_setup_link.sql`.
