@@ -1353,3 +1353,43 @@ export async function uploadImage(dataUrl: string, path: string): Promise<string
   signedLinks.set(path, { url: data.signedUrl, expiresAt: Date.now() + SIGNED_LINK_SECONDS * 1000 });
   return data.signedUrl;
 }
+
+export class DuplicatePhotoError extends Error {
+  constructor() { super('duplicate_photo'); }
+}
+
+/** Operational evidence photos only. Routes the save through the
+ * upload-operational-photo Edge Function, which computes the file's hash itself
+ * from the bytes it actually receives (never trusting a client-supplied hash),
+ * rejects an exact repeat of any driver's prior operational photo, and — only if
+ * it's new — uploads to Storage and writes the status_photos row itself. The
+ * browser can no longer write an operational-category row directly; see
+ * 20261025000004's RLS tightening. */
+export async function uploadOperationalPhoto(
+  assignmentId: string, category: string, photo: StatusPhoto, source: 'camera' | 'gallery',
+): Promise<{ url: string }> {
+  const { data, error } = await supabase.functions.invoke('upload-operational-photo', {
+    body: {
+      assignmentId, category, photoDataUrl: photo.url,
+      takenAt: photo.timestamp ?? '', location: photo.location ?? null,
+      lat: photo.coords?.lat ?? null, lng: photo.coords?.lng ?? null,
+      gpsAccuracyM: photo.gpsAccuracyM ?? null, gpsObservedAt: photo.gpsObservedAt ?? null,
+      source, captureObservedAt: source === 'camera' ? (photo.timestamp || null) : null,
+    },
+  });
+  if (error) {
+    const context = (error as { context?: Response }).context;
+    let code: string | undefined;
+    try { code = context ? (await context.json())?.error : undefined; } catch { /* non-JSON body */ }
+    if (code === 'duplicate_photo') throw new DuplicatePhotoError();
+    throw new Error(`upload: ${code ?? error.message}`);
+  }
+  const path = (data as { ok?: true; url?: string } | null)?.url;
+  if (!path) throw new Error('upload: no url returned');
+  // Same tail as uploadImage(): the row stores the bare path; the caller needs a
+  // displayable link right away for the optimistic UI update before the next poll.
+  const { data: signed, error: signError } = await supabase.storage.from(BUCKET).createSignedUrl(path, SIGNED_LINK_SECONDS);
+  if (signError || !signed) throw new Error(`sign: ${signError?.message ?? 'no url'}`);
+  signedLinks.set(path, { url: signed.signedUrl, expiresAt: Date.now() + SIGNED_LINK_SECONDS * 1000 });
+  return { url: signed.signedUrl };
+}

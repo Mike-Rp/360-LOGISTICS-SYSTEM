@@ -11,6 +11,7 @@ import { OPERATIONAL_STEPS } from '../../lib/assignmentOperational';
 import {
   loadDriverData, loadDriverCompletedDelivery, driverUpdate, advanceDriverStage, reportAssignmentIssue, uploadImage,
   markDriverNotificationRead, markAllDriverNotificationsRead, type DriverNotificationRecord,
+  uploadOperationalPhoto, DuplicatePhotoError,
 } from '../../lib/db';
 import { getDeliveryTimingStatus, getPickupTimingStatus, type DeliveryTimingStatus } from '../../lib/assignmentTiming';
 import { assignmentDisplayStatusConfig, getAssignmentDisplayStatus, getAssignmentDocumentProgress, getDocumentAgingState } from '../../lib/assignmentWorkflow';
@@ -776,7 +777,8 @@ function PhotoSheet({ status, title, instruction, qualityCheck, existingPhoto, o
     }
     catch (err) {
       console.error('[status photo] save failed:', err);
-      setSaveError(status === 'Delivered' ? t('photo.deliveryError') : t('photo.saveError'));
+      setSaveError(err instanceof DuplicatePhotoError ? t('photo.duplicateError')
+        : status === 'Delivered' ? t('photo.deliveryError') : t('photo.saveError'));
     } finally { setSaving(false); }
   };
   const cancelPhoto = () => {
@@ -1920,11 +1922,11 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
       const pickupGroupCompleted = getDriverPhase(assignment) === 'pickup'
         && completedPhotoGroup(OPERATIONAL_PHOTOS.pickup, assignment.statusPhotos, category)
         && !assignment.statusPhotos?.loading_before?.url;
-      const url = await uploadImage(photo.url, `photos/${assignment.id}/${category}_${Date.now()}.jpg`);
+      // The Edge Function computes the hash itself and saves the row — it owns
+      // the full write, not just a pre-check. See db.ts's uploadOperationalPhoto.
+      const { url } = await uploadOperationalPhoto(assignment.id, category, photo, source);
       if (!sessionActiveRef.current) return;
       const stored = savedPhotoMetadata(photo, source, url, new Date().toISOString());
-      await driverUpdate(driverName, assignment.id, { statusPhotos: { [category]: stored } });
-      if (!sessionActiveRef.current) return;
       // The slot counts only after Storage and its status_photos row both saved.
       setData((previous) => previous?.assignment?.id === assignment.id
         ? { ...previous, assignment: { ...previous.assignment,
@@ -1937,6 +1939,8 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
         setAutoGuide({ assignmentId: assignment.id, phase: 'pickup', target: 'loading_before' });
       }
     } catch (error) {
+      // Let PhotoSheet show its own specific message instead of the generic banner.
+      if (error instanceof DuplicatePhotoError) throw error;
       if (!await onCheckSession() || !sessionActiveRef.current) throw error;
       console.error('[operational photo] save failed:', error);
       setActionError(t('workflow.photoFailed'));
