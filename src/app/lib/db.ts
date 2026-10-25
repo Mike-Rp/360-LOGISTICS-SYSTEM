@@ -803,7 +803,8 @@ export type AssignmentActionErrorCode =
   | 'driver_busy' | 'truck_unavailable' | 'no_changes' | 'not_authorized' | 'not_deployed' | 'invalid' | 'network'
   | 'already_archived' | 'truck_busy'
   | 'already_completed' | 'not_completable' | 'documents_not_approved' | 'driver_archived' | 'truck_archived'
-  | 'already_resolved' | 'assignment_not_active' | 'already_reviewed' | 'not_uploaded';
+  | 'already_resolved' | 'assignment_not_active' | 'already_reviewed' | 'not_uploaded' | 'duplicate_plate'
+  | 'duplicate_phone' | 'duplicate_name' | 'invalid_name';
 export class AssignmentActionError extends Error {
   code: AssignmentActionErrorCode;
   constructor(code: AssignmentActionErrorCode, detail?: string) { super(detail ?? code); this.code = code; }
@@ -853,9 +854,11 @@ function actionFailure(error: { message?: string; code?: string }): AssignmentAc
     'already_archived', 'truck_busy',
     'already_completed', 'not_completable', 'documents_not_approved', 'driver_archived', 'truck_archived',
     'already_resolved', 'assignment_not_active', 'already_reviewed', 'not_uploaded',
+    'duplicate_plate', 'duplicate_phone', 'duplicate_name', 'invalid_name',
   ];
   for (const c of known) if (m.includes(c)) return new AssignmentActionError(c, m);
   if (error.code === 'PGRST202') return new AssignmentActionError('not_deployed', m);   // function missing: migration not applied
+  if (error.code === '23505') return new AssignmentActionError('duplicate_plate', m);   // fallback only — prefer the message matches above
   if (error.code === '22023' || error.code === 'P0002') return new AssignmentActionError('invalid', m);
   return new AssignmentActionError('network', m);
 }
@@ -926,6 +929,29 @@ export async function archiveDriver(id: string): Promise<void> {
 export async function archiveTruck(id: string): Promise<void> {
   const { error } = await supabase.rpc('archive_truck', { p_truck_id: id });
   if (error) throw actionFailure(error);
+}
+
+/** REQ-004 follow-up (2 of 3): the server assigns the ID and checks for a duplicate
+ * plate against live data, closing the race condition the old client-side-only
+ * check couldn't. Returns the new truck's server-generated id. */
+export async function registerTruck(plateNumber: string, classification: string, capacity: string): Promise<string> {
+  const { data, error } = await supabase.rpc('register_truck', {
+    p_plate_number: plateNumber, p_classification: classification, p_capacity: capacity,
+  });
+  if (error) throw actionFailure(error);
+  return data as string;
+}
+
+/** REQ-004 follow-up (3 of 3): assigns the ID, validates and duplicate-checks
+ * name/phone against live data, inserts the driver row, and creates the Auth
+ * login + PIN via the existing sync_driver_login() — all in one transaction.
+ * Returns the new driver's server-generated id. */
+export async function registerDriver(firstName: string, surname: string, phone: string, pin: string): Promise<string> {
+  const { data, error } = await supabase.rpc('register_driver', {
+    p_first_name: firstName, p_surname: surname, p_phone: phone, p_pin: pin,
+  });
+  if (error) throw actionFailure(error);
+  return data as string;
 }
 
 export async function resetDriverPin(id: string, pin: string): Promise<void> {

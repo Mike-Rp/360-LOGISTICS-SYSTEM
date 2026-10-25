@@ -783,7 +783,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
       {showAddDriver && canManageFleetAccounts && (
         <RegisterDriverModal
           drivers={drivers}
-          setDrivers={setDrivers}
+          onServerChange={onServerChange}
           onCreated={(driver) => { setAvailabilityFilter('all'); markLocalRecordAdded('driver', driver.id); activeDriversPage.setPage(1); }}
           onClose={() => setShowAddDriver(false)}
         />
@@ -793,7 +793,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
       {showAddTruck && canManageFleetAccounts && (
         <RegisterTruckModal
           trucks={trucks}
-          setTrucks={setTrucks}
+          onServerChange={onServerChange}
           onClose={() => setShowAddTruck(false)}
         />
       )}

@@ -232,6 +232,10 @@ const actionMessage = (code: AssignmentActionErrorCode): string => ({
   assignment_not_active: 'This delivery is no longer active, so its issue can\'t be resolved from here.',
   already_reviewed:  'This document has already been reviewed. Refresh the page.',
   not_uploaded:      'This document hasn\'t been uploaded yet.',
+  duplicate_plate:   'This plate number is already registered.',
+  duplicate_phone:   'This mobile number is already registered.',
+  duplicate_name:    'A driver with this name already exists.',
+  invalid_name:      'Names can only contain letters, spaces, apostrophes, hyphens and periods.',
   invalid:          'The server rejected one of the values. Check the form and try again.',
   network:           'Couldn\'t reach the server. Check your connection and try again.',
 }[code]);

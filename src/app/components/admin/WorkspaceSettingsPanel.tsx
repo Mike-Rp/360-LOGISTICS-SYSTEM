@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   X, Users, UserPlus, Clock, ClipboardList, Search, ChevronRight,
   LogIn, CheckCircle, XCircle, FileCheck, FileX, UserX, UserMinus,
-  RefreshCw, Shield, Mail, Pencil, Archive, KeyRound,
+  RefreshCw, Shield, Mail, Pencil, Archive, KeyRound, Truck,
 } from 'lucide-react';
 import { listTeamMembers, createTeamMember, archiveTeamMember, restoreTeamMember, listCsrPasswordResetRequests, reviewCsrPasswordReset, createCsrPasswordResetLink, resolveAvatarUrls } from '../../lib/db';
 import type { CsrPasswordResetRequest } from '../../lib/db';
@@ -18,8 +18,10 @@ const ACT_CONFIG: Record<AdminActivityType, { label: string; icon: React.Element
   task_completed:      { label: 'Task Completed', icon: CheckCircle,  color: 'text-green-500'  },
   task_cancelled:      { label: 'Delivery Cancelled', icon: XCircle, color: 'text-red-500' },
   task_edited:         { label: 'Task Edited',    icon: Pencil,       color: 'text-amber-500'  },
+  driver_added:        { label: 'Driver Added',    icon: UserPlus,    color: 'text-blue-500'   },
   driver_archived:     { label: 'Driver Archived', icon: Archive,     color: 'text-orange-500' },
   driver_pin_reset:    { label: 'Driver PIN Reset', icon: KeyRound,   color: 'text-blue-600'   },
+  truck_added:         { label: 'Truck Added',     icon: Truck,       color: 'text-blue-500'   },
   truck_archived:      { label: 'Truck Archived',  icon: Archive,     color: 'text-orange-500' },
   doc_approved:        { label: 'Document Approved', icon: FileCheck, color: 'text-teal-500' },
   doc_rejected:        { label: 'Document Rejected', icon: FileX, color: 'text-red-500' },
@@ -66,6 +68,8 @@ function getDesc(e: AdminActivityEntry): string {
     case 'driver_deleted':       return `Removed driver "${e.driverName ?? '—'}"`;
     case 'driver_archived':      return `Moved driver "${e.driverName ?? '—'}" to archive`;
     case 'driver_pin_reset':     return `New PIN set for "${e.driverName ?? '—'}"`;
+    case 'driver_added':         return `Registered driver ${e.driverName ?? '—'}`;
+    case 'truck_added':          return `Registered truck ${e.truckPlate ?? '—'}`;
     case 'truck_archived':       return `Moved truck ${e.truckPlate ?? '—'} to archive`;
     case 'member_added':         return `Added ${e.memberName ?? e.memberEmail ?? 'a member'} to the team`;
     case 'member_archived':      return `Archived ${e.memberName ?? e.memberEmail ?? 'a member'}`;

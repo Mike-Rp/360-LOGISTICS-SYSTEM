@@ -4,12 +4,36 @@ import {
   Package, Weight, Check, ChevronDown, ClipboardList,
 } from 'lucide-react';
 import type { LocalDriver, LocalTruck } from '../../data/assignmentTypes';
-import { normaliseMobile } from '../../lib/db';
+import { normaliseMobile, registerTruck, registerDriver, AssignmentActionError, type AssignmentActionErrorCode } from '../../lib/db';
 import { TRUCK_CLASSIFICATIONS, formatCapacity, capacityKgOnly } from '../../data/truckTypes';
 import TruckImage from '../TruckImage';
 
 /* ── Helpers ── */
 const generatePin = () => String(Math.floor(1000 + Math.random() * 9000));
+
+/* Matches register_driver()'s server-side rule — letters, spaces, apostrophes,
+   hyphens, periods only. */
+const NAME_PATTERN = /^[A-Za-z][A-Za-z\s'.-]*$/;
+
+/* Plain-language text for register_truck()'s error codes. */
+const truckErrorMessage = (code: AssignmentActionErrorCode): string => ({
+  duplicate_plate: 'This plate number was just registered by someone else. Try a different one.',
+  not_authorized: 'Your account is not allowed to register a truck.',
+  not_deployed: 'This feature isn\'t set up on the database yet (the migration hasn\'t been applied).',
+  invalid: 'The server rejected one of the values. Check the form and try again.',
+  network: 'Couldn\'t reach the server. Check your connection and try again.',
+} as Partial<Record<AssignmentActionErrorCode, string>>)[code] ?? 'Could not register this truck. Please try again.';
+
+/* Plain-language text for register_driver()'s error codes. */
+const driverErrorMessage = (code: AssignmentActionErrorCode): string => ({
+  duplicate_phone: 'That mobile number was just registered by someone else.',
+  duplicate_name: 'That driver name was just registered by someone else.',
+  invalid_name: 'Names can only contain letters, spaces, apostrophes, hyphens and periods.',
+  not_authorized: 'Your account is not allowed to register a driver.',
+  not_deployed: 'This feature isn\'t set up on the database yet (the migration hasn\'t been applied).',
+  invalid: 'The server rejected one of the values. Check the form and try again.',
+  network: 'Couldn\'t reach the server. Check your connection and try again.',
+} as Partial<Record<AssignmentActionErrorCode, string>>)[code] ?? 'Could not register this driver. Please try again.';
 
 /* ── Duplicate-account detection ──────────────────────────────────────────────
    Phones are compared through normaliseMobile (the same rule db.ts and the SQL
@@ -81,10 +105,11 @@ function ModalShell({ title, onClose, layer = false, wide = false, children, foo
 /* ═══════════════════════════════════════════════════════
    Register Driver Modal
    ═══════════════════════════════════════════════════════ */
-export function RegisterDriverModal({ drivers = [], setDrivers, onClose, onCreated, layer = false }: {
-  /* Existing drivers, used only to reject duplicates before saving. */
+export function RegisterDriverModal({ drivers = [], onServerChange, onClose, onCreated, layer = false }: {
+  /* Existing drivers, used only for the early soft duplicate check — the server
+     re-checks live data authoritatively when the driver is actually registered. */
   drivers?: LocalDriver[];
-  setDrivers: React.Dispatch<React.SetStateAction<LocalDriver[]>>;
+  onServerChange: (action: () => Promise<void>) => Promise<void>;
   onClose: () => void;
   /* Fired once the driver row exists — lets the caller auto-select it */
   onCreated?: (driver: LocalDriver) => void;
@@ -97,6 +122,8 @@ export function RegisterDriverModal({ drivers = [], setDrivers, onClose, onCreat
   const [generatedPin, setGeneratedPin] = useState('');
   const [nameError,    setNameError]    = useState('');
   const [registered,   setRegistered]   = useState(false);
+  const [registering,  setRegistering]  = useState(false);
+  const [registerError, setRegisterError] = useState('');
 
   /* Full name as it will be stored, so the duplicate check compares like with like. */
   const fullName = () => `${firstName.trim()} ${surname.trim()}`;
@@ -105,6 +132,10 @@ export function RegisterDriverModal({ drivers = [], setDrivers, onClose, onCreat
   /* Shared by the blur handlers and by submit, so the same rules apply either way. */
   const validateDriver = (): boolean => {
     if (!surname.trim() || !firstName.trim()) { setNameError('Both surname and first name are required.'); return false; }
+    if (!NAME_PATTERN.test(firstName.trim()) || !NAME_PATTERN.test(surname.trim())) {
+      setNameError('Names can only contain letters, spaces, apostrophes, hyphens and periods.');
+      return false;
+    }
     const digits = phoneNumber.replace(/\D/g, '');
     if (digits.length !== 10) { setPhoneError('Enter a valid 10-digit mobile number.'); return false; }
     /* The login screen only accepts numbers starting with 9, so without this a driver
@@ -133,6 +164,10 @@ export function RegisterDriverModal({ drivers = [], setDrivers, onClose, onCreat
 
   const checkNameOnBlur = () => {
     if (!surname.trim() || !firstName.trim()) return;
+    if (!NAME_PATTERN.test(firstName.trim()) || !NAME_PATTERN.test(surname.trim())) {
+      setNameError('Names can only contain letters, spaces, apostrophes, hyphens and periods.');
+      return;
+    }
     const dup = findDuplicateDriver(drivers, { name: fullName() });
     setNameError(dup?.field === 'name' ? dup.message : '');
   };
@@ -142,23 +177,27 @@ export function RegisterDriverModal({ drivers = [], setDrivers, onClose, onCreat
     setGeneratedPin(generatePin());
   };
 
-  const handleRegisterDriver = () => {
+  const handleRegisterDriver = async () => {
     if (!validateDriver()) return;
     if (!generatedPin) { setNameError('Please generate a PIN first.'); return; }
 
-    const newDriver: LocalDriver = {
-      id: `DR${String(Date.now()).slice(-5)}`,
-      name: `${firstName.trim()} ${surname.trim()}`,
-      phone: `+63${phoneNumber.replace(/\D/g, '')}`,
-      truckNumber: '—',
-      status: 'Pending' as const,
-      currentLocation: '—',
-      deliveriesToday: 0, rating: 0,
-      pin: generatedPin,
-    };
-    setDrivers((p) => [...p, newDriver]);
-    onCreated?.(newDriver);
-    setRegistered(true);
+    setRegisterError('');
+    setRegistering(true);
+    try {
+      let newId = '';
+      await onServerChange(async () => {
+        newId = await registerDriver(firstName.trim(), surname.trim(), fullPhone(), generatedPin);
+      });
+      onCreated?.({
+        id: newId, name: fullName(), phone: fullPhone(), truckNumber: '—',
+        status: 'Pending', currentLocation: '—', deliveriesToday: 0, rating: 0, pin: generatedPin,
+      });
+      setRegistered(true);
+    } catch (err) {
+      setRegisterError(err instanceof AssignmentActionError ? driverErrorMessage(err.code) : 'Could not register this driver. Please try again.');
+    } finally {
+      setRegistering(false);
+    }
   };
 
   return (
@@ -242,14 +281,15 @@ export function RegisterDriverModal({ drivers = [], setDrivers, onClose, onCreat
             )}
           </div>
 
+          {registerError && <p role="alert" className="text-xs font-medium text-red-600">{registerError}</p>}
           <div className="flex gap-3 pt-1">
-            <button onClick={onClose}
-              className="flex-1 px-4 py-2.5 border border-border rounded-xl hover:bg-accent transition-colors text-sm">
+            <button onClick={onClose} disabled={registering}
+              className="flex-1 px-4 py-2.5 border border-border rounded-xl hover:bg-accent transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed">
               Cancel
             </button>
-            <button onClick={handleRegisterDriver} disabled={!generatedPin}
+            <button onClick={handleRegisterDriver} disabled={!generatedPin || registering}
               className="flex-1 px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-              <UserCheck className="w-4 h-4" /> Register Driver
+              <UserCheck className="w-4 h-4" /> {registering ? 'Registering…' : 'Register Driver'}
             </button>
           </div>
         </div>
@@ -286,9 +326,11 @@ export function RegisterDriverModal({ drivers = [], setDrivers, onClose, onCreat
    ═══════════════════════════════════════════════════════ */
 const TRUCK_STEP_NAMES = ['Plate number', 'Classification', 'Review'] as const;
 
-export function RegisterTruckModal({ trucks, setTrucks, onClose, onCreated, layer = false }: {
+export function RegisterTruckModal({ trucks, onServerChange, onClose, onCreated, layer = false }: {
+  /* Existing trucks, used only for the early soft duplicate-plate check at step 1 — the
+     server re-checks live data authoritatively when the truck is actually registered. */
   trucks: LocalTruck[];
-  setTrucks: React.Dispatch<React.SetStateAction<LocalTruck[]>>;
+  onServerChange: (action: () => Promise<void>) => Promise<void>;
   onClose: () => void;
   onCreated?: (truck: LocalTruck) => void;
   layer?: boolean;
@@ -302,6 +344,8 @@ export function RegisterTruckModal({ trucks, setTrucks, onClose, onCreated, laye
   const [truckClassification, setTruckClassification] = useState('');
   const [classError,          setClassError]          = useState('');
   const [truckRegistered,     setTruckRegistered]     = useState(false);
+  const [registering,         setRegistering]         = useState(false);
+  const [registerError,       setRegisterError]       = useState('');
   const plateNumRef     = useRef<HTMLInputElement>(null);
   const plateLettersRef = useRef<HTMLInputElement>(null);
 
@@ -367,19 +411,21 @@ export function RegisterTruckModal({ trucks, setTrucks, onClose, onCreated, laye
     }
   };
 
-  const handleRegisterTruck = () => {
+  const handleRegisterTruck = async () => {
     if (!selectedClass) { setClassError('Please select a truck classification.'); setStep(2); return; }
     const plate = `${plateLetters} ${plateNumbers}`;
-    const newTruck: LocalTruck = {
-      id: `T${String(Date.now()).slice(-5)}`,
-      plateNumber: plate,
-      status: 'Available',
-      classification: truckClassification,
-      capacity: truckCapacity,
-    };
-    setTrucks((p) => [...p, newTruck]);
-    onCreated?.(newTruck);
-    setTruckRegistered(true);
+    setRegisterError('');
+    setRegistering(true);
+    try {
+      let newId = '';
+      await onServerChange(async () => { newId = await registerTruck(plate, truckClassification, truckCapacity); });
+      onCreated?.({ id: newId, plateNumber: plate, status: 'Available', classification: truckClassification, capacity: truckCapacity });
+      setTruckRegistered(true);
+    } catch (err) {
+      setRegisterError(err instanceof AssignmentActionError ? truckErrorMessage(err.code) : 'Could not register this truck. Please try again.');
+    } finally {
+      setRegistering(false);
+    }
   };
 
   /* Numbered stepper — the existing Next/Back handlers remain the only way to advance. */
@@ -415,20 +461,24 @@ export function RegisterTruckModal({ trucks, setTrucks, onClose, onCreated, laye
 
   /* Pinned footer */
   const wizardFooter = (
-    <div className="flex gap-3">
+    <div>
+      {registerError && <p role="alert" className="mb-2 text-xs font-medium text-red-600">{registerError}</p>}
+      <div className="flex gap-3">
       <button
         onClick={step === 1 ? onClose : () => setStep((s) => s - 1)}
-        className="flex-1 px-4 py-2.5 border border-border rounded-xl hover:bg-accent transition-colors text-sm"
+        disabled={registering}
+        className="flex-1 px-4 py-2.5 border border-border rounded-xl hover:bg-accent transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {step === 1 ? 'Cancel' : 'Back'}
       </button>
       <button
         onClick={step === 3 ? handleRegisterTruck : handleNext}
-        disabled={step === 1 && !plateIsValid}
+        disabled={(step === 1 && !plateIsValid) || registering}
         className="flex-1 px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
       >
-        {step === 3 ? <><Check className="w-4 h-4" /> Register truck</> : 'Next'}
+        {step === 3 ? <><Check className="w-4 h-4" /> {registering ? 'Registering…' : 'Register truck'}</> : 'Next'}
       </button>
+      </div>
     </div>
   );
 
