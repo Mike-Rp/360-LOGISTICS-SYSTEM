@@ -44,7 +44,7 @@ and their SQL test files passed (each test rolls itself back).
 | REQ-003 Cancel: reason + password + Loading cutoff + driver notice | `20261021000000`, `20261018000002`, `20261025000001`, `000002` | `req003_cancel_cutoff` 16/16 | Implemented |
 | REQ-004 OPM role | `20261018000003`, `000004`, `20261019000000`, `20261023000004`, `000007`, `000010`, `20261025000006`, `20261026000000`, `000002` | — | Implemented |
 | REQ-005 Exact pickup/delivery coordinates | `20261020000000`, `000001` | 20/20 | Completed |
-| REQ-006 CSR password reset via OPM link | `20261020000002`, `000003` + Edge Function | `req006` 32/32 | Backend live; live CSR reset test pending |
+| REQ-006 CSR password reset via OPM link | `20261020000002`, `000003` + Edge Function | `req006` 32/32 | Implemented — live test passed |
 | REQ-009 Single active session (newest login wins) | `20261021000001` | `single_active_session` 15/15 | Implemented |
 | REQ-010 Store file paths, 1-hour links | `20261021000003` | `store_file_paths` 4/4 | Implemented |
 | REQ-011 Dispatch / complete as one database action | `20261021000004`, `20261023000003` (hardening) | `dispatch_complete` 12/12 | Implemented |
@@ -61,7 +61,9 @@ and their SQL test files passed (each test rolls itself back).
    reset (2026-10-23), document approve/reject (2026-10-25), truck
    registration and driver registration (2026-10-26) are all now dedicated,
    atomically-logged server-side RPCs. See REQ-004 entry for details.
-2. **REQ-006** live test — one real CSR reset end-to-end on the live site.
+2. ~~**REQ-006** live test~~ — **Closed 2026-10-26.** Full end-to-end reset
+   verified with a throwaway test CSR account, including a successful
+   sign-in with the new password. See REQ-006 entry for details.
 3. **Optional:** move files copied before REQ-010 so that old 10-year links
     stop working (skipped for now by decision).
 4. **Data review** (no change made) — one active assignment is Delivered with
@@ -1606,7 +1608,7 @@ above has no SQL yet.
 
 ## [REQ-006] CSR password-reset requests with OPM review
 
-**Status:** Backend applied; frontend wired. Live CSR reset test pending.
+**Status:** Implemented — live end-to-end test passed (2026-10-26).
 
 **Area:** Supabase Auth / Profiles / Workspace Settings / Login
 
@@ -1682,10 +1684,21 @@ Never the token, hash, password or keys.
 itself back) and `node --test supabase/functions/complete-csr-password-reset/logic.test.cjs`
 (11 tests).
 
-**Verification still required:** A live end-to-end reset with a designated test
-CSR account. The frontend now uses Copy Reset Link and `/reset-password`; the
-old recovery-email helpers were removed. The SQL suite and Edge Function health
-were reported as passed by the user, not rerun by Codex against the shared project.
+**Verified live end-to-end (2026-10-26):** using a throwaway test CSR account
+(`testaccount123@email.ph`, created via the Add Team Member setup-link flow,
+which reuses this same request table). Submitted "Forgot Password" →
+approved as OPM → Copy Reset Link → opened the link and set a new password
+→ **signed in with the new password successfully**. One real bug/behavior
+surfaced and explained, not fixed (working as designed): `request_csr_password_reset()`'s
+15-minute-per-user rate limit (any PRIOR request, regardless of status,
+blocks a new one) silently refused the first "Forgot Password" attempt,
+because the account's own setup-link completion from minutes earlier counted
+as a prior request. Confirmed via the `csr_password_reset_requests` table
+directly (only the old row existed, no new one), waited out the window, and
+the second attempt succeeded normally. Confirmed the full audit trail in
+`activity_log`: `password_reset_requested` → `password_reset_approved` →
+`password_reset_link_generated` → `password_changed`, each with a real
+timestamp and the correct actor.
 
 **Current local connection:** The user confirmed on 2026-10-20 that localhost
 connects to a production/shared Supabase project. Codex must not apply SQL or
