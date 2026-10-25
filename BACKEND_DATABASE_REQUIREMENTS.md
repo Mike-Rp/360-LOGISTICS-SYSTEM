@@ -66,9 +66,18 @@ and their SQL test files passed (each test rolls itself back).
    sign-in with the new password. See REQ-006 entry for details.
 3. **Optional:** move files copied before REQ-010 so that old 10-year links
     stop working (skipped for now by decision).
-4. **Data review** (no change made) — one active assignment is Delivered with
-    no `departed_at`, and one was cancelled after loading (before the REQ-003
-    cutoff existed).
+4. ~~**Data review**~~ — **Reviewed 2026-10-26, no change made (by decision).**
+   `ASN65961`: stale test-era row from early REQ-002 development — Delivered
+   but never run through `complete_assignment()`, predates reliable
+   `departed_at` stamping. `ASN59379`: cancelled with `operational_stage =
+   'loaded'` and no reason, via the old pre-REQ-003 unrestricted cancel
+   path — exactly the state the current `cancel_assignment()` would now
+   refuse (`loading_completed`), good evidence that fix was solving a real
+   problem. (Two other cancelled-with-`operational_stage` rows found during
+   this review, `ASN03578`/`ASN61867`, turned out to be false positives —
+   both cancelled at `pickup_arrived`, which the current rule already
+   explicitly allows.) Neither remaining row is an active bug; both are
+   inert historical artifacts, left as-is.
 
 ## [REQ-001] Separate Destination and Delivery Location
 
@@ -172,16 +181,40 @@ superseded by the two-part version — do not run both.
 
 ## DRIVER OPERATIONAL PHOTO EVIDENCE — BACKEND REQUIREMENTS
 
-**Status:** Partially implemented (2026-10-25) — per-photo metadata done via
-**DRIVER PHOTO UPLOAD METADATA — REQ09** below; the group-reference table
-described in this entry (one independently-measured location per
-pickup/loading/pretrip/unloading group, distinct from each photo's own GPS)
-was deliberately **not** built — out of scope for REQ09/REQ13, still open if
-wanted later.
+**Status:** Per-photo metadata done via **DRIVER PHOTO UPLOAD METADATA —
+REQ09** below. The group-reference table originally described in this entry
+(one independently-measured location per pickup/loading/pretrip/unloading
+group, distinct from each photo's own GPS) was discussed with the user and
+**deliberately not built** — on review, it would only have added a 5th data
+point next to each group's photos with no automatic comparison, so it
+wouldn't actually have delivered the transparency/discrepancy-checking the
+user was really asking about. Built a smaller, better-targeted alternative
+instead — see below. Nothing in this entry is open anymore.
 
-**BACKEND REQUIRED — PENDING IMPLEMENTATION** for the group-reference piece
-only. This extends the existing REQ-002 operational photo model; it does not
-change the current photo or stage gates.
+**2026-10-26 — Photo location-mismatch flagging, applied and verified live
+(pure frontend, no migration needed):** the real question this entry was
+trying to answer — "what if a driver isn't actually where a photo claims?"
+— turned out to be answerable entirely from data already captured by REQ09
+(each photo's own `lat`/`lng`), with no new table or backend change at all.
+`src/app/lib/assignmentOperational.ts` gained `findGroupLocationOutliers()`:
+for each operational photo group, compares every photo to its *closest*
+neighbor in that same group (not to the group's average — a single lone
+outlier would otherwise drag the average far enough to make every normal
+photo look wrong too; this bug was caught and fixed during live testing,
+see below) and flags any photo more than 500m from its nearest neighbor.
+`ShipmentPhotoEvidence.tsx` (shared by both active shipments and completed-
+delivery summaries) shows a "Location mismatch" badge on the group header
+and a specific "Far from this group's other photos — worth a second look."
+note on the flagged photo itself — framed as a soft signal for a human to
+check, not an automatic verdict.
+
+Verified live on `ASN26483`'s real pickup-photo group: moved one photo's
+coordinates ~30km away via SQL to simulate a mismatch — first attempt
+(centroid-based) incorrectly flagged all 4 photos, not just the moved one;
+fixed to the nearest-neighbor approach, which correctly flagged only the
+moved photo. Reverted the test coordinates and confirmed the flag
+disappeared with no false positives on the group's normal, tightly-clustered
+real data.
 
 ### Current contract and gap
 
