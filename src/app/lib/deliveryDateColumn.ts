@@ -1,6 +1,7 @@
 import type { Assignment, CompletedTask } from '../data/assignmentTypes';
 import { splitDisplayDateTime } from './displayDateTime';
 import { completionTime } from './completedOrdering';
+import { isScheduledDeliveryToday } from './assignmentTiming';
 
 export type DeliveryTab = 'active' | 'delayed' | 'completed' | 'cancelled';
 export type DeliveryPeriod = 'all' | 'today' | 'month' | 'year';
@@ -57,6 +58,9 @@ export function deliveryDateColumn(assignment: Assignment, tab: DeliveryTab): { 
 
 export function matchesDeliveryPeriod(assignment: Assignment, tab: DeliveryTab, period: DeliveryPeriod, now = new Date()): boolean {
   if (period === 'all') return true;
+  if ((tab === 'active' || tab === 'delayed') && period === 'today') {
+    return isScheduledDeliveryToday(assignment.deliveryDate, now);
+  }
   const eventTime = tab === 'completed' ? completionTime(assignment as CompletedTask)
     : tab === 'cancelled' ? cancellationTime(assignment) : null;
   const day = tab === 'active' || tab === 'delayed' ? scheduledDay(assignment.deliveryDate)

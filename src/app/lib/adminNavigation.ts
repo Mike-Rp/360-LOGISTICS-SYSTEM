@@ -1,5 +1,6 @@
 import type { MouseEvent } from 'react';
 import type { Assignment } from '../data/assignmentTypes';
+import type { DeliveryPeriod } from './deliveryDateColumn';
 
 export const ADMIN_PATHS = {
   Dashboard: '/dashboard',
@@ -15,12 +16,15 @@ export const ADMIN_NAVIGATION_EVENT = '360-admin-navigation';
 export type DeliveriesView = 'delayed' | 'today';
 export type DeliveriesTab = 'active' | 'delayed' | 'completed' | 'cancelled';
 
-export function deliveriesRouteFromUrl(url: URL): { tab: DeliveriesTab; view: 'today' | null } {
+export function deliveriesRouteFromUrl(url: URL): { tab: DeliveriesTab; period: DeliveryPeriod } {
   const tab = url.searchParams.get('tab');
   const view = url.searchParams.get('view');
-  if (tab === 'delayed' || (tab === 'active' && view === 'delayed')) return { tab: 'delayed', view: null };
-  if (tab === 'completed' || tab === 'cancelled') return { tab, view: null };
-  return { tab: 'active', view: view === 'today' ? 'today' : null };
+  const selectedTab: DeliveriesTab = tab === 'delayed' || (tab === 'active' && view === 'delayed')
+    ? 'delayed' : tab === 'completed' || tab === 'cancelled' ? tab : 'active';
+  const requestedPeriod = url.searchParams.get('period');
+  const period: DeliveryPeriod = selectedTab === 'active' && view === 'today' ? 'today'
+    : requestedPeriod === 'today' || requestedPeriod === 'month' || requestedPeriod === 'year' ? requestedPeriod : 'all';
+  return { tab: selectedTab, period };
 }
 
 // Dashboard review actions use an exact document target for one pending upload, otherwise the queue.
@@ -47,7 +51,7 @@ export function adminPageFromUrl(url = new URL(window.location.href)): AdminPage
   return 'Dashboard';
 }
 
-export function adminHref(page: AdminPage, target?: { assignmentId?: string; docType?: string; review?: boolean; activityKey?: string; summary?: boolean; focusOnly?: boolean }, tab?: DeliveriesTab, view?: DeliveriesView): string {
+export function adminHref(page: AdminPage, target?: { assignmentId?: string; docType?: string; review?: boolean; activityKey?: string; summary?: boolean; focusOnly?: boolean }, tab?: DeliveriesTab, view?: DeliveriesView, period?: DeliveryPeriod): string {
   const params = new URLSearchParams();
   if (target) {
     if (target.assignmentId !== undefined) params.set('assignment', target.assignmentId);
@@ -57,8 +61,13 @@ export function adminHref(page: AdminPage, target?: { assignmentId?: string; doc
     if (target.summary) params.set('summary', 'true');
     if (target.focusOnly) params.set('focus', 'true');
   }
-  if (page === 'Deliveries' && tab) params.set('tab', tab);
-  if (page === 'Deliveries' && view) params.set('view', view);
+  if (page === 'Deliveries') {
+    if (tab) params.set('tab', tab);
+    const selectedPeriod = period ?? (view === 'today' ? 'today' : 'all');
+    if (selectedPeriod === 'today' && tab === 'active') params.set('view', 'today');
+    else if (selectedPeriod !== 'all') params.set('period', selectedPeriod);
+    else if (view === 'delayed') params.set('view', view); // Older delayed links remain readable.
+  }
   const query = params.toString();
   return ADMIN_PATHS[page] + (query ? `?${query}` : '');
 }
@@ -69,8 +78,8 @@ export function followAdminLink(event: MouseEvent<HTMLAnchorElement>, navigate: 
   navigate();
 }
 
-export function pushAdminNavigation(page: AdminPage, target?: { assignmentId?: string; docType?: string; review?: boolean; activityKey?: string; summary?: boolean; focusOnly?: boolean }, tab?: DeliveriesTab, view?: DeliveriesView): void {
-  const href = adminHref(page, target, tab, view);
+export function pushAdminNavigation(page: AdminPage, target?: { assignmentId?: string; docType?: string; review?: boolean; activityKey?: string; summary?: boolean; focusOnly?: boolean }, tab?: DeliveriesTab, view?: DeliveriesView, period?: DeliveryPeriod): void {
+  const href = adminHref(page, target, tab, view, period);
   if (!target && window.location.pathname + window.location.search === href) return;
   window.history.pushState({ ...window.history.state, adminNavigation: true }, '', href);
   window.dispatchEvent(new Event(ADMIN_NAVIGATION_EVENT));

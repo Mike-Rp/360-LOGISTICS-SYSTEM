@@ -11,7 +11,7 @@ import type { DeliveryTab, DeliveryPeriod } from '../../lib/deliveryDateColumn';
 import ASNWithCopy from './ASNWithCopy';
 import CompletedDeliverySummary from './CompletedDeliverySummary';
 import DeliveryTimingBadge from './DeliveryTimingBadge';
-import { getDispatchTimingNotices, isScheduledDeliveryToday } from '../../lib/assignmentTiming';
+import { getDispatchTimingNotices } from '../../lib/assignmentTiming';
 import { isDashboardDelayedAssignment } from '../../lib/dashboardDelayed';
 import { formatOperationalStamp } from '../../lib/assignmentOperational';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
@@ -237,8 +237,7 @@ export default function DeliveryTable({
   const timingNow = new Date();
 
   const [tab, setTab] = useState<DeliveriesTab>(() => deliveriesRouteFromUrl(new URL(window.location.href)).tab);
-  const [activeView, setActiveView] = useState<'today' | null>(() => deliveriesRouteFromUrl(new URL(window.location.href)).view);
-  const [period, setPeriod] = useState<FilterPeriod>('all');
+  const [period, setPeriod] = useState<FilterPeriod>(() => deliveriesRouteFromUrl(new URL(window.location.href)).period);
   const [remarksAssignment, setRemarksAssignment] = useState<Assignment | null>(null);
   const [cancelledDetails, setCancelledDetails] = useState<Assignment | null>(null);
   const [summaryId, setSummaryId] = useState<string | null>(null);
@@ -263,9 +262,6 @@ export default function DeliveryTable({
     .filter((a) => a.taskStatus !== 'Cancelled')
     .filter((a) => matchesDeliveryPeriod(a, 'active', period))
     .filter((a) => matchesSearch([a.truckPlate, a.id, a.driverName, a.destination, a.destinationArea ?? '', a.company, a.taskStatus])), (assignment) => assignment.id);
-  const filteredActive = activeView === 'today'
-    ? filteredActiveBase.filter((a) => isScheduledDeliveryToday(a.deliveryDate, timingNow))
-    : filteredActiveBase;
   const filteredDelayed = filteredActiveBase.filter((a) => isDashboardDelayedAssignment(a, timingNow));
 
   const filteredDone = sortCompletedNewestFirst(completed
@@ -276,7 +272,7 @@ export default function DeliveryTable({
     .filter((a) => matchesDeliveryPeriod(a, 'cancelled', period))
     .filter((a) => matchesSearch([a.truckPlate, a.id, a.driverName, a.destination, a.destinationArea ?? '', a.company, a.taskStatus])));
 
-  const activePage = usePagination(filteredActive, DELIVERIES_PAGE_SIZE);
+  const activePage = usePagination(filteredActiveBase, DELIVERIES_PAGE_SIZE);
   const delayedPage = usePagination(filteredDelayed, DELIVERIES_PAGE_SIZE);
   const completedPage = usePagination(filteredDone, DELIVERIES_PAGE_SIZE);
   const cancelledPage = usePagination(filteredCancelled, DELIVERIES_PAGE_SIZE);
@@ -297,7 +293,7 @@ export default function DeliveryTable({
         window.history.replaceState(window.history.state, '', canonical);
       }
       setTab(route.tab);
-      setActiveView(route.view);
+      setPeriod(route.period);
       setLinkedCompletedId(route.tab === 'completed' ? params.get('assignment') : null);
       setSummaryId(route.tab === 'completed' && params.get('summary') === 'true' ? params.get('assignment') : null);
       resetPages();
@@ -312,7 +308,10 @@ export default function DeliveryTable({
   }, []);
   const selectTab = (next: DeliveriesTab) => {
     setHighlightCompletedId(null);
-    pushAdminNavigation('Deliveries', undefined, next);
+    pushAdminNavigation('Deliveries', undefined, next, undefined, period);
+  };
+  const selectPeriod = (next: FilterPeriod) => {
+    pushAdminNavigation('Deliveries', undefined, tab, undefined, next);
   };
   const linkedCompletedIndex = filteredDone.findIndex((assignment) => assignment.id === linkedCompletedId);
   const linkedCompletedPage = linkedCompletedIndex < 0 ? null : Math.floor(linkedCompletedIndex / DELIVERIES_PAGE_SIZE) + 1;
@@ -334,15 +333,15 @@ export default function DeliveryTable({
   useLayoutEffect(() => { resetPages(); }, [search]);
 
   /* A time range or search is narrowing the list */
-  const filtering = !!q || period !== 'all' || (tab === 'active' && activeView !== null);
+  const filtering = !!q || period !== 'all';
 
   /* Cancelled rows are plain Assignment objects, exactly like active ones, so both tabs
      render through the same table/card markup below instead of a duplicated copy. */
-  const listRows = tab === 'cancelled' ? filteredCancelled : tab === 'delayed' ? filteredDelayed : filteredActive;
+  const listRows = tab === 'cancelled' ? filteredCancelled : tab === 'delayed' ? filteredDelayed : filteredActiveBase;
   const pageRows = tab === 'cancelled' ? cancelledPage.pageItems : tab === 'delayed' ? delayedPage.pageItems : activePage.pageItems;
   const selectedPage = tab === 'completed' ? completedPage : tab === 'cancelled' ? cancelledPage : tab === 'delayed' ? delayedPage : activePage;
   const selectedCount = tab === 'completed' ? filteredDone.length : listRows.length;
-  const pageArea = useStablePageHeight(selectedPage.page, selectedCount, DELIVERIES_PAGE_SIZE, `${tab}|${period}|${search}|${activeView}`);
+  const pageArea = useStablePageHeight(selectedPage.page, selectedCount, DELIVERIES_PAGE_SIZE, `${tab}|${period}|${search}`);
 
   return (
     <div className="bg-white rounded-xl border border-border shadow-sm overflow-hidden">
@@ -376,7 +375,7 @@ export default function DeliveryTable({
             {/* Filter */}
             <div className="flex items-center gap-1.5 border border-border rounded-lg px-2 py-1.5 bg-white">
               <Filter className="w-3.5 h-3.5 text-muted-foreground" />
-              <select value={period} onChange={(e) => { setPeriod(e.target.value as FilterPeriod); resetPages(); }}
+              <select value={period} onChange={(e) => selectPeriod(e.target.value as FilterPeriod)}
                 className="text-sm text-foreground bg-transparent focus:outline-none cursor-pointer pr-1">
                 {(Object.entries(PERIOD_LABELS) as [FilterPeriod, string][]).map(([val, label]) => (
                   <option key={val} value={val}>{label}</option>
@@ -392,10 +391,10 @@ export default function DeliveryTable({
             {tab === 'completed' ? filteredDone.length : listRows.length} result{(tab === 'completed' ? filteredDone.length : listRows.length) !== 1 ? 's' : ''} for <span className="font-semibold text-foreground">"{search}"</span>
           </p>
         )}
-        {tab === 'active' && activeView === 'today' && (
+        {tab === 'active' && period === 'today' && (
           <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
             <span>Showing today's scheduled active deliveries</span>
-            <button type="button" onClick={() => pushAdminNavigation('Deliveries', undefined, 'active')}
+            <button type="button" onClick={() => pushAdminNavigation('Deliveries', undefined, 'active', undefined, 'all')}
               className="rounded-md px-2 py-1 font-medium text-primary hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
               Show all active
             </button>
@@ -416,7 +415,7 @@ export default function DeliveryTable({
               </p>
               <p className="text-sm text-muted-foreground mt-1">
                 {filtering
-                  ? activeView && tab === 'active' ? 'Show all active deliveries or adjust the current filters.' : 'Try a different time range or search term.'
+                  ? period === 'today' && tab === 'active' ? 'Show all active deliveries or adjust the current filters.' : 'Try a different time range or search term.'
                   : tab === 'cancelled'
                     ? 'Assignments cancelled from Monitor will appear here.'
                     : tab === 'delayed'

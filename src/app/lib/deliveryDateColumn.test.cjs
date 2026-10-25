@@ -16,9 +16,11 @@ function load(name, imports = {}) {
 const operational = load('assignmentOperational.ts');
 const display = load('displayDateTime.ts', { './assignmentOperational': operational });
 const ordering = load('completedOrdering.ts');
+const timing = load('assignmentTiming.ts');
 const dates = load('deliveryDateColumn.ts', {
   './displayDateTime': display,
   './completedOrdering': ordering,
+  './assignmentTiming': timing,
 });
 
 const assignment = (id, fields = {}) => ({ id, deliveryDate: 'Oct 31, 2026', ...fields });
@@ -52,6 +54,7 @@ test('missing or yearless event timestamps never become scheduled or guessed dat
 test('Manila date filters follow the visible date, including the midnight boundary', () => {
   const now = new Date('2026-10-21T16:30:00Z'); // Oct 22 in Manila
   assert.equal(dates.matchesDeliveryPeriod(assignment('active', { deliveryDate: 'Oct 22, 2026' }), 'active', 'today', now), true);
+  assert.equal(dates.matchesDeliveryPeriod(assignment('active', { deliveryDate: '10/22/2026' }), 'active', 'today', now), true);
   assert.equal(dates.matchesDeliveryPeriod(assignment('late', { deliveryDate: 'Oct 22, 2026' }), 'delayed', 'today', now), true);
   assert.equal(dates.matchesDeliveryPeriod(assignment('active', { deliveryDate: 'Oct 21, 2026' }), 'active', 'today', now), false);
   assert.equal(dates.matchesDeliveryPeriod(assignment('done', { completedAt: '', completedEventAt: '2026-10-21T16:09:00Z' }), 'completed', 'today', now), true);
