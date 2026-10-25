@@ -1,14 +1,16 @@
-import { Check, ChevronDown, ChevronUp, Eye } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, ChevronUp, Eye } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import type { Assignment, StatusPhoto } from '../../data/assignmentTypes';
-import { OPERATIONAL_PHOTO_GROUPS } from '../../lib/assignmentOperational';
+import { OPERATIONAL_PHOTO_GROUPS, findGroupLocationOutliers } from '../../lib/assignmentOperational';
 import { splitDisplayDateTime } from '../../lib/displayDateTime';
 
-export function OperationalPhotoItem({ groupTitle, label, photo, required = true, onPreview }: {
+export function OperationalPhotoItem({ groupTitle, label, photo, required = true, locationFlagged = false, onPreview }: {
   groupTitle: string;
   label: string;
   photo?: StatusPhoto;
   required?: boolean;
+  /** This photo's own GPS is far from the rest of its group's — a derived cross-check, not proof of anything wrong. */
+  locationFlagged?: boolean;
   onPreview: (url: string, type: string, timestamp?: string) => void;
 }) {
   const labelRow = <div className="mt-2">
@@ -46,6 +48,12 @@ export function OperationalPhotoItem({ groupTitle, label, photo, required = true
     {deviceLocation && <p className="mt-1 break-words text-xs text-muted-foreground">
       Recorded location: {deviceLocation}
     </p>}
+    {locationFlagged && (
+      <p className="mt-1 flex items-start gap-1 text-xs font-medium text-amber-700">
+        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        Far from this group's other photos — worth a second look.
+      </p>
+    )}
   </div>;
 }
 
@@ -67,11 +75,13 @@ export function OperationalEvidence({ assignment, onPreview, expandedGroup, onEx
   const legacy = (['Picked Up', 'In Transit', 'Delivered'] as const)
     .map((key) => ({ key, label: key, photo: photos[key] })).filter((slot) => !!slot.photo?.url);
   const groups = [
-    ...OPERATIONAL_PHOTO_GROUPS.map((group) => ({
-      title: group.title,
-      slots: group.slots.map(([key, label]) => ({ key, label, photo: photos[key] })),
-    })),
-    ...(legacy.length ? [{ title: 'Earlier Status Photos', slots: legacy }] : []),
+    ...OPERATIONAL_PHOTO_GROUPS.map((group) => {
+      const slots = group.slots.map(([key, label]) => ({ key, label, photo: photos[key] }));
+      // Legacy single-milestone photos are taken at genuinely different times/places —
+      // outlier detection only makes sense within one same-moment photo group.
+      return { title: group.title, slots, outliers: findGroupLocationOutliers(slots.map((s) => ({ key: s.key, coords: s.photo?.coords }))) };
+    }),
+    ...(legacy.length ? [{ title: 'Earlier Status Photos', slots: legacy, outliers: new Set<string>() }] : []),
   ];
   return <section aria-label="Operational Photos" className="space-y-2">
     <p className="text-sm font-semibold text-foreground">Operational Photos</p>
@@ -95,6 +105,11 @@ export function OperationalEvidence({ assignment, onPreview, expandedGroup, onEx
               {complete && <Check className="h-3.5 w-3.5" />}
             </span>
             <span className="text-[15px] font-semibold text-foreground">{group.title}</span>
+            {group.outliers.size > 0 && (
+              <span className="flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700" title="A photo's GPS is far from the rest of this group's">
+                <AlertTriangle className="h-3 w-3" aria-hidden="true" /> Location mismatch
+              </span>
+            )}
           </span>
           <span className="flex shrink-0 items-center gap-2 text-[13px] text-muted-foreground">
             {count}{isLegacy ? '' : `/${group.slots.length}`}
@@ -105,7 +120,7 @@ export function OperationalEvidence({ assignment, onPreview, expandedGroup, onEx
           <p className="mb-3 text-[13px] text-muted-foreground">{description}</p>
           <div className={`grid gap-x-3 gap-y-4 sm:gap-x-4 ${isAngles ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-1 min-[430px]:grid-cols-2'}`}>
             {group.slots.map(({ key, label, photo }) => <OperationalPhotoItem key={key}
-              groupTitle={group.title} label={label} photo={photo}
+              groupTitle={group.title} label={label} photo={photo} locationFlagged={group.outliers.has(key)}
               onPreview={onPreview} />)}
           </div>
           {group.title === 'Loading' && assignment.loadingRemark && (
