@@ -15,6 +15,7 @@ import { sortNewestFirst, markLocalRecordAdded, useLocalAddedHighlight, newRecor
 import { capacityKgOnly } from '../../data/truckTypes';
 import ASNWithCopy from './ASNWithCopy';
 import type { ActionFeedbackToast } from '../../lib/notificationEvents';
+import { parsePhilippineMobile } from '../../lib/philippineMobile';
 
 /* Plain-language text for the errors the archive / PIN database functions can return */
 const accountActionError = (err: unknown): string => {
@@ -93,9 +94,19 @@ function IdentifierCopy({ value, description, className = '' }: { value: string;
 
 function PhoneContact({ driver }: { driver: LocalDriver }) {
   if (!driver.phone || driver.phone === '—') return <span className="text-sm italic text-muted-foreground">No number</span>;
-  return <div className="flex max-w-full flex-nowrap items-center gap-x-1 whitespace-nowrap">
-    <IdentifierCopy value={driver.phone} description="driver phone number" className="text-[15px] font-medium" />
-    <a href={`tel:${driver.phone}`} aria-label={`Call ${driver.name}`} title={`Call ${driver.name}`}
+  const mobile = parsePhilippineMobile(driver.phone);
+  if (!mobile) return <span className="inline-flex max-w-full flex-wrap items-center gap-x-2 text-sm text-foreground">
+    <span className="break-all">{driver.phone}</span>
+    <span className="text-amber-700" title="Check this phone number before copying or calling">Check number</span>
+  </span>;
+  return <div className="driver-phone-contact grid w-max grid-cols-[2rem_8.5rem_2.5rem] items-center gap-1 whitespace-nowrap tabular-nums">
+    <span className="text-sm font-medium text-muted-foreground">+63</span>
+    <span className="text-[15px] font-medium text-foreground">
+      <ASNWithCopy value={mobile.subscriber} copyDescription="driver mobile number" alignTextStart readableFeedback noWrap>
+        <span className="inline-block w-[10ch] text-left tabular-nums">{mobile.subscriber}</span>
+      </ASNWithCopy>
+    </span>
+    <a href={`tel:${mobile.international}`} aria-label={`Call ${driver.name}`} title={`Call ${driver.name}`}
       className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-primary hover:bg-muted/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
       <Phone className="h-4 w-4" aria-hidden="true" />
     </a>
@@ -216,8 +227,8 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
     archivedTrucksPage.setPage(1);
   };
   const driverTableLayout = !canManageFleetAccounts
-    ? { gridTemplateColumns: 'minmax(160px, 1.5fr) minmax(205px, 1.6fr) minmax(120px, 1fr) minmax(130px, 1fr)', minWidth: '700px' }
-    : { gridTemplateColumns: 'minmax(160px, 1.6fr) minmax(205px, 1.6fr) 120px 115px 190px', minWidth: '870px' };
+    ? { gridTemplateColumns: 'minmax(160px, 1.5fr) minmax(220px, 1.6fr) minmax(120px, 1fr) minmax(130px, 1fr)', minWidth: '710px' }
+    : { gridTemplateColumns: 'minmax(160px, 1.6fr) minmax(220px, 1.6fr) 120px 115px 190px', minWidth: '895px' };
 
   /* The "Reset All Data" button was removed from this page. The backend is untouched:
      resetAllData() in lib/db.ts and the reset_all_data() database function both still

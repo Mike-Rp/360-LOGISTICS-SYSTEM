@@ -77,6 +77,11 @@
     opacity: 1;
   }
 
+  /* The contact column shows its copy affordance even without desktop hover. */
+  .driver-phone-contact .asn-copy-icon {
+    opacity: 1;
+  }
+
   @media (max-width: 1023px), (hover: none) and (pointer: coarse) {
     .asn-copy-icon {
       opacity: 1;

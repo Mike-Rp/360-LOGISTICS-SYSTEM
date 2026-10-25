@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import type { LocalDriver, LocalTruck } from '../../data/assignmentTypes';
 import { normaliseMobile, registerTruck, registerDriver, AssignmentActionError, type AssignmentActionErrorCode } from '../../lib/db';
+import { parsePhilippineMobile } from '../../lib/philippineMobile';
 import { TRUCK_CLASSIFICATIONS, formatCapacity, capacityKgOnly } from '../../data/truckTypes';
 import TruckImage from '../TruckImage';
 
@@ -127,7 +128,38 @@ export function RegisterDriverModal({ drivers = [], onServerChange, onClose, onC
 
   /* Full name as it will be stored, so the duplicate check compares like with like. */
   const fullName = () => `${firstName.trim()} ${surname.trim()}`;
-  const fullPhone = () => `+63${phoneNumber.replace(/\D/g, '')}`;
+  const fullPhone = () => parsePhilippineMobile(phoneNumber)?.international ?? '';
+
+  const handlePhoneInput = (value: string) => {
+    const digits = value.replace(/\D/g, '');
+    const mobile = parsePhilippineMobile(value);
+    if (mobile && digits.length > 10) {
+      setPhoneNumber(mobile.subscriber);
+      setPhoneError('');
+      return;
+    }
+    if (digits.length > 10) {
+      setPhoneError('Enter only the 10-digit mobile number after +63.');
+      return;
+    }
+    setPhoneNumber(digits);
+    setPhoneError('');
+  };
+
+  const handlePhonePaste = (event: React.ClipboardEvent<HTMLInputElement>) => {
+    event.preventDefault();
+    const pasted = event.clipboardData.getData('text').trim();
+    const mobile = parsePhilippineMobile(pasted);
+    if (mobile) {
+      setPhoneNumber(mobile.subscriber);
+      setPhoneError('');
+    } else if (/^\d{1,10}$/.test(pasted)) {
+      setPhoneNumber(pasted);
+      setPhoneError('');
+    } else {
+      setPhoneError('Paste a valid Philippine mobile number.');
+    }
+  };
 
   /* Shared by the blur handlers and by submit, so the same rules apply either way. */
   const validateDriver = (): boolean => {
@@ -136,11 +168,10 @@ export function RegisterDriverModal({ drivers = [], onServerChange, onClose, onC
       setNameError('Names can only contain letters, spaces, apostrophes, hyphens and periods.');
       return false;
     }
-    const digits = phoneNumber.replace(/\D/g, '');
-    if (digits.length !== 10) { setPhoneError('Enter a valid 10-digit mobile number.'); return false; }
+    if (phoneNumber.length !== 10) { setPhoneError('Enter a valid 10-digit mobile number.'); return false; }
     /* The login screen only accepts numbers starting with 9, so without this a driver
        could be registered who is permanently unable to sign in. */
-    if (!digits.startsWith('9')) { setPhoneError('Mobile number must start with 9 (e.g. 9XX XXX XXXX).'); return false; }
+    if (!phoneNumber.startsWith('9')) { setPhoneError('Mobile number must start with 9 (e.g. 9XX XXX XXXX).'); return false; }
 
     const dup = findDuplicateDriver(drivers, { phone: fullPhone(), name: fullName() });
     if (dup) {
@@ -155,9 +186,9 @@ export function RegisterDriverModal({ drivers = [], onServerChange, onClose, onC
   /* On blur: check only the field the person just left, so they are not shown an error
      about a field they have not filled in yet. */
   const checkPhoneOnBlur = () => {
-    const digits = phoneNumber.replace(/\D/g, '');
-    if (digits.length !== 10) return;
-    if (!digits.startsWith('9')) { setPhoneError('Mobile number must start with 9 (e.g. 9XX XXX XXXX).'); return; }
+    if (!phoneNumber) return;
+    if (phoneNumber.length !== 10) { setPhoneError('Enter a valid 10-digit mobile number.'); return; }
+    if (!phoneNumber.startsWith('9')) { setPhoneError('Mobile number must start with 9 (e.g. 9XX XXX XXXX).'); return; }
     const dup = findDuplicateDriver(drivers, { phone: fullPhone() });
     setPhoneError(dup?.field === 'phone' ? dup.message : '');
   };
@@ -243,11 +274,13 @@ export function RegisterDriverModal({ drivers = [], onServerChange, onClose, onC
               <span className="px-3 py-3 bg-muted/40 border-r border-border text-sm font-semibold text-foreground select-none whitespace-nowrap">+63</span>
               <input
                 type="text" inputMode="numeric" value={phoneNumber}
-                onChange={(e) => { setPhoneNumber(e.target.value.replace(/\D/g, '').slice(0, 10)); setPhoneError(''); }}
+                aria-label="Mobile number, ten digits after +63"
+                onChange={(e) => handlePhoneInput(e.target.value)}
+                onPaste={handlePhonePaste}
                 onBlur={checkPhoneOnBlur}
                 placeholder="9123456789"
                 maxLength={10}
-                className="flex-1 px-4 py-3 bg-transparent text-foreground placeholder:text-muted-foreground focus:outline-none text-sm tracking-wider"
+                className="min-w-0 flex-1 px-4 py-3 bg-transparent text-foreground placeholder:text-muted-foreground focus:outline-none text-sm tracking-wider tabular-nums"
               />
               <span className={`px-3 text-xs font-medium tabular-nums ${phoneNumber.length === 10 ? 'text-green-600' : 'text-muted-foreground'}`}>
                 {phoneNumber.length}/10
@@ -261,15 +294,15 @@ export function RegisterDriverModal({ drivers = [], onServerChange, onClose, onC
             <label className="block text-sm font-medium text-foreground mb-1.5">
               Driver PIN <span className="text-xs text-muted-foreground">(4-digit, auto-generated)</span>
             </label>
-            <div className="flex items-center gap-3">
-              <div className={`flex-1 px-4 py-3 rounded-xl border bg-muted/20 flex items-center gap-3 ${generatedPin ? 'border-primary/30' : 'border-border'}`}>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className={`min-w-0 flex-1 px-4 py-3 rounded-xl border bg-muted/20 flex items-center gap-3 ${generatedPin ? 'border-primary/30' : 'border-border'}`}>
                 <KeyRound className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                 {generatedPin
                   ? <span className="font-mono text-lg tracking-[0.35em] font-semibold text-primary">{generatedPin}</span>
                   : <span className="text-sm text-muted-foreground italic">Click to generate</span>}
               </div>
               <button onClick={handleGeneratePin}
-                className="flex items-center gap-2 px-4 py-3 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors text-sm font-medium whitespace-nowrap">
+                className="flex w-full items-center justify-center gap-2 px-4 py-3 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors text-sm font-medium whitespace-nowrap sm:w-auto">
                 <RefreshCw className="w-4 h-4" />
                 {generatedPin ? 'Regenerate' : 'Generate PIN'}
               </button>
