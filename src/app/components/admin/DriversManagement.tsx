@@ -2681,22 +2681,22 @@ export default function DriversManagement({
                   <div className="mt-4 border-t border-border pt-4">
                     <div className="grid grid-cols-1 gap-3 border-b border-border pb-3 sm:grid-cols-2 sm:gap-0">
                       <div className="min-w-0">
-                        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Driver</p>
-                        <p className="mt-0.5 text-sm font-semibold text-foreground break-words"><Highlight text={a.driverName} query={search} /></p>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Driver</p>
+                        <p className="mt-1 text-[15px] font-bold text-foreground break-words"><Highlight text={a.driverName} query={search} /></p>
                       </div>
                       <div className="min-w-0 sm:border-l sm:border-border sm:pl-4">
-                        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Corporation</p>
-                        <p className="mt-0.5 text-sm text-foreground break-words"><Highlight text={a.company} query={search} /></p>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Corporation</p>
+                        <p className="mt-1 text-[15px] font-medium text-foreground break-words"><Highlight text={a.company} query={search} /></p>
                       </div>
                     </div>
                     <div className="grid grid-cols-1 gap-3 pt-3 sm:grid-cols-2 sm:gap-0">
                       <div className="min-w-0">
-                        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Route</p>
-                        <p className="mt-0.5 text-sm text-foreground [overflow-wrap:anywhere]"><Highlight text={getAssignmentRoute(a)} query={search} /></p>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Route</p>
+                        <p className="mt-1 text-[15px] font-medium text-foreground [overflow-wrap:anywhere]"><Highlight text={getAssignmentRoute(a)} query={search} /></p>
                       </div>
                       <div className="min-w-0 sm:border-l sm:border-border sm:pl-4">
-                        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Delivery date</p>
-                        <p className="mt-0.5 text-sm text-foreground break-words">{a.deliveryDate}</p>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Delivery date</p>
+                        <p className="mt-1 text-[15px] font-medium text-foreground break-words">{a.deliveryDate}</p>
                         {timing && !(documentAge && timing.kind === 'delivered_late') && <div className="mt-1.5"><DeliveryTimingBadge timing={timing} /></div>}
                       </div>
                     </div>
@@ -2728,9 +2728,9 @@ export default function DriversManagement({
                   <div className="mt-4 md:mt-auto md:pt-4">
                   <div className="rounded-lg bg-muted/40 p-3 md:min-h-24">
                     {/* Segmented document bar — green only ever means approved */}
-                    <div className="flex items-center justify-between text-xs mb-1.5">
-                      <span className="font-medium text-foreground">Documents</span>
-                      <span className="font-medium text-foreground">{docs.uploaded} of {docs.required}</span>
+                    <div className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-sm">
+                      <span className="font-semibold text-foreground">Documents</span>
+                      <span className="font-semibold tabular-nums text-foreground">{docs.uploaded} of {docs.required}</span>
                     </div>
                     <div className="w-full bg-gray-200 rounded-full h-1.5 flex overflow-hidden">
                       <div className="bg-green-500 h-full transition-all"
@@ -2738,16 +2738,16 @@ export default function DriversManagement({
                       <div className="bg-amber-500 h-full transition-all"
                         style={{ width: `${docs.required ? ((docs.pending + docs.rejected) / docs.required) * 100 : 0}%` }} />
                     </div>
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-[12px] text-muted-foreground">
-                      <span className="inline-flex items-center gap-1">
-                        <Check className="w-3 h-3 text-green-600" />{docs.approved} approved
+                    <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-[13px] font-medium leading-snug text-slate-600">
+                      <span className="inline-flex items-center gap-1 whitespace-nowrap text-green-800">
+                        <Check className="h-4 w-4 shrink-0 text-green-600" />{docs.approved} approved
                       </span>
-                      <span className="inline-flex items-center gap-1">
-                        <Clock className="w-3 h-3 text-amber-500" />{docs.pending} pending review
+                      <span className="inline-flex items-center gap-1 whitespace-nowrap text-amber-800">
+                        <Clock className="h-4 w-4 shrink-0 text-amber-500" />{docs.pending} pending review
                       </span>
-                      {docs.rejected > 0 && <span className="inline-flex items-center gap-1 text-red-700"><AlertTriangle className="w-3 h-3" />{docs.rejected} needs correction</span>}
-                      <span className="inline-flex items-center gap-1">
-                        <Clock className="w-3 h-3 text-gray-400" />{docs.missing} awaiting upload
+                      {docs.rejected > 0 && <span className="inline-flex items-center gap-1 whitespace-nowrap text-red-700"><AlertTriangle className="h-4 w-4 shrink-0" />{docs.rejected} needs correction</span>}
+                      <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                        <Clock className="h-4 w-4 shrink-0 text-gray-400" />{docs.missing} awaiting upload
                       </span>
                     </div>
                   </div>
