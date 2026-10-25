@@ -97,10 +97,10 @@ export default function DashboardStatCards({ assignments, completed, onNavigate 
           <div className="flex items-start justify-between gap-3 mt-3">
             <p className={`text-3xl font-semibold leading-none ${alert ? 'text-amber-600' : 'text-foreground'}`}><CountUp value={value} /></p>
             <div className="text-right min-w-0">
-              <p className="text-xs text-muted-foreground leading-snug">{detail}</p>
+              <p className="text-sm text-muted-foreground leading-tight">{detail}</p>
               {link && (
                 <a href={link.href} onClick={(event) => followAdminLink(event, link.onClick)}
-                  className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:text-primary/80 mt-0.5">
+                  className="inline-flex items-center gap-1 text-sm font-medium leading-tight text-primary hover:text-primary/80">
                   {link.label} <ArrowRight className="w-3 h-3" />
                 </a>
               )}

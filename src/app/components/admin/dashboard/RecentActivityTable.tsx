@@ -101,7 +101,7 @@ export default function RecentActivityTable({ notifications, completed }: Props)
         <div className="flex-1 flex flex-col items-center justify-center text-center py-12">
           <Activity className="w-8 h-8 text-muted-foreground/30 mb-2" />
           <p className="text-sm text-muted-foreground">No fleet events yet</p>
-          <p className="text-xs text-muted-foreground/70 mt-0.5">
+          <p className="text-sm text-muted-foreground/70 mt-0.5">
             Driver pickups, deliveries, and document uploads will appear here.
           </p>
         </div>
@@ -109,27 +109,27 @@ export default function RecentActivityTable({ notifications, completed }: Props)
         <div className="mt-4 overflow-x-auto -mx-1">
           <table className="w-full min-w-[360px] text-left">
             <thead>
-              <tr className="text-xs text-muted-foreground">
-                <th className="font-normal px-1 pb-2">Delivery</th>
-                <th className="font-normal px-1 pb-2">Driver</th>
-                <th className="font-normal px-1 pb-2">Event</th>
-                <th className="font-normal px-1 pb-2 text-right">Time</th>
+              <tr className="text-sm text-muted-foreground">
+                <th className="font-medium px-1 pb-2">Delivery</th>
+                <th className="font-medium px-1 pb-2">Driver</th>
+                <th className="font-medium px-1 pb-2">Event</th>
+                <th className="font-medium px-1 pb-2 text-right">Time</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/60">
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td className="px-1 py-2.5 text-sm text-muted-foreground"><ASNWithCopy value={r.assignmentId} /></td>
-                  <td className="px-1 py-2.5 max-w-[180px]">
-                    <p className="text-sm text-foreground truncate">{r.driverName || '—'}</p>
-                    {r.truckPlate && <p className="text-xs text-muted-foreground truncate">{r.truckPlate}</p>}
+                  <td className="px-1 py-2 text-[15px] font-medium text-muted-foreground"><ASNWithCopy value={r.assignmentId} /></td>
+                  <td className="px-1 py-2 max-w-[180px]">
+                    <p className="text-[15px] font-semibold text-foreground truncate">{r.driverName || '—'}</p>
+                    {r.truckPlate && <p className="text-sm text-muted-foreground truncate">{r.truckPlate}</p>}
                   </td>
-                  <td className="px-1 py-2.5">
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded-md border text-xs font-medium whitespace-nowrap ${r.badge.cls}`}>
+                  <td className="px-1 py-2">
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-md border text-sm font-medium whitespace-nowrap ${r.badge.cls}`}>
                       {r.badge.label}
                     </span>
                   </td>
-                  <td className="px-1 py-2.5 text-xs text-muted-foreground text-right whitespace-nowrap">{fmtRelative(r.timestamp)}</td>
+                  <td className="px-1 py-2 text-sm text-muted-foreground text-right whitespace-nowrap">{fmtRelative(r.timestamp)}</td>
                 </tr>
               ))}
             </tbody>
@@ -138,7 +138,7 @@ export default function RecentActivityTable({ notifications, completed }: Props)
       )}
 
       {(notifications.length + completed.length) > MAX_ROWS && (
-        <p className="text-xs text-muted-foreground text-center mt-3 pt-3 border-t border-border/60">
+        <p className="text-sm text-muted-foreground text-center mt-3 pt-3 border-t border-border/60">
           Showing most recent {MAX_ROWS} events
         </p>
       )}

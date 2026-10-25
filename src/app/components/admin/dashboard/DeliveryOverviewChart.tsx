@@ -100,9 +100,9 @@ export default function DeliveryOverviewChart({ assignments, completed, cancelle
       </div>
 
       {/* Five grouped totals for the selected period */}
-      <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1.5">
+      <div className="mt-3 flex flex-wrap gap-x-1.5 gap-y-1.5 sm:gap-x-3">
         {GROUPS.map((group) => (
-          <span key={group.label} className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+          <span key={group.label} className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
             <span className="h-[11px] w-[11px] shrink-0 rounded-[3px]" style={{ backgroundColor: group.color }} />
             {group.label} <span className="font-semibold text-foreground">{groupTotal(totals, group.statuses)}</span>
           </span>
@@ -118,7 +118,7 @@ export default function DeliveryOverviewChart({ assignments, completed, cancelle
               {ticks.map((v) => (
                 <g key={v}>
                   <line x1={P.l} y1={Y(v)} x2={VW - P.r} y2={Y(v)} stroke={v === 0 ? '#cbd5e1' : '#edf0ef'} strokeWidth={1} />
-                  <text x={P.l - 8} y={Y(v) + 4} textAnchor="end" fontSize={11} fill="#8b959c">{v}</text>
+                  <text x={P.l - 4} y={Y(v) + 4} textAnchor="end" fontSize={14} fill="#8b959c">{v}</text>
                 </g>
               ))}
               {bars.map((bar, i) => {
@@ -147,8 +147,8 @@ export default function DeliveryOverviewChart({ assignments, completed, cancelle
                     })}
                     {i % labelEvery === 0 && (
                       <>
-                        <text x={cx} y={VH - 22} textAnchor="middle" fontSize={12} fill="#9ca3af">{bar.label}</text>
-                        <text x={cx} y={VH - 6} textAnchor="middle" fontSize={12} fill="#9ca3af">{bar.detail}</text>
+                        <text x={cx} y={VH - 22} textAnchor="middle" fontSize={14} fill="#9ca3af">{bar.label}</text>
+                        <text x={cx} y={VH - 6} textAnchor="middle" fontSize={14} fill="#9ca3af">{bar.detail}</text>
                       </>
                     )}
                   </g>
@@ -164,7 +164,7 @@ export default function DeliveryOverviewChart({ assignments, completed, cancelle
             )}
 
             {hovered !== null && bars[hovered] && (
-              <div className="absolute top-0 bg-white border border-border rounded-xl shadow-lg px-3 py-2.5 text-xs pointer-events-none z-10"
+              <div className="absolute top-0 bg-white border border-border rounded-xl shadow-lg px-3 py-2.5 text-sm pointer-events-none z-10"
                 style={{ left: tipLeft(hovered), width: TIP_W }}>
                 <p className="font-semibold text-foreground">{bars[hovered].title}</p>
                 <p className="mb-1.5 text-muted-foreground">{dayTotal(bars[hovered].counts)} deliveries</p>

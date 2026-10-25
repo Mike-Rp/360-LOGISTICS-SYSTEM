@@ -57,15 +57,15 @@ export default function DriversFleetCards({ drivers, trucks, assignments, onView
           <ul className="mt-4 grid grid-cols-1 @md:grid-cols-2 gap-2.5">
             {availableDrivers.slice(0, DRIVER_ROWS).map((d) => (
               <li key={d.id} className="flex items-center gap-2.5 rounded-xl border border-border/60 bg-gray-50 px-3 py-2 min-w-0">
-                <div className="w-9 h-9 rounded-full bg-[#0d9488] text-white text-xs font-semibold flex items-center justify-center flex-shrink-0">
+                <div className="w-9 h-9 rounded-full bg-[#0d9488] text-white text-sm font-semibold flex items-center justify-center flex-shrink-0">
                   {initials(d.name)}
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-foreground truncate">{d.name}</p>
-                  <p className="text-xs text-muted-foreground truncate">{d.phone}</p>
+                  <p className="text-sm text-muted-foreground truncate">{d.phone}</p>
                 </div>
                 {d.shift && (
-                  <span className="max-w-20 truncate text-xs font-medium text-[#0d9488] bg-[#0d9488]/10 rounded-md px-2 py-0.5 flex-shrink-0">
+                  <span className="max-w-20 truncate text-sm font-medium text-[#0d9488] bg-[#0d9488]/10 rounded-md px-2 py-0.5 flex-shrink-0">
                     {d.shift}
                   </span>
                 )}
@@ -104,9 +104,9 @@ export default function DriversFleetCards({ drivers, trucks, assignments, onView
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm text-foreground truncate">{t.plateNumber}</p>
-                      {t.classification && <p className="text-xs text-muted-foreground truncate">{t.classification}</p>}
+                      {t.classification && <p className="text-sm text-muted-foreground truncate">{t.classification}</p>}
                     </div>
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded-md border text-xs font-medium whitespace-nowrap flex-shrink-0 ${cfg.badge}`}>
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-md border text-sm font-medium whitespace-nowrap flex-shrink-0 ${cfg.badge}`}>
                       {cfg.label}
                     </span>
                   </li>
@@ -114,7 +114,7 @@ export default function DriversFleetCards({ drivers, trucks, assignments, onView
               })}
               {trucks.length > TRUCK_ROWS && (
                 /* Not a link (as before) — "View all" opens Accounts */
-                <li className="flex items-center justify-center rounded-xl border border-dashed border-border px-3 py-2.5 min-h-[58px] text-xs text-muted-foreground">
+                <li className="flex items-center justify-center rounded-xl border border-dashed border-border px-3 py-2.5 min-h-[58px] text-sm text-muted-foreground">
                   +{trucks.length - TRUCK_ROWS} more
                 </li>
               )}
