@@ -20,7 +20,7 @@ import { destinationAreaEnabled, getAssignmentRoute, getDeliveryLocation } from 
 import { checkPhoto, loadVehicleDetector, type PhotoCheckFailure } from '../../lib/photoQuality';
 import { MILESTONE_NOTIFICATIONS } from '../../lib/notificationEvents';
 import { BLOCKING_ISSUE_REASONS, hasOpenBlockingIssue } from '../../lib/issueWorkflow';
-import { newNotificationIds, notificationSoundEnabled, playNotificationSound, setNotificationSoundEnabled } from '../../lib/notificationSound';
+import { isAudioUnlockGesture, newNotificationIds, notificationAudioReady, notificationSoundEnabled, playNotificationSound, restoreNotificationAudio, setNotificationSoundEnabled, unlockNotificationAudio } from '../../lib/notificationSound';
 import { canOpenDocumentReview, driverNotificationDestination } from '../../lib/driverNotificationNavigation';
 import { observeDriverCompletion, type DriverCompletionSnapshot } from './driverCompletion';
 import type { CancelledHistoryItem } from '../../lib/driverHistory';
@@ -1551,10 +1551,37 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   const { t, status: statusText, document: documentText, reason: reasonText, language, setLanguage } = useDriverI18n();
   const soundAccount = `driver:${driverId}`;
   const [soundEnabled, setSoundEnabled] = useState(() => notificationSoundEnabled(soundAccount));
+  const [soundError, setSoundError] = useState('');
   const updateSoundEnabled = (enabled: boolean) => {
+    if (enabled) void unlockNotificationAudio();
     setSoundEnabled(enabled);
     setNotificationSoundEnabled(soundAccount, enabled);
+    setSoundError('');
   };
+  useEffect(() => {
+    if (!soundEnabled) return;
+    const unlockOnGesture = (event: Event) => {
+      if (!isAudioUnlockGesture(event) || notificationAudioReady()) return;
+      void unlockNotificationAudio();
+    };
+    const restoreOnForeground = () => {
+      if (document.visibilityState === 'visible') void restoreNotificationAudio();
+    };
+    document.addEventListener('pointerdown', unlockOnGesture, true);
+    document.addEventListener('touchend', unlockOnGesture, true);
+    document.addEventListener('click', unlockOnGesture, true);
+    document.addEventListener('keydown', unlockOnGesture, true);
+    document.addEventListener('visibilitychange', restoreOnForeground);
+    window.addEventListener('pageshow', restoreOnForeground);
+    return () => {
+      document.removeEventListener('pointerdown', unlockOnGesture, true);
+      document.removeEventListener('touchend', unlockOnGesture, true);
+      document.removeEventListener('click', unlockOnGesture, true);
+      document.removeEventListener('keydown', unlockOnGesture, true);
+      document.removeEventListener('visibilitychange', restoreOnForeground);
+      window.removeEventListener('pageshow', restoreOnForeground);
+    };
+  }, [soundEnabled]);
   /* ── Server state ── */
   const [data,     setData]     = useState<DriverData | null>(null);
   const latestDriverData = useRef<DriverData | null>(null);
@@ -1826,18 +1853,15 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
         .filter(doc => doc.uploaded && (doc.docStatus === 'approved' || doc.docStatus === 'rejected'))
         .map(doc => `${assignmentId}:${doc.type}:${doc.docStatus}`));
       const previousReviews = reviewNotificationSnapshot.current;
-      if (previousReviews?.assignmentId === assignmentId &&
-          newNotificationIds(previousReviews.ids, reviewIds).size > 0 && soundEnabled) {
-        void playNotificationSound();
-      }
+      const newReview = previousReviews?.assignmentId === assignmentId &&
+        newNotificationIds(previousReviews.ids, reviewIds).size > 0;
       reviewNotificationSnapshot.current = { assignmentId, ids: reviewIds };
       // REQ10: persisted, server-created notifications — chime once for a later batch of new IDs.
       const realIds = new Set(json.notifications.map((n) => n.id));
-      if (realNotificationSnapshot.current
-          && newNotificationIds(realNotificationSnapshot.current, realIds).size > 0 && soundEnabled) {
-        void playNotificationSound();
-      }
+      const newPersistedNotification = !!realNotificationSnapshot.current &&
+        newNotificationIds(realNotificationSnapshot.current, realIds).size > 0;
       realNotificationSnapshot.current = realIds;
+      if (soundEnabled && (newReview || newPersistedNotification)) void playNotificationSound();
       const openIssue = !!json.assignment && hasOpenBlockingIssue(json.assignment);
       const previousIssue = issueSnapshot.current;
       if (previousIssue?.assignmentId === assignmentId && previousIssue.open && !openIssue
@@ -2613,10 +2637,16 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
               <span className={`absolute left-1 top-1 h-5 w-5 rounded-full bg-white shadow transition-transform ${soundEnabled ? 'translate-x-5' : ''}`} />
             </button>
           </div>
-          <button type="button" onClick={() => { void playNotificationSound(true); }}
+          <button type="button" onClick={() => {
+            setSoundError('');
+            void playNotificationSound(true).then((played) => {
+              if (!played) setSoundError(t('notifications.soundUnavailable'));
+            });
+          }}
             className="mt-3 min-h-11 rounded-xl border border-gray-200 bg-white px-4 text-sm font-semibold text-gray-700 focus-visible:outline-2 focus-visible:outline-green-700">
             {t('notifications.testSound')}
           </button>
+          {soundError && <p role="alert" className="mt-2 text-sm text-red-700">{soundError}</p>}
         </div>
         <div className="mt-8 border-t border-gray-200 pt-5">
           <button type="button" onClick={() => { setActiveDrawer(null); setLogoutDlg(true); }}
