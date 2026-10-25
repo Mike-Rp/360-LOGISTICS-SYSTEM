@@ -1922,11 +1922,17 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
       const pickupGroupCompleted = getDriverPhase(assignment) === 'pickup'
         && completedPhotoGroup(OPERATIONAL_PHOTOS.pickup, assignment.statusPhotos, category)
         && !assignment.statusPhotos?.loading_before?.url;
+      // A gallery pick's `photo.timestamp` starts empty (galleryPhotoMetadata) — fill it
+      // in with "now" before sending, or the Edge Function persists an empty taken_at.
+      // savedPhotoMetadata() normally does this fill-in, but only for the local object;
+      // it has to happen here too since this is what actually reaches the database now.
+      const uploadedAt = new Date().toISOString();
+      const photoForUpload = source === 'gallery' ? { ...photo, timestamp: uploadedAt } : photo;
       // The Edge Function computes the hash itself and saves the row — it owns
       // the full write, not just a pre-check. See db.ts's uploadOperationalPhoto.
-      const { url } = await uploadOperationalPhoto(assignment.id, category, photo, source);
+      const { url } = await uploadOperationalPhoto(assignment.id, category, photoForUpload, source);
       if (!sessionActiveRef.current) return;
-      const stored = savedPhotoMetadata(photo, source, url, new Date().toISOString());
+      const stored = savedPhotoMetadata(photo, source, url, uploadedAt);
       // The slot counts only after Storage and its status_photos row both saved.
       setData((previous) => previous?.assignment?.id === assignment.id
         ? { ...previous, assignment: { ...previous.assignment,
