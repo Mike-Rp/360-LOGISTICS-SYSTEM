@@ -500,7 +500,10 @@ export async function loadAdminData(): Promise<AdminData & ArchivedData> {
     };
   });
 
-  const notifications: AppNotification[] = notifRows.map((r) => ({
+  /* Driver-targeted rows (recipient_driver_id set) are a separate feed read via
+     loadDriverData — never surface them as staff cards or let the admin
+     auto-save diff engine see/touch them. */
+  const notifications: AppNotification[] = notifRows.filter((r) => !r.recipient_driver_id).map((r) => ({
     id: r.id, type: r.type, message: r.message ?? '', assignmentId: r.assignment_id,
     driverName: r.driver_name ?? '', truckPlate: r.truck_plate ?? '', read: !!r.read, timestamp: r.time_label ?? '',
     ...(r.created_at ? { createdAt: r.created_at } : {}),
@@ -1064,24 +1067,38 @@ export async function completeCsrPasswordReset(token: string, newPassword: strin
    DRIVER
    ════════════════════════════════════════════════════════════════════════════ */
 
+export interface DriverNotificationRecord {
+  id: string; type: string; message: string; assignmentId: string;
+  read: boolean; createdAt: string; readAt: string | null;
+}
+
 export interface DriverViewData {
   driver: { id: string; name: string; phone: string; status: string; currentLocation: string };
   assignment: Assignment | null;
   completedHistory: Array<{ id: string; destination: string; destinationArea?: string | null; company: string; deliveryDate: string; completedAt: string; truckPlate: string; taskStatus: string }>;
   /** Most recent cancelled assignment the driver hasn't dismissed yet, or null. */
   cancelledNotice: { id: string; reason: string | null; cancelledAt: string } | null;
+  /** REQ10: persisted, newest-first. */
+  notifications: DriverNotificationRecord[];
 }
 
 /* The driver's active job (or the latest finished one, so documents can still be uploaded)
    plus their delivery history. RLS already limits every query to this driver's own rows. */
 export async function loadDriverData(driverId: string): Promise<DriverViewData> {
-  const [drv, asn] = await Promise.all([
+  const [drv, asn, notif] = await Promise.all([
     supabase.from('drivers').select('*').eq('id', driverId).maybeSingle(),
     supabase.from('assignments').select('*').eq('driver_id', driverId),
+    supabase.from('notifications').select('*').eq('recipient_driver_id', driverId).order('created_at', { ascending: false }),
   ]);
   if (drv.error) throw drv.error;
   if (asn.error) throw asn.error;
+  if (notif.error) throw notif.error;
   if (!drv.data) throw new Error('Driver not found');
+
+  const notifications: DriverNotificationRecord[] = (notif.data ?? []).map((r) => ({
+    id: r.id, type: r.type, message: r.message ?? '', assignmentId: r.assignment_id,
+    read: !!r.read, createdAt: r.created_at, readAt: r.read_at ?? null,
+  }));
 
   const rows = asn.data ?? [];
   const live = rows.filter((r) => r.state === 'active');
@@ -1120,8 +1137,20 @@ export async function loadDriverData(driverId: string): Promise<DriverViewData> 
 
   return {
     driver: { id: drv.data.id, name: drv.data.name, phone: drv.data.phone, status: drv.data.status, currentLocation: drv.data.current_location ?? '—' },
-    assignment, completedHistory, cancelledNotice,
+    assignment, completedHistory, cancelledNotice, notifications,
   };
+}
+
+/** REQ10: mark one driver notification read. Writes only through the guarded RPC — no direct UPDATE grant. */
+export async function markDriverNotificationRead(id: string): Promise<void> {
+  const { error } = await supabase.rpc('mark_driver_notification_read', { p_id: id });
+  if (error) throw error;
+}
+
+/** REQ10: mark every unread driver notification read. */
+export async function markAllDriverNotificationsRead(): Promise<void> {
+  const { error } = await supabase.rpc('mark_all_driver_notifications_read');
+  if (error) throw error;
 }
 
 /* Read a completed delivery only when its driver opens it. Keep the driver ID in

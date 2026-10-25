@@ -50,6 +50,7 @@ and their SQL test files passed (each test rolls itself back).
 | REQ-011 Dispatch / complete as one database action | `20261021000004`, `20261023000003` (hardening) | `dispatch_complete` 12/12 | Implemented |
 | REQ-012 Per-account profile persistence | `20261022000000` | — | Implemented |
 | REQ-013 Completion/cancellation timestamps | `20261022000001` | — | Implemented |
+| REQ-014 Driver notifications (dispatch/cancel/issue resolved) | `20261025000003` | — | Implemented |
 | REQ-008 Recoverable delivery issues | `20261023000000`–`20261023000002` | — | Implemented |
 | REQ-007 Report ID + QR verification | `20261023000008`, `000009` | — | Implemented |
 
@@ -373,14 +374,62 @@ historical metadata or change existing photo quality and stage gates.
 
 ---
 
-## DRIVER NOTIFICATIONS — REQ10
+## [REQ-014] Driver Notifications
 
-**BACKEND REQUIRED — PENDING IMPLEMENTATION.** The Driver drawer cannot truthfully
-show a persisted notification feed, unread count, or Mark as Read actions with
-the current table, policies, and client helpers. The current Driver UI derives
-document review summaries from its active assignment's document statuses;
-these are useful shortcuts, but are not notification rows and have no read
-state or trustworthy event time.
+**Status: Implemented and verified live (2026-10-25)** for 3 of the 4 events
+described below — dispatch, cancellation, and issue resolution. Document
+rejection is deliberately **not** included; see the note at the end of this
+entry.
+
+`supabase/migrations/20261025000003_driver_notifications.sql` — applied and
+verified. `notifications` gained `recipient_driver_id` (nullable FK to
+`drivers`, null = existing staff row, unchanged) and `read_at`. `notifs_select`
+RLS now also allows `recipient_driver_id = my_driver_id()`. Two new guarded
+RPCs, `mark_driver_notification_read(p_id)` and
+`mark_all_driver_notifications_read()`, are the only way a driver can change
+`read`/`read_at` — no direct UPDATE grant was added. `dispatch_assignment()`,
+`cancel_assignment()`, and `resolve_assignment_issue()` each got one new
+idempotent insert (deterministic id, e.g. `'notif-dispatch-'||id`, with
+`on conflict do nothing`) — otherwise unchanged from their previously applied
+versions. `loadAdminData()`'s notifications query now excludes
+`recipient_driver_id is not null` rows so they never surface as staff cards or
+get touched by the admin auto-save diff engine. `loadDriverData()` fetches the
+driver's own rows in the same call used for everything else (no new polling
+interval) as `DriverViewData.notifications`.
+
+Frontend (`DriverInterface.tsx`): the drawer's old "not available yet" banner
+is replaced by a real list (`RealNotificationRow`), an unread-count bell badge,
+tap-to-mark-read, and "Mark all as read". The sound-on-new-notification logic
+reuses the same `newNotificationIds`/`playNotificationSound` pattern already
+used for document-review chimes. The pre-existing client-derived document
+review section (approve/reject cards, no persistence) is kept underneath,
+unchanged, exactly as this entry's original design called for.
+
+**Verified live:** dispatched a test assignment (`ASN14430`) — driver saw an
+unread badge and "You have a new delivery: Calamba → Hub"; reported and
+resolved an issue on it — "Your reported issue on ASN14430 has been resolved."
+appeared; cancelled it — "Your delivery ASN14430 was cancelled." appeared
+alongside the separate REQ-003 cancellation dialog (two different, intentional
+surfaces from the same `cancel_assignment()` call). Tapped one row to mark it
+read (badge count dropped), then "Mark all as read" to clear the rest.
+Confirmed via SQL that all 3 rows persisted `read = true` with real `read_at`
+timestamps, not just local UI state.
+
+**Deliberately deferred — document rejection:** unlike the other 3 events,
+document approve/reject is not backed by a dedicated RPC — it still goes
+through the generic `syncAdminData()`/`flatten()` diff-sync path (see "Still
+needed" item 1 above). Adding a driver notification there would mean either
+bolting it onto that untrusted client-driven path, or doing the larger RPC
+conversion first. This pass intentionally stopped at the 3 events that already
+had a trustworthy hook. Revisit once that RPC conversion happens.
+
+### A. Existing implementation (pre-2026-10-25, kept for reference)
+
+The Driver drawer could not truthfully show a persisted notification feed,
+unread count, or Mark as Read actions with the previous table, policies, and
+client helpers. The Driver UI derives document review summaries from its
+active assignment's document statuses; these are useful shortcuts, but are not
+notification rows and have no read state or trustworthy event time.
 
 ### A. Existing implementation
 
