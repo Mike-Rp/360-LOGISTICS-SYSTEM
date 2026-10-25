@@ -27,6 +27,7 @@ import type { CancelledHistoryItem } from '../../lib/driverHistory';
 import { completedPhotoGroup, getNextRequiredAction, getNextRequiredDocument, getNextRequiredPhoto, getRequiredPhotoProgress } from './driverPhotoGuidance';
 import { galleryPhotoMetadata, gpsAccuracyLevel, isCurrentPhotoLocationRequest, isPhotoLocationStale, savedPhotoMetadata } from './driverPhotoEvidence';
 import UploadedFilePreviewModal from '../admin/UploadedFilePreviewModal';
+import TestSoundButton, { type TestSoundState } from './TestSoundButton';
 import { LimitedTextCounter, STANDARD_REMARK_LIMIT, withinTextLimit } from '../ui/LimitedTextCounter';
 
 /* ── Types ── */
@@ -1552,12 +1553,46 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   const { t, status: statusText, document: documentText, reason: reasonText, language, setLanguage } = useDriverI18n();
   const soundAccount = `driver:${driverId}`;
   const [soundEnabled, setSoundEnabled] = useState(() => notificationSoundEnabled(soundAccount));
-  const [soundError, setSoundError] = useState('');
+  const [soundTestState, setSoundTestState] = useState<TestSoundState>('idle');
+  const soundTestBusy = useRef(false);
+  const soundTestTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const soundTestAttempt = useRef(0);
+  useEffect(() => () => {
+    soundTestAttempt.current++;
+    if (soundTestTimer.current) clearTimeout(soundTestTimer.current);
+  }, []);
   const updateSoundEnabled = (enabled: boolean) => {
     if (enabled) void unlockNotificationAudio();
     setSoundEnabled(enabled);
     setNotificationSoundEnabled(soundAccount, enabled);
-    setSoundError('');
+  };
+  const testSound = () => {
+    if (soundTestBusy.current) return;
+    soundTestBusy.current = true;
+    const attempt = ++soundTestAttempt.current;
+    if (soundTestTimer.current) clearTimeout(soundTestTimer.current);
+    setSoundTestState('playing');
+    // The helper begins resume() and schedules the chime before its first await.
+    void playNotificationSound(true).then((result) => {
+      if (attempt !== soundTestAttempt.current) return;
+      if (result !== 'started') {
+        soundTestBusy.current = false;
+        setSoundTestState(result);
+        return;
+      }
+      soundTestTimer.current = setTimeout(() => {
+        if (attempt !== soundTestAttempt.current) return;
+        soundTestBusy.current = false;
+        setSoundTestState('started');
+        soundTestTimer.current = setTimeout(() => {
+          if (attempt === soundTestAttempt.current) setSoundTestState('idle');
+        }, 2200);
+      }, 450);
+    }, () => {
+      if (attempt !== soundTestAttempt.current) return;
+      soundTestBusy.current = false;
+      setSoundTestState('failed');
+    });
   };
   useEffect(() => {
     if (!soundEnabled) return;
@@ -1568,15 +1603,11 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
     const restoreOnForeground = () => {
       if (document.visibilityState === 'visible') void restoreNotificationAudio();
     };
-    document.addEventListener('pointerdown', unlockOnGesture, true);
-    document.addEventListener('touchend', unlockOnGesture, true);
     document.addEventListener('click', unlockOnGesture, true);
     document.addEventListener('keydown', unlockOnGesture, true);
     document.addEventListener('visibilitychange', restoreOnForeground);
     window.addEventListener('pageshow', restoreOnForeground);
     return () => {
-      document.removeEventListener('pointerdown', unlockOnGesture, true);
-      document.removeEventListener('touchend', unlockOnGesture, true);
       document.removeEventListener('click', unlockOnGesture, true);
       document.removeEventListener('keydown', unlockOnGesture, true);
       document.removeEventListener('visibilitychange', restoreOnForeground);
@@ -2642,16 +2673,14 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
               <span className={`absolute left-1 top-1 h-5 w-5 rounded-full bg-white shadow transition-transform ${soundEnabled ? 'translate-x-5' : ''}`} />
             </button>
           </div>
-          <button type="button" onClick={() => {
-            setSoundError('');
-            void playNotificationSound(true).then((played) => {
-              if (!played) setSoundError(t('notifications.soundUnavailable'));
-            });
-          }}
-            className="mt-3 min-h-11 rounded-xl border border-gray-200 bg-white px-4 text-sm font-semibold text-gray-700 focus-visible:outline-2 focus-visible:outline-green-700">
-            {t('notifications.testSound')}
-          </button>
-          {soundError && <p role="alert" className="mt-2 text-sm text-red-700">{soundError}</p>}
+          <TestSoundButton state={soundTestState} onTest={testSound} labels={{
+            idle: t('notifications.testSound'), playing: t('notifications.soundPlaying'),
+            started: t('notifications.soundStarted'), retry: t('notifications.soundRetry'),
+          }} />
+          {soundTestState === 'blocked' && <p role="alert" className="mt-2 text-sm text-amber-800">{t('notifications.soundBlockedHelp')}</p>}
+          {soundTestState === 'unsupported' && <p role="alert" className="mt-2 text-sm text-amber-800">{t('notifications.soundUnsupported')}</p>}
+          {soundTestState === 'failed' && <p role="alert" className="mt-2 text-sm text-amber-800">{t('notifications.soundFailed')}</p>}
+          {!soundEnabled && soundTestState === 'idle' && <p className="mt-2 text-sm text-gray-500">{t('notifications.manualTestHint')}</p>}
         </div>
         <div className="mt-8 border-t border-gray-200 pt-5">
           <button type="button" onClick={() => { setActiveDrawer(null); setLogoutDlg(true); }}

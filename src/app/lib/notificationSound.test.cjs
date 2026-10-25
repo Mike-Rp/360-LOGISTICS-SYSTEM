@@ -67,10 +67,10 @@ test('blocked Web Audio is silent; a direct test click schedules the two quiet t
   }
   global.window = { AudioContext: FakeAudioContext };
   try {
-    await playNotificationSound();
+    assert.equal(await playNotificationSound(), 'blocked');
     assert.equal(tones.length, 0);
     allowed = true;
-    await playNotificationSound(true);
+    assert.equal(await playNotificationSound(true), 'started');
     assert.deepEqual(tones.map(tone => tone.hz), [660, 880]);
     assert.ok(tones[1].startAt > tones[0].stopAt);
     assert.ok(tones[1].stopAt - tones[0].startAt < 0.5);
@@ -115,7 +115,7 @@ test('automatic alerts do not create audio; a gesture synchronously resumes one 
   }
   global.window = { AudioContext: FakeAudioContext };
   try {
-    assert.equal(await playNotificationSound(), false);
+    assert.equal(await playNotificationSound(), 'blocked');
     assert.equal(created, 0);
     const first = unlockNotificationAudio();
     const second = unlockNotificationAudio();
@@ -128,7 +128,7 @@ test('automatic alerts do not create audio; a gesture synchronously resumes one 
     finishResume();
     assert.equal(await first, true);
     assert.equal(notificationAudioReady(), true);
-    assert.equal(await playNotificationSound(), true);
+    assert.equal(await playNotificationSound(), 'started');
     assert.equal(tones.length, 2);
   } finally { delete global.window; }
 });
@@ -137,7 +137,7 @@ test('a blocked test reports failure and a later gesture retries without queuing
   const { unlockNotificationAudio, notificationAudioReady, playNotificationSound } = loadSound();
   let permitted = false;
   let created = 0;
-  let tones = 0;
+  const tones = [];
   class FakeAudioContext {
     constructor() { created++; }
     state = 'suspended'; currentTime = 1; destination = {};
@@ -146,20 +146,27 @@ test('a blocked test reports failure and a later gesture retries without queuing
       this.state = 'running';
       return Promise.resolve();
     }
-    createOscillator() { tones++; return { frequency: { setValueAtTime() {} }, connect() {}, disconnect() {}, start() {}, stop() {} }; }
+    createOscillator() {
+      const tone = { disconnected: false, frequency: { setValueAtTime() {} }, connect() {},
+        disconnect() { this.disconnected = true; }, start() {}, stop() {} };
+      tones.push(tone);
+      return tone;
+    }
     createGain() { return { gain: { setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {}, disconnect() {} }; }
   }
   global.window = { AudioContext: FakeAudioContext };
   try {
-    assert.equal(await playNotificationSound(true), false);
+    assert.equal(await playNotificationSound(true), 'blocked');
+    assert.equal(tones.length, 2);
+    assert.ok(tones.every(tone => tone.disconnected));
     assert.equal(notificationAudioReady(), false);
-    assert.equal(await playNotificationSound(), false);
+    assert.equal(await playNotificationSound(), 'blocked');
     permitted = true;
     assert.equal(await unlockNotificationAudio(), true);
-    assert.equal(tones, 0);
+    assert.equal(tones.length, 2);
     assert.equal(created, 1);
-    assert.equal(await playNotificationSound(), true);
-    assert.equal(tones, 2);
+    assert.equal(await playNotificationSound(), 'started');
+    assert.equal(tones.length, 4);
   } finally { delete global.window; }
 });
 
@@ -180,11 +187,11 @@ test('foreground restoration plays no stale alert and hidden pages remain silent
     assert.equal(await unlockNotificationAudio(), true);
     context.state = 'suspended';
     assert.equal(notificationAudioReady(), false);
-    assert.equal(await playNotificationSound(), false);
+    assert.equal(await playNotificationSound(), 'blocked');
     assert.equal(await restoreNotificationAudio(), true);
     assert.equal(tones, 0);
     document.visibilityState = 'hidden';
-    assert.equal(await playNotificationSound(), false);
+    assert.equal(await playNotificationSound(), 'blocked');
     assert.equal(tones, 0);
   } finally { delete global.window; delete global.document; }
 });
@@ -206,4 +213,97 @@ test('WebKit AudioContext fallback unlocks without an audible initialization ton
     assert.equal(created, 1);
     assert.equal(tones, 0);
   } finally { delete global.window; }
+});
+
+test('a direct test tap schedules both tones before asynchronous resume settles', async () => {
+  const { playNotificationSound } = loadSound();
+  let finishResume;
+  const starts = [];
+  class FakeAudioContext {
+    state = 'suspended'; currentTime = 1; destination = {};
+    resume() { return new Promise(resolve => { finishResume = () => { this.state = 'running'; resolve(); }; }); }
+    createOscillator() { return { frequency: { setValueAtTime() {} }, connect() {}, disconnect() {},
+      start(time) { starts.push(time); }, stop() {} }; }
+    createGain() { return { gain: { setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {}, disconnect() {} }; }
+  }
+  global.window = { AudioContext: FakeAudioContext };
+  try {
+    const attempt = playNotificationSound(true);
+    assert.equal(starts.length, 2);
+    finishResume();
+    assert.equal(await attempt, 'started');
+  } finally { delete global.window; }
+});
+
+test('interrupted iOS-style context waits for a running state before reporting playback', async () => {
+  const { playNotificationSound } = loadSound();
+  let context;
+  class FakeAudioContext {
+    constructor() { context = this; }
+    state = 'interrupted'; currentTime = 1; destination = {};
+    listeners = new Set();
+    addEventListener(type, listener) { if (type === 'statechange') this.listeners.add(listener); }
+    removeEventListener(type, listener) { if (type === 'statechange') this.listeners.delete(listener); }
+    resume() { return Promise.resolve(); }
+    createOscillator() { return { frequency: { setValueAtTime() {} }, connect() {}, disconnect() {}, start() {}, stop() {} }; }
+    createGain() { return { gain: { setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {}, disconnect() {} }; }
+  }
+  global.window = { webkitAudioContext: FakeAudioContext };
+  try {
+    const attempt = playNotificationSound(true);
+    let settled = false;
+    void attempt.then(() => { settled = true; });
+    await Promise.resolve();
+    assert.equal(settled, false);
+    context.state = 'running';
+    for (const listener of context.listeners) listener();
+    assert.equal(await attempt, 'started');
+  } finally { delete global.window; }
+});
+
+test('a stalled mobile resume times out, disconnects old tones, and permits retry', async () => {
+  const { playNotificationSound } = loadSound();
+  let permitted = false;
+  let created = 0;
+  const tones = [];
+  class FakeAudioContext {
+    constructor() { created++; }
+    state = 'suspended'; currentTime = 1; destination = {};
+    resume() {
+      if (!permitted) return new Promise(() => {});
+      this.state = 'running';
+      return Promise.resolve();
+    }
+    createOscillator() {
+      const tone = { disconnected: false, frequency: { setValueAtTime() {} }, connect() {},
+        disconnect() { this.disconnected = true; }, start() {}, stop() {} };
+      tones.push(tone);
+      return tone;
+    }
+    createGain() { return { gain: { setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {}, disconnect() {} }; }
+  }
+  global.window = { AudioContext: FakeAudioContext };
+  try {
+    assert.equal(await playNotificationSound(true), 'blocked');
+    assert.ok(tones.every(tone => tone.disconnected));
+    permitted = true;
+    assert.equal(await playNotificationSound(true), 'started');
+    assert.equal(created, 1);
+    assert.equal(tones.length, 4);
+  } finally { delete global.window; }
+});
+
+test('unsupported APIs and oscillator failures have distinct results', async () => {
+  const unsupported = loadSound();
+  global.window = {};
+  try { assert.equal(await unsupported.playNotificationSound(true), 'unsupported'); }
+  finally { delete global.window; }
+
+  const failed = loadSound();
+  global.window = { AudioContext: class {
+    state = 'running'; currentTime = 1; destination = {};
+    createOscillator() { throw new Error('audio hardware failure'); }
+  } };
+  try { assert.equal(await failed.playNotificationSound(true), 'failed'); }
+  finally { delete global.window; }
 });

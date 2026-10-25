@@ -17,6 +17,15 @@ export function newNotificationIds(seen: ReadonlySet<string>, current: Iterable<
 
 let audioContext: AudioContext | null = null;
 let gestureUnlock: Promise<boolean> | null = null;
+const UNLOCK_TIMEOUT_MS = 1600;
+
+export type NotificationSoundResult = 'started' | 'blocked' | 'unsupported' | 'failed';
+
+function audioApiAvailable(): boolean {
+  try {
+    return typeof window !== 'undefined' && !!(window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext);
+  } catch { return false; }
+}
 
 function getAudioContext(): AudioContext | null {
   try {
@@ -53,6 +62,29 @@ function startSilentSource(context: AudioContext): void {
   } catch { /* resume() remains the supported fallback. */ }
 }
 
+/** Safari may leave resume() pending while interrupted; always release the retry slot. */
+function waitForRunning(context: AudioContext, resumed: Promise<void>): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (ready: boolean) => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      context.removeEventListener?.('statechange', check);
+      resolve(ready);
+    };
+    const check = () => {
+      if (context.state === 'running') finish(true);
+      else if (context.state === 'closed') finish(false);
+    };
+    context.addEventListener?.('statechange', check);
+    timer = setTimeout(() => finish(context.state === 'running'), UNLOCK_TIMEOUT_MS);
+    Promise.resolve(resumed).then(check, () => finish(false));
+    check();
+  });
+}
+
 /** Call directly from a trusted tap, click, or key action, before awaiting other work. */
 export function unlockNotificationAudio(): Promise<boolean> {
   const context = getAudioContext();
@@ -63,7 +95,7 @@ export function unlockNotificationAudio(): Promise<boolean> {
     // Both calls begin synchronously while the browser still has user activation.
     const resumed = context.resume();
     startSilentSource(context);
-    const pending = Promise.resolve(resumed).then(() => context.state === 'running', () => false)
+    const pending = waitForRunning(context, resumed)
       .finally(() => { if (gestureUnlock === pending) gestureUnlock = null; });
     gestureUnlock = pending;
     return pending;
@@ -76,17 +108,20 @@ export async function restoreNotificationAudio(): Promise<boolean> {
   if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return false;
   if (notificationAudioReady()) return true;
   try {
-    await audioContext.resume();
-    return notificationAudioReady();
+    return await waitForRunning(audioContext, audioContext.resume());
   } catch { return false; }
 }
 
-/** A quiet, two-tone chime. Automatic calls never create or resume blocked audio. */
-export async function playNotificationSound(userInitiated = false): Promise<boolean> {
-  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return false;
-  if (userInitiated && !await unlockNotificationAudio()) return false;
-  const context = audioContext;
-  if (!context || context.state !== 'running') return false;
+/** Schedule both tones synchronously so a direct mobile tap can activate Web Audio. */
+function scheduleChime(context: AudioContext): { cancel: () => void } | null {
+  const nodes: Array<{ oscillator: OscillatorNode; gain: GainNode }> = [];
+  const cancel = () => {
+    for (const { oscillator, gain } of nodes) {
+      oscillator.onended = null;
+      oscillator.disconnect();
+      gain.disconnect();
+    }
+  };
   try {
     const start = context.currentTime + 0.02;
     for (const { frequency, offset, duration } of [
@@ -95,6 +130,7 @@ export async function playNotificationSound(userInitiated = false): Promise<bool
     ]) {
       const oscillator = context.createOscillator();
       const gain = context.createGain();
+      nodes.push({ oscillator, gain });
       const toneStart = start + offset;
       oscillator.type = 'sine';
       oscillator.frequency.setValueAtTime(frequency, toneStart);
@@ -107,6 +143,31 @@ export async function playNotificationSound(userInitiated = false): Promise<bool
       oscillator.start(toneStart);
       oscillator.stop(toneStart + duration);
     }
-    return true;
-  } catch { return false; }
+    return { cancel };
+  } catch {
+    cancel();
+    return null;
+  }
+}
+
+/** "started" means scheduled in a running context, not that a speaker was audible. */
+export async function playNotificationSound(userInitiated = false): Promise<NotificationSoundResult> {
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return 'blocked';
+  if (userInitiated) {
+    if (!audioApiAvailable()) return 'unsupported';
+    const context = getAudioContext();
+    if (!context) return 'failed';
+    // Start resume and the tones before the first await, inside the trusted click.
+    const unlocked = unlockNotificationAudio();
+    const chime = scheduleChime(context);
+    if (!chime) return 'failed';
+    if (!await unlocked || context.state !== 'running') {
+      chime.cancel();
+      return 'blocked';
+    }
+    return 'started';
+  }
+  const context = audioContext;
+  if (!context || context.state !== 'running') return 'blocked';
+  return scheduleChime(context) ? 'started' : 'failed';
 }
