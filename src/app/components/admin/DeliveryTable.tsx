@@ -79,6 +79,14 @@ function DocumentsAction({ assignment }: { assignment: Assignment }) {
   );
 }
 
+function CancellationDetailsAction({ assignment, onOpen }: { assignment: Assignment; onOpen: () => void }) {
+  return <button type="button" onClick={onOpen} aria-label={`View cancellation details for ${assignment.id}`}
+    className="inline-flex min-h-10 max-w-full items-center gap-1 rounded-lg border border-border bg-white px-2.5 py-1.5 text-sm font-medium text-foreground hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+    <span className="min-w-0 break-words">Cancellation Details</span>
+    <ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+  </button>;
+}
+
 function SummaryAction({ onClick }: { onClick: () => void }) {
   return <button type="button" onClick={onClick}
     className="inline-flex min-h-10 items-center gap-1 rounded-lg border border-border bg-white px-2.5 py-1.5 text-sm font-medium text-foreground hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
@@ -435,7 +443,7 @@ export default function DeliveryTable({
                   </colgroup>
                   <thead className="bg-muted/30">
                     <tr>
-                      {['TRUCK', 'DRIVER', 'ROUTE', 'CUSTOMER', 'STATUS', deliveryDateHeading(tab), 'DOCUMENTS'].map((col) => (
+                      {['TRUCK', 'DRIVER', 'ROUTE', 'CUSTOMER', 'STATUS', deliveryDateHeading(tab), tab === 'cancelled' ? 'DETAILS' : 'DOCUMENTS'].map((col) => (
                         <th key={col} className="px-2.5 py-3 text-left text-sm font-semibold text-muted-foreground uppercase tracking-wide break-words">{col}</th>
                       ))}
                     </tr>
@@ -454,13 +462,11 @@ export default function DeliveryTable({
                           {a.remarks && <RemarksPreview remarks={a.remarks} onOpen={() => setRemarksAssignment(a)} />}
                         </td>
                         <td className="px-2.5 py-4 text-[15px] font-medium text-foreground break-words"><Highlight text={a.company} query={search} /></td>
-                        <td className="px-2.5 py-4">
-                          <AssignmentStatusBadge assignment={a} />
-                          {tab === 'cancelled' && <button type="button" onClick={() => setCancelledDetails(a)}
-                            className="mt-1 block text-sm font-medium text-slate-700 underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-500">Cancellation details</button>}
-                        </td>
+                        <td className="px-2.5 py-4"><AssignmentStatusBadge assignment={a} /></td>
                         <td className="px-2.5 py-4 min-w-0"><DeliveryDateValue assignment={a} tab={tab} timingNow={timingNow} /></td>
-                        <td className="px-2.5 py-4"><DocumentsAction assignment={a} /></td>
+                        <td className="px-2.5 py-4">{tab === 'cancelled'
+                          ? <CancellationDetailsAction assignment={a} onOpen={() => setCancelledDetails(a)} />
+                          : <DocumentsAction assignment={a} />}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -474,8 +480,6 @@ export default function DeliveryTable({
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <span className="min-w-0 text-base font-bold text-foreground break-words"><Highlight text={a.truckPlate} query={search} /></span>
                       <AssignmentStatusBadge assignment={a} />
-                      {tab === 'cancelled' && <button type="button" onClick={() => setCancelledDetails(a)}
-                        className="text-sm font-medium text-slate-700 underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-500">Cancellation details</button>}
                     </div>
                     <TruckMetadata assignment={a} truck={truckFor(a)} query={search} />
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-2 min-w-0 text-sm">
@@ -488,7 +492,9 @@ export default function DeliveryTable({
                       <p className="min-w-0 text-[15px] font-medium text-foreground break-words"><Highlight text={a.company} query={search} /></p>
                       <DeliveryDateValue assignment={a} tab={tab} timingNow={timingNow} showLabel />
                     </div>
-                    <DocumentsAction assignment={a} />
+                    {tab === 'cancelled'
+                      ? <CancellationDetailsAction assignment={a} onOpen={() => setCancelledDetails(a)} />
+                      : <DocumentsAction assignment={a} />}
                   </div>
                 ))}
               </div>
@@ -611,16 +617,24 @@ export default function DeliveryTable({
         </DialogContent>
       </Dialog>
       <Dialog open={cancelledDetails !== null} onOpenChange={(open) => { if (!open) setCancelledDetails(null); }}>
-        <DialogContent className="w-[calc(100%-2rem)] max-w-lg min-w-0 p-4 sm:p-6">
+        <DialogContent className="w-[calc(100%-2rem)] max-w-lg min-w-0 max-h-[calc(100dvh-2rem)] overflow-y-auto p-4 sm:p-6">
           <DialogHeader className="pr-6 text-left">
             <DialogTitle>Cancellation details</DialogTitle>
             <DialogDescription>{cancelledDetails?.id}</DialogDescription>
           </DialogHeader>
           <dl className="space-y-3 text-sm">
+            {cancelledDetails?.driverName && <div><dt className="text-muted-foreground">Driver</dt><dd className="font-medium">{cancelledDetails.driverName}</dd></div>}
+            {cancelledDetails?.truckPlate && <div><dt className="text-muted-foreground">Truck</dt><dd className="font-medium">{cancelledDetails.truckPlate}</dd></div>}
             <div><dt className="text-muted-foreground">Cancelled by</dt><dd className="font-medium">{cancelledDetails?.cancelledBy ?? 'Not recorded'}</dd></div>
             <div><dt className="text-muted-foreground">Cancelled at</dt><dd className="font-medium">{formatOperationalStamp(cancelledDetails?.cancelledAt) ?? 'Not recorded'}</dd></div>
             <div><dt className="text-muted-foreground">Cancellation reason</dt><dd className="whitespace-pre-wrap break-words font-medium">{cancelledDetails?.cancelReason ?? 'Not recorded'}</dd></div>
           </dl>
+          {cancelledDetails?.documents.some(doc => doc.uploaded) &&
+            <a href={adminHref('Documents', { assignmentId: cancelledDetails.id })}
+              onClick={event => followAdminLink(event, () => pushAdminNavigation('Documents', { assignmentId: cancelledDetails.id }))}
+              className="inline-flex min-h-10 items-center gap-1 self-start rounded-md px-2 text-sm font-medium text-primary hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+              View historical documents <ChevronRight aria-hidden="true" className="h-3.5 w-3.5" />
+            </a>}
           <DialogFooter><DialogClose className="min-h-10 rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-muted/30">Close</DialogClose></DialogFooter>
         </DialogContent>
       </Dialog>
