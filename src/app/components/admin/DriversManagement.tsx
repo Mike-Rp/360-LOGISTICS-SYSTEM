@@ -12,6 +12,7 @@ import {
 import { Popover, PopoverAnchor, PopoverContent } from '../ui/popover';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from '../ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '../ui/alert-dialog';
+import { LimitedTextCounter, STANDARD_REMARK_LIMIT, validRequiredLimitedText, withinTextLimit } from '../ui/LimitedTextCounter';
 import TruckImage from '../TruckImage';
 import ASNWithCopy from './ASNWithCopy';
 import DocumentsSummaryCard from './DocumentsSummaryCard';
@@ -1081,6 +1082,7 @@ function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClo
   };
   const handleResolve = async () => {
     if (!assignment?.openIssue) return;
+    if (!withinTextLimit(resolveNote)) throw new Error(`Resolution note must be ${STANDARD_REMARK_LIMIT} characters or fewer.`);
     await onResolveIssue(assignment.openIssue.id, resolveNote.trim());
     setResolveNote('');
     setResolveConfirmOpen(false);
@@ -1160,9 +1162,10 @@ function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClo
             {assignment.openIssue && !isViewOnly ? (
               <div className="mt-4 space-y-2 border-t border-red-200 pt-3">
                 <label className="block text-xs font-medium text-red-800" htmlFor="resolve-issue-note">Resolution note (optional)</label>
-                <textarea id="resolve-issue-note" value={resolveNote} onChange={(e) => setResolveNote(e.target.value.slice(0, 300))}
-                  rows={2} maxLength={300} placeholder="What was done to resolve this?"
+                <textarea id="resolve-issue-note" value={resolveNote} onChange={(e) => setResolveNote(e.target.value)}
+                  rows={2} maxLength={STANDARD_REMARK_LIMIT} placeholder="What was done to resolve this?"
                   className="w-full rounded-xl border border-red-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-300" />
+                <LimitedTextCounter value={resolveNote} />
                 <button onClick={() => setResolveConfirmOpen(true)}
                   className="w-full rounded-xl bg-red-600 py-2.5 text-sm font-bold text-white transition-colors hover:bg-red-700 disabled:opacity-60">
                   Resolve &amp; Continue
@@ -1355,17 +1358,20 @@ function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClo
                   {/* Inline reject reason input — shown when this doc is being rejected */}
                   {rejectingDoc === doc.type && (
                     <div className="px-3 pb-3 pt-0 border-t border-red-100 bg-red-50/60">
-                      <p className="text-xs text-red-600 font-medium mb-1.5 mt-2">
+                      <label htmlFor={`reject-reason-${doc.type}`} className="block text-xs text-red-600 font-medium mb-1.5 mt-2">
                         Reason for rejection <span className="font-normal text-red-400">(required)</span>
-                      </p>
+                      </label>
                       <textarea
+                        id={`reject-reason-${doc.type}`}
                         autoFocus
                         value={rejectReason}
                         onChange={(e) => setRejectReason(e.target.value)}
+                        maxLength={STANDARD_REMARK_LIMIT}
                         placeholder="e.g. Document is blurry, wrong document submitted, signature missing…"
                         rows={2}
                         className="w-full px-3 py-2 rounded-lg border border-red-200 bg-white text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-red-300/50 resize-none"
                       />
+                      <LimitedTextCounter value={rejectReason} />
                       <div className="flex gap-2 mt-2">
                         <button disabled={docActionBusy === doc.type}
                           onClick={() => { setRejectingDoc(null); setRejectReason(''); }}
@@ -1373,8 +1379,10 @@ function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClo
                           Cancel
                         </button>
                         <button
-                          disabled={!rejectReason.trim() || docActionBusy === doc.type}
+                          disabled={!validRequiredLimitedText(rejectReason) || docActionBusy === doc.type}
                           onClick={async () => {
+                            if (!rejectReason.trim()) { setDocActionError('Reason for rejection is required.'); return; }
+                            if (!withinTextLimit(rejectReason)) { setDocActionError(`Reason for rejection must be ${STANDARD_REMARK_LIMIT} characters or fewer.`); return; }
                             setDocActionError(''); setDocActionBusy(doc.type);
                             try {
                               await onRejectDoc(assignment!.id, doc.type, rejectReason);
@@ -1477,7 +1485,9 @@ function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClo
               <textarea id="cancel-reason" value={cancelReason} maxLength={150} rows={3}
                 onChange={(event) => { setCancelReason(event.target.value); setCancelError(''); }}
                 placeholder="Enter the reason for cancelling this assignment"
-                className="mb-3 w-full resize-y rounded-lg border border-border px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-300" />
+                aria-describedby="cancel-reason-count"
+                className="w-full resize-y rounded-lg border border-border px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-300" />
+              <div id="cancel-reason-count" className="mb-3 mt-1"><LimitedTextCounter value={cancelReason} max={150} /></div>
               <label htmlFor="cancel-password" className="mb-1 block text-sm font-medium">Password *</label>
               <div className="relative">
                 <input id="cancel-password" type={showCancelPassword ? 'text' : 'password'} autoComplete="current-password"
@@ -2200,6 +2210,7 @@ export default function DriversManagement({
 
   const handleRejectDoc = async (assignId: string, docType: string, reason: string) => {
     const trimmed = reason.trim();
+    if (!validRequiredLimitedText(reason)) throw new Error(`Reason for rejection must be between 1 and ${STANDARD_REMARK_LIMIT} characters.`);
     const patch = (d: AssignmentDoc) =>
       d.type === docType ? { ...d, docStatus: 'rejected' as DocStatus, rejectReason: trimmed || undefined } : d;
     try {

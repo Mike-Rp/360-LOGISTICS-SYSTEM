@@ -27,6 +27,7 @@ import type { CancelledHistoryItem } from '../../lib/driverHistory';
 import { completedPhotoGroup, getNextRequiredAction, getNextRequiredDocument, getNextRequiredPhoto, getRequiredPhotoProgress } from './driverPhotoGuidance';
 import { galleryPhotoMetadata, gpsAccuracyLevel, isCurrentPhotoLocationRequest, isPhotoLocationStale, savedPhotoMetadata } from './driverPhotoEvidence';
 import UploadedFilePreviewModal from '../admin/UploadedFilePreviewModal';
+import { LimitedTextCounter, STANDARD_REMARK_LIMIT, withinTextLimit } from '../ui/LimitedTextCounter';
 
 /* ── Types ── */
 interface CompletedHistoryItem {
@@ -2111,6 +2112,10 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
     };
     const actionKey = actions[phase];
     if (!actionKey) return false;
+    if ((phase === 'loading' || phase === 'unloading') && !withinTextLimit(stageRemark)) {
+      setActionError(t('workflow.stageRemarkTooLong'));
+      return false;
+    }
     setUpdating(true);
     try {
       if (transition) {
@@ -3115,9 +3120,10 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
               <div className="rounded-2xl border border-gray-200 bg-white p-4">
                 <label htmlFor="loading-remark" className="block text-sm font-bold text-gray-900">{t('workflow.stageRemark')}</label>
                 <p className="mt-0.5 text-xs text-gray-500">{t('workflow.stageRemarkHelp')}</p>
-                <textarea id="loading-remark" value={stageRemark} onChange={(e) => setStageRemark(e.target.value.slice(0, 300))}
-                  rows={2} maxLength={300} placeholder={t('workflow.stageRemarkPlaceholder')}
+                <textarea id="loading-remark" value={stageRemark} onChange={(e) => setStageRemark(e.target.value)}
+                  rows={2} maxLength={STANDARD_REMARK_LIMIT} placeholder={t('workflow.stageRemarkPlaceholder')}
                   className="mt-2 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30" />
+                <div className="mt-1"><LimitedTextCounter value={stageRemark} /></div>
               </div>
             </>}
             {phase === 'pretrip' && <>
@@ -3155,9 +3161,10 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
               <div className="rounded-2xl border border-gray-200 bg-white p-4">
                 <label htmlFor="unloading-remark" className="block text-sm font-bold text-gray-900">{t('workflow.stageRemark')}</label>
                 <p className="mt-0.5 text-xs text-gray-500">{t('workflow.stageRemarkHelp')}</p>
-                <textarea id="unloading-remark" value={stageRemark} onChange={(e) => setStageRemark(e.target.value.slice(0, 300))}
-                  rows={2} maxLength={300} placeholder={t('workflow.stageRemarkPlaceholder')}
+                <textarea id="unloading-remark" value={stageRemark} onChange={(e) => setStageRemark(e.target.value)}
+                  rows={2} maxLength={STANDARD_REMARK_LIMIT} placeholder={t('workflow.stageRemarkPlaceholder')}
                   className="mt-2 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30" />
+                <div className="mt-1"><LimitedTextCounter value={stageRemark} /></div>
               </div>
             </>}
             {phase === 'delivery_pending' && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">{t('workflow.deliveryPending')}</p>}
