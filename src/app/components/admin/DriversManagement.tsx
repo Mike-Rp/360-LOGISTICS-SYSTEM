@@ -38,7 +38,7 @@ import { TRUCK_CLASSIFICATIONS, truckSideImageFor, capacityKgOnly } from '../../
 import { destinationAreaEnabled, getAssignmentRoute, getDeliveryLocation } from '../../data/assignmentRoute';
 import {
   verifyOwnPassword, editAssignment, cancelAssignment, notifyAssignmentCancelled, loadAdminData,
-  dispatchAssignment, completeAssignment, resolveAssignmentIssue, AssignmentActionError,
+  dispatchAssignment, completeAssignment, resolveAssignmentIssue, approveDocument, rejectDocument, AssignmentActionError,
   type AssignmentActionErrorCode, type AssignmentEdit, type AssignmentLocationEdit,
 } from '../../lib/db';
 
@@ -230,6 +230,8 @@ const actionMessage = (code: AssignmentActionErrorCode): string => ({
   truck_archived:    'That truck has been archived. Pick a different truck.',
   already_resolved:  'This issue has already been resolved. Refresh the page.',
   assignment_not_active: 'This delivery is no longer active, so its issue can\'t be resolved from here.',
+  already_reviewed:  'This document has already been reviewed. Refresh the page.',
+  not_uploaded:      'This document hasn\'t been uploaded yet.',
   invalid:          'The server rejected one of the values. Check the form and try again.',
   network:           'Couldn\'t reach the server. Check your connection and try again.',
 }[code]);
@@ -955,8 +957,8 @@ function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClo
   truck: LocalTruck | null;
   onClose: () => void;
   onEdit:         () => void;
-  onApproveDoc:   (id: string, docType: string) => void;
-  onRejectDoc:    (id: string, docType: string, reason: string) => void;
+  onApproveDoc:   (id: string, docType: string) => Promise<void>;
+  onRejectDoc:    (id: string, docType: string, reason: string) => Promise<void>;
   onComplete:     (id: string) => Promise<void>;
   onCancel:       (id: string, reason: string, password: string) => Promise<void>;
   onResolveIssue: (issueId: number, note: string) => Promise<void>;
@@ -985,6 +987,8 @@ function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClo
   const [previewDoc,    setPreviewDoc]    = useState<{ url: string; type: string; kind: 'image' | 'document'; timestamp?: string } | null>(null);
   const [rejectingDoc,  setRejectingDoc]  = useState<string | null>(null);
   const [rejectReason,  setRejectReason]  = useState('');
+  const [docActionBusy, setDocActionBusy] = useState<string | null>(null);
+  const [docActionError, setDocActionError] = useState('');
   const reviewSectionRef = useRef<HTMLDivElement>(null);
   const reviewDocumentRef = useRef<HTMLDivElement>(null);
   const [highlightReview, setHighlightReview] = useState(false);
@@ -1297,6 +1301,7 @@ function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClo
               </div>
             </div>
             {reviewTarget?.docType && !reviewDocument && <p role="status" className="mb-3 text-sm text-muted-foreground">This item is no longer available.</p>}
+            {docActionError && <p role="alert" className="mb-3 text-xs font-medium text-red-600">{docActionError}</p>}
             <div className="space-y-2">
               {assignment.documents.map((doc) => (
                 <div key={doc.type} ref={doc === reviewDocument ? reviewDocumentRef : undefined}
@@ -1322,13 +1327,19 @@ function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClo
                         )}
                         {doc.docStatus === 'pending' && !isViewOnly && (
                           <>
-                            <button onClick={() => onApproveDoc(assignment!.id, doc.type)}
-                              className="flex items-center gap-1 px-2.5 py-1 bg-green-500 text-white rounded-lg text-xs hover:bg-green-600 transition-colors">
-                              <Check className="w-3 h-3" /> Approve
+                            <button disabled={docActionBusy === doc.type}
+                              onClick={async () => {
+                                setDocActionError(''); setDocActionBusy(doc.type);
+                                try { await onApproveDoc(assignment!.id, doc.type); }
+                                catch (err) { setDocActionError(err instanceof Error ? err.message : 'Could not approve this document.'); }
+                                finally { setDocActionBusy(null); }
+                              }}
+                              className="flex items-center gap-1 px-2.5 py-1 bg-green-500 text-white rounded-lg text-xs hover:bg-green-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                              <Check className="w-3 h-3" /> {docActionBusy === doc.type ? 'Approving…' : 'Approve'}
                             </button>
-                            <button
-                              onClick={() => { setRejectingDoc(doc.type); setRejectReason(''); }}
-                              className="flex items-center gap-1 px-2.5 py-1 bg-red-500 text-white rounded-lg text-xs hover:bg-red-600 transition-colors">
+                            <button disabled={docActionBusy === doc.type}
+                              onClick={() => { setDocActionError(''); setRejectingDoc(doc.type); setRejectReason(''); }}
+                              className="flex items-center gap-1 px-2.5 py-1 bg-red-500 text-white rounded-lg text-xs hover:bg-red-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                               <XCircle className="w-3 h-3" /> Reject
                             </button>
                           </>
@@ -1352,20 +1363,27 @@ function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClo
                         className="w-full px-3 py-2 rounded-lg border border-red-200 bg-white text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-red-300/50 resize-none"
                       />
                       <div className="flex gap-2 mt-2">
-                        <button
+                        <button disabled={docActionBusy === doc.type}
                           onClick={() => { setRejectingDoc(null); setRejectReason(''); }}
-                          className="flex-1 py-1.5 border border-border rounded-lg text-xs hover:bg-accent transition-colors">
+                          className="flex-1 py-1.5 border border-border rounded-lg text-xs hover:bg-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                           Cancel
                         </button>
                         <button
-                          disabled={!rejectReason.trim()}
-                          onClick={() => {
-                            onRejectDoc(assignment!.id, doc.type, rejectReason);
-                            setRejectingDoc(null);
-                            setRejectReason('');
+                          disabled={!rejectReason.trim() || docActionBusy === doc.type}
+                          onClick={async () => {
+                            setDocActionError(''); setDocActionBusy(doc.type);
+                            try {
+                              await onRejectDoc(assignment!.id, doc.type, rejectReason);
+                              setRejectingDoc(null);
+                              setRejectReason('');
+                            } catch (err) {
+                              setDocActionError(err instanceof Error ? err.message : 'Could not reject this document.');
+                            } finally {
+                              setDocActionBusy(null);
+                            }
                           }}
                           className="flex-1 py-1.5 bg-red-500 text-white rounded-lg text-xs font-medium hover:bg-red-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1">
-                          <XCircle className="w-3 h-3" /> Confirm Reject
+                          <XCircle className="w-3 h-3" /> {docActionBusy === doc.type ? 'Rejecting…' : 'Confirm Reject'}
                         </button>
                       </div>
                     </div>
@@ -2159,34 +2177,35 @@ export default function DriversManagement({
   /* A document can be (re-)uploaded after the delivery is already archived to
      `completed` (e.g. a driver fixing a document that failed to save earlier),
      so review has to reach that array too, not just the still-active one. */
-  const handleApproveDoc = (assignId: string, docType: string) => {
-    const a = assignments.find((x) => x.id === assignId) ?? completed.find((x) => x.id === assignId);
-    const patch = (d: AssignmentDoc) => d.type === docType ? { ...d, docStatus: 'approved' as DocStatus } : d;
-    setAssignments((p) => p.map((x) => x.id !== assignId ? x : { ...x, documents: x.documents.map(patch) }));
-    setCompleted((p) => p.map((x) => x.id !== assignId ? x : { ...x, documents: x.documents.map(patch) }));
-    onLogActivity?.({
-      type: 'doc_approved',
-      driverName: a?.driverName,
-      truckPlate: a?.truckPlate,
-      assignmentId: assignId,
-      docType,
-    });
+  /* REQ-004 follow-up: approve_document()/reject_document() now change doc_status and
+     write the activity_log row atomically on the server — the client no longer builds
+     the activity entry itself (onLogActivity is gone from both). A document can be
+     (re-)reviewed after the delivery is already archived to `completed`, so the
+     optimistic patch still has to reach that array too, not just the still-active one. */
+  const handleApproveDoc = async (assignId: string, docType: string) => {
+    const patch = (d: AssignmentDoc) => d.type === docType ? { ...d, docStatus: 'approved' as DocStatus, rejectReason: undefined } : d;
+    try {
+      await onServerChange(() => approveDocument(assignId, docType), () => {
+        setAssignments((p) => p.map((x) => x.id !== assignId ? x : { ...x, documents: x.documents.map(patch) }));
+        setCompleted((p) => p.map((x) => x.id !== assignId ? x : { ...x, documents: x.documents.map(patch) }));
+      });
+    } catch (err) {
+      throw new Error(actionMessage(errorCode(err)));
+    }
   };
 
-  const handleRejectDoc = (assignId: string, docType: string, reason: string) => {
-    const a = assignments.find((x) => x.id === assignId) ?? completed.find((x) => x.id === assignId);
+  const handleRejectDoc = async (assignId: string, docType: string, reason: string) => {
+    const trimmed = reason.trim();
     const patch = (d: AssignmentDoc) =>
-      d.type === docType ? { ...d, docStatus: 'rejected' as DocStatus, rejectReason: reason.trim() || undefined } : d;
-    setAssignments((p) => p.map((x) => x.id !== assignId ? x : { ...x, documents: x.documents.map(patch) }));
-    setCompleted((p) => p.map((x) => x.id !== assignId ? x : { ...x, documents: x.documents.map(patch) }));
-    onLogActivity?.({
-      type: 'doc_rejected',
-      driverName: a?.driverName,
-      truckPlate: a?.truckPlate,
-      assignmentId: assignId,
-      docType,
-      rejectReason: reason.trim(),
-    });
+      d.type === docType ? { ...d, docStatus: 'rejected' as DocStatus, rejectReason: trimmed || undefined } : d;
+    try {
+      await onServerChange(() => rejectDocument(assignId, docType, trimmed), () => {
+        setAssignments((p) => p.map((x) => x.id !== assignId ? x : { ...x, documents: x.documents.map(patch) }));
+        setCompleted((p) => p.map((x) => x.id !== assignId ? x : { ...x, documents: x.documents.map(patch) }));
+      });
+    } catch (err) {
+      throw new Error(actionMessage(errorCode(err)));
+    }
   };
 
   /* ── Demo-only: "adminabuse" account can force a driver's pickup/delivery

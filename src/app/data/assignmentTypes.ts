@@ -45,6 +45,7 @@ export interface AssignmentDoc {
   docStatus: DocStatus;
   fileUrl?: string;
   rejectReason?: string;
+  uploadedAt?: string;
 }
 
 export interface StatusPhoto {

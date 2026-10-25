@@ -352,6 +352,7 @@ const docFromRow = (r: Row): AssignmentDoc => ({
   type: r.type, uploaded: !!r.uploaded, docStatus: r.doc_status,
   ...(r.file_url ? { fileUrl: displayUrl(r.file_url) } : {}),
   ...(r.reject_reason ? { rejectReason: r.reject_reason } : {}),
+  ...(r.uploaded_at ? { uploadedAt: r.uploaded_at } : {}),
 });
 const photoFromRow = (r: Row): StatusPhoto => ({
   url: displayUrl(r.url), timestamp: r.taken_at ?? '', location: r.location ?? '',
@@ -802,7 +803,7 @@ export type AssignmentActionErrorCode =
   | 'driver_busy' | 'truck_unavailable' | 'no_changes' | 'not_authorized' | 'not_deployed' | 'invalid' | 'network'
   | 'already_archived' | 'truck_busy'
   | 'already_completed' | 'not_completable' | 'documents_not_approved' | 'driver_archived' | 'truck_archived'
-  | 'already_resolved' | 'assignment_not_active';
+  | 'already_resolved' | 'assignment_not_active' | 'already_reviewed' | 'not_uploaded';
 export class AssignmentActionError extends Error {
   code: AssignmentActionErrorCode;
   constructor(code: AssignmentActionErrorCode, detail?: string) { super(detail ?? code); this.code = code; }
@@ -851,7 +852,7 @@ function actionFailure(error: { message?: string; code?: string }): AssignmentAc
     'wrong_password', 'loading_completed', 'reauth_required', 'not_editable', 'not_cancellable', 'driver_busy', 'truck_unavailable', 'no_changes', 'not_authorized',
     'already_archived', 'truck_busy',
     'already_completed', 'not_completable', 'documents_not_approved', 'driver_archived', 'truck_archived',
-    'already_resolved', 'assignment_not_active',
+    'already_resolved', 'assignment_not_active', 'already_reviewed', 'not_uploaded',
   ];
   for (const c of known) if (m.includes(c)) return new AssignmentActionError(c, m);
   if (error.code === 'PGRST202') return new AssignmentActionError('not_deployed', m);   // function missing: migration not applied
@@ -1155,9 +1156,7 @@ export async function markAllDriverNotificationsRead(): Promise<void> {
 
 /* Read a completed delivery only when its driver opens it. Keep the driver ID in
    the query as well as relying on RLS, so history cannot be widened by the UI. */
-export async function loadDriverCompletedDelivery(driverId: string, assignmentId: string): Promise<(CompletedTask & {
-  documents: Array<AssignmentDoc & { uploadedAt?: string }>;
-}) | null> {
+export async function loadDriverCompletedDelivery(driverId: string, assignmentId: string): Promise<CompletedTask | null> {
   const { data: row, error } = await supabase.from('assignments').select('*')
     .eq('id', assignmentId).eq('driver_id', driverId).eq('state', 'completed').maybeSingle();
   if (error) throw error;
@@ -1169,10 +1168,6 @@ export async function loadDriverCompletedDelivery(driverId: string, assignmentId
   return {
     ...assignmentFromRow(row, docs ?? [], [], []),
     completedAt: row.completed_at ?? '',
-    documents: (docs ?? []).sort((a, b) => a.position - b.position).map((doc) => ({
-      ...docFromRow(doc),
-      ...(doc.uploaded_at ? { uploadedAt: doc.uploaded_at as string } : {}),
-    })),
   };
 }
 
@@ -1203,6 +1198,20 @@ export async function reportAssignmentIssue(
 export async function resolveAssignmentIssue(issueId: number, resolutionNote?: string): Promise<void> {
   const { error } = await supabase.rpc('resolve_assignment_issue', {
     p_issue_id: issueId, p_resolution_note: resolutionNote?.trim() || null,
+  });
+  if (error) throw actionFailure(error);
+}
+
+/** REQ-004 follow-up: approve/reject now change doc_status and write the activity_log
+ * row atomically on the server — no longer through the generic auto-save diff. */
+export async function approveDocument(assignmentId: string, docType: string): Promise<void> {
+  const { error } = await supabase.rpc('approve_document', { p_assignment_id: assignmentId, p_doc_type: docType });
+  if (error) throw actionFailure(error);
+}
+
+export async function rejectDocument(assignmentId: string, docType: string, reason: string): Promise<void> {
+  const { error } = await supabase.rpc('reject_document', {
+    p_assignment_id: assignmentId, p_doc_type: docType, p_reason: reason.trim(),
   });
   if (error) throw actionFailure(error);
 }
