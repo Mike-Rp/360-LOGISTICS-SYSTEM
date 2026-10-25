@@ -1,7 +1,9 @@
 import type { Assignment } from '../data/assignmentTypes';
 
 type TimingAssignment = Pick<Assignment, 'taskStatus' | 'deliveryDate' | 'eta' | 'statusPhotos' | 'unloadingCompletedAt'>;
-type PickupTimingAssignment = Pick<Assignment, 'taskStatus' | 'pickedUpDate' | 'pickupTime' | 'statusPhotos' | 'departedAt'>;
+type PickupTimingAssignment = Pick<Assignment,
+  'taskStatus' | 'pickedUpDate' | 'pickupTime' | 'operationalStage' | 'pickupArrivedAt'
+  | 'loadingStartedAt' | 'departedAt' | 'statusPhotos'>;
 
 export type DeliveryTimingStatus = {
   kind: 'overdue' | 'delivered_late';
@@ -119,8 +121,7 @@ function historicalPickupDuration(lateMs: number): string {
   return unitText(Math.max(1, minutes), 'minute');
 }
 
-/** Pickup timing comes from the planned pickup moment and its status-photo evidence.
- * Delay reports record the driver's reason; they are not the actual pickup timestamp. */
+/** Delay reports explain lateness; only physical progress can end an active pickup warning. */
 export function getPickupTimingStatus(assignment: PickupTimingAssignment, now = new Date()): PickupTimingStatus | null {
   if (assignment.taskStatus === 'Cancelled' || assignment.taskStatus === 'Failed / Issue') return null;
   const date = parseDate(assignment.pickedUpDate ?? '');
@@ -132,7 +133,19 @@ export function getPickupTimingStatus(assignment: PickupTimingAssignment, now = 
     hour: 'numeric', minute: '2-digit',
   }).format(new Date(scheduledAt));
 
-  if (assignment.taskStatus === 'Assigned') {
+  const arrivedAt = statusPhotoTimestamp(assignment.pickupArrivedAt ?? undefined);
+  // Older records may have progressed without an arrival timestamp. Their stage or
+  // saved pickup photo proves the pickup is no longer pending, but cannot supply
+  // an accurate historical duration.
+  const pickupReached = !!assignment.pickupArrivedAt || !!assignment.operationalStage
+    || !!assignment.loadingStartedAt || !!assignment.departedAt
+    || assignment.taskStatus === 'Picked Up' || assignment.taskStatus === 'In Transit'
+    || assignment.taskStatus === 'Delivered'
+    || !!assignment.statusPhotos?.['Picked Up']?.url
+    || ['pickup_front', 'pickup_left', 'pickup_right', 'pickup_rear']
+      .some((key) => !!assignment.statusPhotos?.[key]?.url);
+
+  if (!pickupReached && assignment.taskStatus === 'Assigned') {
     const lateMs = now.getTime() - scheduledAt;
     if (lateMs <= 0) return null;
     const duration = durationParts(lateMs, false);
@@ -144,14 +157,11 @@ export function getPickupTimingStatus(assignment: PickupTimingAssignment, now = 
     };
   }
 
-  const departure = assignment.departedAt ? Date.parse(assignment.departedAt) : NaN;
-  const pickedUpAt = Number.isFinite(departure) ? departure
-    : statusPhotoTimestamp(assignment.statusPhotos?.['Picked Up']?.timestamp);
-  if (pickedUpAt === null || pickedUpAt <= scheduledAt) return null;
-  const text = historicalPickupDuration(pickedUpAt - scheduledAt);
+  if (arrivedAt === null || arrivedAt <= scheduledAt) return null;
+  const text = historicalPickupDuration(arrivedAt - scheduledAt);
   return {
-    kind: 'picked_up_late', label: `Picked up late · ${text}`,
-    accessibleLabel: `Picked up ${text} late. Scheduled pickup: ${scheduledPickup}`,
+    kind: 'picked_up_late', label: `Arrived late · ${text}`,
+    accessibleLabel: `Arrived at pickup ${text} late. Scheduled pickup: ${scheduledPickup}`,
     scheduledPickup,
   };
 }

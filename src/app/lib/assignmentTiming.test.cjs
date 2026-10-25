@@ -63,7 +63,7 @@ test('delivered evidence determines historical lateness, not document completion
   assert.equal(getDeliveryTimingStatus(assignment('Delivered', 'Oct 15, 2026', '', 'Oct 16, 2026, 12:01 AM'))?.label, 'Delivered late · 1 day');
 });
 
-test('REQ-002 server timestamps take precedence over older status-photo clocks', () => {
+test('REQ-002 physical delivery timestamp stays unchanged; pickup uses arrival rather than departure', () => {
   const delivered = {
     ...assignment('Delivered', 'Oct 15, 2026', '2:00 PM', 'Oct 15, 2026, 01:00 PM'),
     unloadingCompletedAt: '2026-10-15T08:35:00Z',
@@ -72,8 +72,10 @@ test('REQ-002 server timestamps take precedence over older status-photo clocks',
   const pickedUp = {
     ...pickupAssignment('Picked Up', 'Oct 16, 2026, 12:30 AM'),
     departedAt: '2026-10-16T01:21:00Z',
+    pickupArrivedAt: '2026-10-15T17:10:00Z',
   };
-  assert.equal(getPickupTimingStatus(pickedUp)?.label, 'Picked up late · 8 hours 21 minutes');
+  assert.equal(getPickupTimingStatus(pickedUp)?.label, 'Arrived late · 10 minutes');
+  assert.equal(getPickupTimingStatus({ ...pickedUp, pickupArrivedAt: null }), null);
 });
 
 test('cancelled, failed, future and invalid records do not warn', () => {
@@ -98,14 +100,62 @@ test('assigned pickup becomes overdue only after its scheduled Philippine time',
   assert.match(getPickupTimingStatus(item, at('2026-10-15T20:00:00Z'))?.scheduledPickup ?? '', /Oct 16, 2026.*1:00 AM/);
 });
 
-test('photo evidence turns an active pickup warning into historical late timing', () => {
+test('legacy progress stops the active pickup timer without inventing arrival time', () => {
   const late = pickupAssignment('Picked Up', 'Oct 16, 2026, 09:21 AM');
-  assert.equal(getPickupTimingStatus(late, at('2026-10-20T00:00:00Z'))?.label, 'Picked up late · 8 hours 21 minutes');
-  assert.equal(getPickupTimingStatus({ ...late, taskStatus: 'In Transit' })?.kind, 'picked_up_late');
-  assert.equal(getPickupTimingStatus({ ...late, taskStatus: 'Delivered' })?.kind, 'picked_up_late');
+  assert.equal(getPickupTimingStatus(late, at('2026-10-20T00:00:00Z')), null);
+  assert.equal(getPickupTimingStatus({ ...late, taskStatus: 'In Transit' }), null);
+  assert.equal(getPickupTimingStatus({ ...late, taskStatus: 'Delivered' }), null);
   assert.equal(getPickupTimingStatus(pickupAssignment('Picked Up', 'Oct 16, 2026, 12:59 AM')), null);
   assert.equal(getPickupTimingStatus(pickupAssignment('Picked Up')), null);
   assert.equal(getPickupTimingStatus(pickupAssignment('Cancelled', 'Oct 16, 2026, 09:21 AM')), null);
+});
+
+test('a delay report does not end overdue pickup or alter its saved reason', () => {
+  const report = { type: 'pickup', reason: 'Heavy traffic', reportedAt: '2026-10-15T17:05:00Z' };
+  const item = { ...pickupAssignment('Assigned'), delayReports: [report] };
+  assert.equal(getPickupTimingStatus(item, at('2026-10-15T17:10:00Z'))?.label, 'Pickup overdue · 10 minutes');
+  assert.equal(item.delayReports[0].reason, 'Heavy traffic');
+});
+
+test('arrival stops overdue at At Pickup and keeps historical lateness fixed through later stages', () => {
+  const arrival = '2026-10-15T17:10:00Z'; // Oct 16, 1:10 AM in Manila.
+  const now = at('2026-10-15T17:25:00Z');
+  const stages = ['pickup_arrived', 'loading', 'loaded', 'destination_arrived', 'unloading', 'unloaded'];
+  for (const operationalStage of stages) {
+    const item = { ...pickupAssignment('Assigned'), operationalStage, pickupArrivedAt: arrival };
+    assert.equal(getPickupTimingStatus(item, now)?.label, 'Arrived late · 10 minutes');
+    assert.equal(getPickupTimingStatus(item, at('2026-10-20T00:00:00Z'))?.label, 'Arrived late · 10 minutes');
+    const notices = getDispatchTimingNotices(item, now);
+    assert.equal(notices.pickup?.kind, 'picked_up_late');
+  }
+  assert.equal(getPickupTimingStatus({ ...pickupAssignment('In Transit'), pickupArrivedAt: arrival })?.label,
+    'Arrived late · 10 minutes');
+});
+
+test('on-time arrival shows no warning, and stage evidence without a timestamp has no made-up duration', () => {
+  const item = pickupAssignment('Assigned');
+  const later = at('2026-10-15T17:25:00Z');
+  assert.equal(getPickupTimingStatus({ ...item, operationalStage: 'pickup_arrived',
+    pickupArrivedAt: '2026-10-15T16:55:00Z' }, later), null);
+  for (const evidence of [
+    { operationalStage: 'pickup_arrived' },
+    { operationalStage: 'loading' },
+    { loadingStartedAt: '2026-10-15T17:12:00Z' },
+    { departedAt: '2026-10-15T17:20:00Z' },
+    { statusPhotos: { pickup_front: { url: 'saved-photo' } } },
+    { pickupArrivedAt: 'invalid timestamp' },
+    { pickupArrivedAt: '2026-10-15T17:10:00' }, // No timezone; cannot prove a Manila arrival instant.
+  ]) {
+    assert.equal(getPickupTimingStatus({ ...item, ...evidence }, later), null);
+  }
+});
+
+test('Dispatch and View Shipment share the same fixed Manila pickup result', () => {
+  const item = { ...pickupAssignment('Assigned'), operationalStage: 'pickup_arrived',
+    pickupArrivedAt: '2026-10-15T17:10:00Z', deliveryDate: 'Oct 17, 2026' };
+  const now = at('2026-10-15T17:25:00Z');
+  assert.deepEqual(getDispatchTimingNotices(item, now).pickup, getPickupTimingStatus(item, now));
+  assert.match(getDispatchTimingNotices(item, now).pickup?.accessibleLabel ?? '', /Arrived at pickup 10 minutes late/);
 });
 
 test('Dispatch prioritizes active delivery overdue over pickup overdue', () => {

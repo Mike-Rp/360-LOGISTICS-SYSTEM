@@ -2726,7 +2726,7 @@ export default function DriversManagement({
                   </div>
 
                   <div className="flex flex-col md:mt-3 md:min-h-[4.5rem] md:gap-2">
-                    {pickupTiming?.kind === 'pickup_overdue' && (
+                    {pickupTiming && (
                       <div className="mt-3 md:mt-0"><PickupTimingNotice timing={pickupTiming} /></div>
                     )}
 
