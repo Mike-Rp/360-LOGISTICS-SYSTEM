@@ -42,13 +42,13 @@ and their SQL test files passed (each test rolls itself back).
 | REQ-001 Destination / delivery location | `20261017000000`–`000003` | — | Implemented |
 | REQ-002 Driver stages + photo/status gates | `20261018000000`, `000001`, `20261021000002`, `20261023000011` | `req002_driver_gates` 11/11 | In Progress (gates live; see entry) |
 | REQ-003 Cancel: reason + password + Loading cutoff + driver notice | `20261021000000`, `20261018000002`, `20261025000001`, `000002` | `req003_cancel_cutoff` 16/16 | Implemented |
-| REQ-004 OPM role | `20261018000003`, `000004`, `20261019000000`, `20261023000004`, `000007`, `000010` | — | In Progress (follow-ups below) |
+| REQ-004 OPM role | `20261018000003`, `000004`, `20261019000000`, `20261023000004`, `000007`, `000010`, `20261025000006`, `20261026000000`, `000002` | — | Implemented |
 | REQ-005 Exact pickup/delivery coordinates | `20261020000000`, `000001` | 20/20 | Completed |
 | REQ-006 CSR password reset via OPM link | `20261020000002`, `000003` + Edge Function | `req006` 32/32 | Backend live; live CSR reset test pending |
 | REQ-009 Single active session (newest login wins) | `20261021000001` | `single_active_session` 15/15 | Implemented |
 | REQ-010 Store file paths, 1-hour links | `20261021000003` | `store_file_paths` 4/4 | Implemented |
 | REQ-011 Dispatch / complete as one database action | `20261021000004`, `20261023000003` (hardening) | `dispatch_complete` 12/12 | Implemented |
-| REQ-012 Per-account profile persistence | `20261022000000` | — | Implemented |
+| REQ-012 Per-account profile persistence | `20261022000000`, `20261026000001` (name/avatar validation) | — | Implemented |
 | REQ-013 Completion/cancellation timestamps | `20261022000001` | — | Implemented |
 | REQ-014 Driver notifications (dispatch/cancel/issue resolved) | `20261025000003` | — | Implemented |
 | REQ-015 Server-side duplicate operational photo detection | `20261025000004`, `000005` + Edge Function | `logic.test.cjs` 8/8 | Implemented |
@@ -57,12 +57,10 @@ and their SQL test files passed (each test rolls itself back).
 
 ### Still needed (backend / database)
 
-1. **Activity-log gaps** (REQ-004 follow-up) — PIN reset done (2026-10-23);
-   document approve/reject done (2026-10-25). Still needed: convert driver
-   add and truck add from the client-driven auto-save path to dedicated
-   server-side RPCs that log atomically (see REQ-004 entry — no edit UI
-   exists for either today, so this is "add" only despite the old wording).
-   Never log PINs, passwords or tokens.
+1. ~~**Activity-log gaps** (REQ-004 follow-up)~~ — **Closed 2026-10-26.** PIN
+   reset (2026-10-23), document approve/reject (2026-10-25), truck
+   registration and driver registration (2026-10-26) are all now dedicated,
+   atomically-logged server-side RPCs. See REQ-004 entry for details.
 2. **REQ-006** live test — one real CSR reset end-to-end on the live site.
 3. **Optional:** move files copied before REQ-010 so that old 10-year links
     stop working (skipped for now by decision).
@@ -1229,7 +1227,8 @@ applied to 360Logistics DB and verified (20/20 database checks) on 2026-10-20.
 
 ## [REQ-004] OPM Role: Fleet/PIN/Account Management Becomes Exclusive
 
-**Status:** In Progress
+**Status:** Implemented (2026-10-26 — all follow-ups, including the
+activity-log gaps, closed)
 
 **Pending Workspace Settings follow-up (2026-10-21; not approved for database changes):**
 The current `remove_team_member(p_id)` deletes `auth.users`, which also removes
@@ -1350,8 +1349,57 @@ call from the live, signed-in app's browser console correctly failed with
 succeed — the SQL editor runs as an unauthenticated system connection, which
 every guard trigger in this project deliberately exempts, so it was never a
 valid way to test this; re-tested from an actual authenticated session instead).
-Driver/truck registration (2 of 3, 3 of 3) remain open — see REQ-004
-follow-up item 1 in "Still needed" above.
+
+**2026-10-26 — Truck registration converted (2 of 3), applied and verified
+live:** `supabase/migrations/20261026000000_register_truck_rpc.sql`. New
+`register_truck(plate_number, classification, capacity)` assigns the truck's
+ID server-side (same loop-until-unique pattern `dispatch_assignment()` uses),
+validates the plate format, and checks for a duplicate plate against live
+(non-archived) data in the same transaction — closing the race condition the
+old client-side-only check couldn't. Writes a `truck_added` activity_log row.
+`trucks_insert` RLS already required `is_opm()` (from REQ-004's own
+`20261018000003_opm_role.sql`) — nothing newly restricted, just moved off
+the client-driven path. `db.ts` gained `registerTruck()`; `RegisterTruckModal`
+now calls it through the existing `onServerChange()` pattern instead of
+mutating local state directly — the early plate-duplicate warning at step 1
+stays as a soft client-side check, the server is now the real authority.
+Verified live: registered `EFG 6578` — confirmed via SQL with a real
+server-generated id (`T25568`), correct classification/capacity, and the
+matching "Truck Added" entry in the Activity tab.
+
+**2026-10-26 — Driver registration converted (3 of 3), applied and verified
+live — this REQ-004 follow-up is now fully closed:**
+`supabase/migrations/20261026000002_register_driver_rpc.sql`. New
+`register_driver(first_name, surname, phone, pin)` is the most involved of
+the three: it validates and duplicate-checks name/phone against live active
+drivers, assigns the ID server-side, inserts the driver row, and calls the
+**existing, unmodified** `sync_driver_login()` inside the same transaction to
+create the Auth account and store the PIN. Previously these were two
+separate steps with no atomicity guarantee — a failure between them left a
+driver who exists in the fleet list but can never sign in, with nothing
+flagging it. Now a failure anywhere rolls back the whole transaction.
+`db.ts` gained `registerDriver()` and three new error codes
+(`duplicate_phone`, `duplicate_name`, `invalid_name` — kept distinct from
+`duplicate_plate` since Postgres reuses the same `23505` code for all of
+them and the generic fallback would otherwise show the wrong message).
+`RegisterDriverModal` wired the same way as the truck modal.
+
+Also fixes a separately reported bug along the way, in both this RPC and
+`update_own_display_name()` (the staff profile name field, same day): driver
+and staff names had no format validation at all — e.g. `--` or `K1 Alas`
+were both accepted. Both now require starting with a letter and containing
+only letters/spaces/apostrophes/hyphens/periods, enforced server-side (the
+real gate) with matching client-side checks for instant feedback. Existing
+invalid names already in the database are left as-is, per this project's
+convention of never silently backfilling historical data.
+
+Verified live end-to-end: registered driver "Charles Panelo" through the
+normal form — confirmed via SQL a real server-generated id (`DR79988`) and a
+populated `auth_user_id`, then **signed in as that driver on the actual
+driver login screen** to confirm the Auth account genuinely works, not just
+that a row exists. Confirmed the matching "Driver Added" Activity tab entry.
+Separately confirmed the name-format rejection live on both the driver
+registration form and the staff "edit your name" field.
 
 **2026-10-23 — CSR setup link applied and verified (closes the "CSR setup
 link" backlog item):** `supabase/migrations/20261023000010_csr_setup_link.sql`.
@@ -2391,6 +2439,31 @@ cover CSR/OPM self-update, cross-account and cross-role denial, protected
 email/role/status, replaced session denial, upload/replace/remove, signed URL
 expiry, and failure consistency. No migration or Supabase operation is applied
 by this frontend task.
+
+**2026-10-26 — two reported bugs fixed, applied and verified live:**
+`supabase/migrations/20261026000001_profile_name_avatar_validation.sql`.
+1. `update_own_display_name()` only checked non-empty / under 100 characters
+   — nothing stopped a value like `--`. Added a format check: must start
+   with a letter, and contain only letters, spaces, apostrophes, hyphens,
+   and periods. Matching client-side check added in `SettingsPanel.tsx`.
+2. The original migration's own comment above said Storage RLS "can't
+   cleanly inspect an upload's content type" and left file-type validation
+   client-side only (`accept="image/*"` on the file input is a browser hint
+   a user can bypass via drag-and-drop or "All Files" — `handleAvatarChange`
+   never actually checked `file.type`). That assumption was wrong: Supabase
+   Storage records each upload's real MIME type in `storage.objects.metadata`
+   before the row is ever visible to RLS, so `media_insert`/`media_update`
+   now require `metadata->>'mimetype' like 'image/%'` for the `profiles/`
+   path specifically — genuinely server-enforced, not just a browser hint.
+   Added a matching explicit `file.type` check in `handleAvatarChange` too.
+
+Verified live: tried saving `--` as a display name — rejected with the new
+message, both the inline client check and (separately confirmed) the server
+rule. Saved a real name — worked normally. Avatar: a non-image file was
+rejected by the client-side check before any upload was attempted.
+
+The driver-name equivalent of bug 1 (`register_driver()`) is documented in
+the REQ-004 entry above, applied in the same session.
 
 ---
 
