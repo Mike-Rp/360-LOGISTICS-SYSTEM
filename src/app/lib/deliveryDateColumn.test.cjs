@@ -27,6 +27,8 @@ test('each tab uses its own event date and labels the scheduled context', () => 
   const active = dates.deliveryDateColumn(assignment('active', { deliveryDate: 'Oct 25, 2026' }), 'active');
   assert.equal(dates.deliveryDateHeading('active'), 'Scheduled Delivery');
   assert.deepEqual(active, { date: 'Oct 25, 2026', time: null, scheduled: null });
+  assert.equal(dates.deliveryDateHeading('delayed'), 'Scheduled Delivery');
+  assert.deepEqual(dates.deliveryDateColumn(assignment('late', { deliveryDate: 'Oct 25, 2026' }), 'delayed'), active);
 
   const done = dates.deliveryDateColumn(assignment('done', {
     completedAt: 'Oct 20, 04:09 PM', completedEventAt: '2026-10-20T08:09:00Z',
@@ -50,6 +52,7 @@ test('missing or yearless event timestamps never become scheduled or guessed dat
 test('Manila date filters follow the visible date, including the midnight boundary', () => {
   const now = new Date('2026-10-21T16:30:00Z'); // Oct 22 in Manila
   assert.equal(dates.matchesDeliveryPeriod(assignment('active', { deliveryDate: 'Oct 22, 2026' }), 'active', 'today', now), true);
+  assert.equal(dates.matchesDeliveryPeriod(assignment('late', { deliveryDate: 'Oct 22, 2026' }), 'delayed', 'today', now), true);
   assert.equal(dates.matchesDeliveryPeriod(assignment('active', { deliveryDate: 'Oct 21, 2026' }), 'active', 'today', now), false);
   assert.equal(dates.matchesDeliveryPeriod(assignment('done', { completedAt: '', completedEventAt: '2026-10-21T16:09:00Z' }), 'completed', 'today', now), true);
   assert.equal(dates.matchesDeliveryPeriod(assignment('cancelled', { cancelledAt: '2026-10-21T15:59:00Z' }), 'cancelled', 'today', now), false);

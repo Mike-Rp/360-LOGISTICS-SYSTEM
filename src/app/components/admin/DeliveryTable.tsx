@@ -4,14 +4,14 @@ import type { Assignment, CompletedTask, LocalTruck, TaskStatus } from '../../da
 import { taskStatusConfig } from '../../data/assignmentTypes';
 import { statusColors } from '../../data/statusColors';
 import { assignmentDisplayStatusConfig, getAssignmentDisplayStatus, getAssignmentDocumentProgress } from '../../lib/assignmentWorkflow';
-import { ADMIN_NAVIGATION_EVENT, adminHref, followAdminLink, pushAdminNavigation } from '../../lib/adminNavigation';
-import type { DeliveriesView } from '../../lib/adminNavigation';
+import { ADMIN_NAVIGATION_EVENT, adminHref, deliveriesRouteFromUrl, followAdminLink, pushAdminNavigation } from '../../lib/adminNavigation';
+import type { DeliveriesTab } from '../../lib/adminNavigation';
 import { deliveryDateColumn, deliveryDateHeading, matchesDeliveryPeriod, sortCancelledNewestFirst } from '../../lib/deliveryDateColumn';
 import type { DeliveryTab, DeliveryPeriod } from '../../lib/deliveryDateColumn';
 import ASNWithCopy from './ASNWithCopy';
 import CompletedDeliverySummary from './CompletedDeliverySummary';
 import DeliveryTimingBadge from './DeliveryTimingBadge';
-import { getDeliveryTimingStatus, isScheduledDeliveryToday } from '../../lib/assignmentTiming';
+import { getDispatchTimingNotices, isScheduledDeliveryToday } from '../../lib/assignmentTiming';
 import { isDashboardDelayedAssignment } from '../../lib/dashboardDelayed';
 import { formatOperationalStamp } from '../../lib/assignmentOperational';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
@@ -23,11 +23,6 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, Di
 
 type FilterPeriod = DeliveryPeriod;
 const DELIVERIES_PAGE_SIZE = 7;
-const deliveryViewFromUrl = (): DeliveriesView | null => {
-  const value = new URLSearchParams(window.location.search).get('view');
-  return value === 'delayed' || value === 'today' ? value : null;
-};
-
 interface DeliveryTableProps {
   fullView?: boolean;
   completed?: CompletedTask[];
@@ -95,11 +90,14 @@ function DeliveryDateValue({ assignment, tab, timingNow, showLabel = false }: {
   assignment: Assignment; tab: DeliveryTab; timingNow: Date; showLabel?: boolean;
 }) {
   const value = deliveryDateColumn(assignment, tab);
+  const timing = tab === 'cancelled' ? null : getDispatchTimingNotices(assignment, timingNow);
+  const pickupOverdue = tab === 'delayed' && timing?.pickup?.kind === 'pickup_overdue' ? timing.pickup : null;
   return <div className="min-w-0 break-words">
     {showLabel && <p className="text-sm font-medium text-muted-foreground">{deliveryDateHeading(tab)}</p>}
     <p className="text-[15px] font-medium text-foreground">{value.date}</p>
     {value.time && <p className="text-sm text-foreground">{value.time}</p>}
-    {tab !== 'cancelled' && <DeliveryTimingBadge timing={getDeliveryTimingStatus(assignment, timingNow)} readable />}
+    <DeliveryTimingBadge timing={timing?.delivery ?? null} readable />
+    {pickupOverdue && <span aria-label={pickupOverdue.accessibleLabel} className="inline-flex max-w-full rounded-md border border-red-200 bg-red-50 px-2 py-1 text-sm font-semibold leading-snug text-red-700">{pickupOverdue.label}</span>}
     {value.scheduled && <p className="text-sm text-muted-foreground">Scheduled: {value.scheduled}</p>}
   </div>;
 }
@@ -238,8 +236,8 @@ export default function DeliveryTable({
   }
   const timingNow = new Date();
 
-  const [tab, setTab]       = useState<'active' | 'completed' | 'cancelled'>(() => new URLSearchParams(window.location.search).get('tab') === 'completed' ? 'completed' : 'active');
-  const [activeView, setActiveView] = useState<DeliveriesView | null>(deliveryViewFromUrl);
+  const [tab, setTab] = useState<DeliveriesTab>(() => deliveriesRouteFromUrl(new URL(window.location.href)).tab);
+  const [activeView, setActiveView] = useState<'today' | null>(() => deliveriesRouteFromUrl(new URL(window.location.href)).view);
   const [period, setPeriod] = useState<FilterPeriod>('all');
   const [remarksAssignment, setRemarksAssignment] = useState<Assignment | null>(null);
   const [cancelledDetails, setCancelledDetails] = useState<Assignment | null>(null);
@@ -261,12 +259,14 @@ export default function DeliveryTable({
 
   /* The date range follows the event named by each tab's date column. */
   const summaryAssignment = completed.find((assignment) => assignment.id === summaryId) ?? null;
-  const filteredActive = sortNewestFirst(assignments
+  const filteredActiveBase = sortNewestFirst(assignments
     .filter((a) => a.taskStatus !== 'Cancelled')
-    .filter((a) => activeView === 'delayed' ? isDashboardDelayedAssignment(a, timingNow)
-      : activeView === 'today' ? isScheduledDeliveryToday(a.deliveryDate, timingNow) : true)
     .filter((a) => matchesDeliveryPeriod(a, 'active', period))
     .filter((a) => matchesSearch([a.truckPlate, a.id, a.driverName, a.destination, a.destinationArea ?? '', a.company, a.taskStatus])), (assignment) => assignment.id);
+  const filteredActive = activeView === 'today'
+    ? filteredActiveBase.filter((a) => isScheduledDeliveryToday(a.deliveryDate, timingNow))
+    : filteredActiveBase;
+  const filteredDelayed = filteredActiveBase.filter((a) => isDashboardDelayedAssignment(a, timingNow));
 
   const filteredDone = sortCompletedNewestFirst(completed
     .filter((c) => c.id === linkedCompletedId || (matchesDeliveryPeriod(c, 'completed', period) &&
@@ -277,27 +277,29 @@ export default function DeliveryTable({
     .filter((a) => matchesSearch([a.truckPlate, a.id, a.driverName, a.destination, a.destinationArea ?? '', a.company, a.taskStatus])));
 
   const activePage = usePagination(filteredActive, DELIVERIES_PAGE_SIZE);
+  const delayedPage = usePagination(filteredDelayed, DELIVERIES_PAGE_SIZE);
   const completedPage = usePagination(filteredDone, DELIVERIES_PAGE_SIZE);
   const cancelledPage = usePagination(filteredCancelled, DELIVERIES_PAGE_SIZE);
   const resetPages = () => {
     activePage.setPage(1);
+    delayedPage.setPage(1);
     completedPage.setPage(1);
     cancelledPage.setPage(1);
   };
   useEffect(() => {
     const syncDeliveryRoute = () => {
       const params = new URLSearchParams(window.location.search);
-      if (params.get('tab') !== 'completed') {
-        setTab('active');
-        setActiveView(deliveryViewFromUrl());
-        setLinkedCompletedId(null);
-        resetPages();
-        return;
+      const route = deliveriesRouteFromUrl(new URL(window.location.href));
+      if (params.get('tab') === 'active' && params.get('view') === 'delayed') {
+        const canonical = new URL(window.location.href);
+        canonical.searchParams.set('tab', 'delayed');
+        canonical.searchParams.delete('view');
+        window.history.replaceState(window.history.state, '', canonical);
       }
-      setTab('completed');
-      setActiveView(null);
-      setLinkedCompletedId(params.get('assignment'));
-      setSummaryId(params.get('summary') === 'true' ? params.get('assignment') : null);
+      setTab(route.tab);
+      setActiveView(route.view);
+      setLinkedCompletedId(route.tab === 'completed' ? params.get('assignment') : null);
+      setSummaryId(route.tab === 'completed' && params.get('summary') === 'true' ? params.get('assignment') : null);
       resetPages();
     };
     syncDeliveryRoute();
@@ -308,21 +310,9 @@ export default function DeliveryTable({
       window.removeEventListener(ADMIN_NAVIGATION_EVENT, syncDeliveryRoute);
     };
   }, []);
-  const selectTab = (next: 'active' | 'completed' | 'cancelled') => {
-    setTab(next);
-    setActiveView(null);
-    setLinkedCompletedId(null);
-    setSummaryId(null);
+  const selectTab = (next: DeliveriesTab) => {
     setHighlightCompletedId(null);
-    resetPages();
-    const url = new URL(window.location.href);
-    if (url.searchParams.has('tab') || url.searchParams.has('view') || url.searchParams.has('assignment') || url.searchParams.has('summary')) {
-      url.searchParams.delete('tab');
-      url.searchParams.delete('view');
-      url.searchParams.delete('assignment');
-      url.searchParams.delete('summary');
-      window.history.replaceState(window.history.state, '', url);
-    }
+    pushAdminNavigation('Deliveries', undefined, next);
   };
   const linkedCompletedIndex = filteredDone.findIndex((assignment) => assignment.id === linkedCompletedId);
   const linkedCompletedPage = linkedCompletedIndex < 0 ? null : Math.floor(linkedCompletedIndex / DELIVERIES_PAGE_SIZE) + 1;
@@ -348,9 +338,9 @@ export default function DeliveryTable({
 
   /* Cancelled rows are plain Assignment objects, exactly like active ones, so both tabs
      render through the same table/card markup below instead of a duplicated copy. */
-  const listRows = tab === 'cancelled' ? filteredCancelled : filteredActive;
-  const pageRows = tab === 'cancelled' ? cancelledPage.pageItems : activePage.pageItems;
-  const selectedPage = tab === 'completed' ? completedPage : tab === 'cancelled' ? cancelledPage : activePage;
+  const listRows = tab === 'cancelled' ? filteredCancelled : tab === 'delayed' ? filteredDelayed : filteredActive;
+  const pageRows = tab === 'cancelled' ? cancelledPage.pageItems : tab === 'delayed' ? delayedPage.pageItems : activePage.pageItems;
+  const selectedPage = tab === 'completed' ? completedPage : tab === 'cancelled' ? cancelledPage : tab === 'delayed' ? delayedPage : activePage;
   const selectedCount = tab === 'completed' ? filteredDone.length : listRows.length;
   const pageArea = useStablePageHeight(selectedPage.page, selectedCount, DELIVERIES_PAGE_SIZE, `${tab}|${period}|${search}|${activeView}`);
 
@@ -365,28 +355,22 @@ export default function DeliveryTable({
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {/* Tab */}
-            <div className="flex flex-wrap max-w-full min-w-0 bg-muted/30 rounded-lg p-1 border border-border">
-              <button onClick={() => selectTab('active')}
-                className={`px-2 sm:px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all flex items-center gap-1 sm:gap-1.5 ${tab === 'active' ? 'bg-white shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
-                Active
-                {filteredActive.length > 0 && (
-                  <span className={`text-xs rounded-full px-1.5 py-0.5 min-w-[20px] text-center ${tab === 'active' ? 'bg-primary text-white' : 'bg-muted text-muted-foreground'}`}>{filteredActive.length}</span>
-                )}
-              </button>
-              <button onClick={() => selectTab('completed')}
-                className={`px-2 sm:px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all flex items-center gap-1 sm:gap-1.5 ${tab === 'completed' ? 'bg-white shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
-                Completed
-                {filteredDone.length > 0 && (
-                  <span className={`text-xs rounded-full px-1.5 py-0.5 min-w-[20px] text-center ${tab === 'completed' ? 'bg-green-500 text-white' : 'bg-muted text-muted-foreground'}`}>{filteredDone.length}</span>
-                )}
-              </button>
-              <button onClick={() => selectTab('cancelled')}
-                className={`px-2 sm:px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all flex items-center gap-1 sm:gap-1.5 ${tab === 'cancelled' ? 'bg-white shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
-                Cancelled
-                {filteredCancelled.length > 0 && (
-                  <span className={`text-xs rounded-full px-1.5 py-0.5 min-w-[20px] text-center ${tab === 'cancelled' ? 'bg-gray-500 text-white' : 'bg-muted text-muted-foreground'}`}>{filteredCancelled.length}</span>
-                )}
-              </button>
+            <div role="group" aria-label="Delivery categories" className="flex max-w-full min-w-0 overflow-x-auto bg-muted/30 rounded-lg p-1 border border-border">
+              {([
+                ['active', 'Active', filteredActiveBase.length],
+                ['delayed', 'Delayed', filteredDelayed.length],
+                ['completed', 'Completed', filteredDone.length],
+                ['cancelled', 'Cancelled', filteredCancelled.length],
+              ] as const).map(([value, label, count]) => (
+                <button key={value} type="button" aria-pressed={tab === value}
+                  onClick={() => selectTab(value)}
+                  className={`min-h-9 shrink-0 px-2 sm:px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-1 sm:gap-1.5 ${tab === value ? 'bg-white shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+                  {label}
+                  <span className={`text-xs rounded-full px-1.5 py-0.5 min-w-[20px] text-center tabular-nums ${tab === value
+                    ? value === 'delayed' ? 'bg-amber-100 text-amber-800' : value === 'completed' ? 'bg-green-500 text-white' : value === 'cancelled' ? 'bg-gray-500 text-white' : 'bg-primary text-white'
+                    : 'bg-muted text-muted-foreground'}`}>{count}</span>
+                </button>
+              ))}
             </div>
 
             {/* Filter */}
@@ -408,9 +392,9 @@ export default function DeliveryTable({
             {tab === 'completed' ? filteredDone.length : listRows.length} result{(tab === 'completed' ? filteredDone.length : listRows.length) !== 1 ? 's' : ''} for <span className="font-semibold text-foreground">"{search}"</span>
           </p>
         )}
-        {tab === 'active' && activeView && (
+        {tab === 'active' && activeView === 'today' && (
           <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-            <span>Showing {activeView === 'delayed' ? 'delayed active deliveries' : "today's scheduled active deliveries"}</span>
+            <span>Showing today's scheduled active deliveries</span>
             <button type="button" onClick={() => pushAdminNavigation('Deliveries', undefined, 'active')}
               className="rounded-md px-2 py-1 font-medium text-primary hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
               Show all active
@@ -428,13 +412,15 @@ export default function DeliveryTable({
               <p className="font-medium text-foreground">
                 {filtering
                   ? 'No deliveries found for this filter'
-                  : (tab === 'cancelled' ? 'No cancelled deliveries' : 'No active assignments')}
+                  : (tab === 'cancelled' ? 'No cancelled deliveries' : tab === 'delayed' ? 'No delayed deliveries' : 'No active assignments')}
               </p>
               <p className="text-sm text-muted-foreground mt-1">
                 {filtering
                   ? activeView && tab === 'active' ? 'Show all active deliveries or adjust the current filters.' : 'Try a different time range or search term.'
                   : tab === 'cancelled'
                     ? 'Assignments cancelled from Monitor will appear here.'
+                    : tab === 'delayed'
+                    ? 'All active deliveries are currently on schedule.'
                     : 'Assign tasks from Drivers Management to see them here.'}
               </p>
             </div>

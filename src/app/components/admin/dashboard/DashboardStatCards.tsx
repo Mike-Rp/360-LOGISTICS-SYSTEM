@@ -49,7 +49,7 @@ export default function DashboardStatCards({ assignments, completed }: Props) {
     {
       label: 'Delayed Deliveries', value: delayed, icon: AlertTriangle, alert: delayed > 0,
       detail: delayed > 0 ? 'Past due date, still active' : 'No delays right now',
-      link: { label: 'View delayed', href: adminHref('Deliveries', undefined, 'active', 'delayed'), onClick: () => pushAdminNavigation('Deliveries', undefined, 'active', 'delayed') },
+      link: { label: 'View delayed', href: adminHref('Deliveries', undefined, 'delayed'), onClick: () => pushAdminNavigation('Deliveries', undefined, 'delayed') },
     },
     {
       label: 'Docs Pending Review', value: docsPending, icon: FileText, alert: docsPending > 0,

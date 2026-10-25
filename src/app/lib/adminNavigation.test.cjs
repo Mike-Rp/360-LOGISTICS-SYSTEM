@@ -30,7 +30,17 @@ test('Dashboard actions point to explicit Deliveries tabs and scoped active view
   const { adminHref } = loaded.exports;
   assert.equal(adminHref('Deliveries', undefined, 'active'), '/deliveries?tab=active');
   assert.equal(adminHref('Deliveries', undefined, 'completed'), '/deliveries?tab=completed');
-  assert.equal(adminHref('Deliveries', undefined, 'active', 'delayed'), '/deliveries?tab=active&view=delayed');
+  assert.equal(adminHref('Deliveries', undefined, 'delayed'), '/deliveries?tab=delayed');
   assert.equal(adminHref('Deliveries', undefined, 'active', 'today'), '/deliveries?tab=active&view=today');
   assert.equal(adminHref('Monitor', { review: true }), '/dispatch?review=true');
+});
+
+test('canonical, legacy, Today, completed, and cancelled URLs select the correct tab', () => {
+  const { deliveriesRouteFromUrl } = loaded.exports;
+  const route = (query) => deliveriesRouteFromUrl(new URL(`https://example.test/deliveries${query}`));
+  assert.deepEqual(route('?tab=delayed'), { tab: 'delayed', view: null });
+  assert.deepEqual(route('?tab=active&view=delayed'), { tab: 'delayed', view: null });
+  assert.deepEqual(route('?tab=active&view=today'), { tab: 'active', view: 'today' });
+  assert.deepEqual(route('?tab=completed&assignment=ASN43090'), { tab: 'completed', view: null });
+  assert.deepEqual(route('?tab=cancelled'), { tab: 'cancelled', view: null });
 });

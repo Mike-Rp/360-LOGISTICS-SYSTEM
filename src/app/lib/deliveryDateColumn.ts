@@ -2,7 +2,7 @@ import type { Assignment, CompletedTask } from '../data/assignmentTypes';
 import { splitDisplayDateTime } from './displayDateTime';
 import { completionTime } from './completedOrdering';
 
-export type DeliveryTab = 'active' | 'completed' | 'cancelled';
+export type DeliveryTab = 'active' | 'delayed' | 'completed' | 'cancelled';
 export type DeliveryPeriod = 'all' | 'today' | 'month' | 'year';
 
 const MANILA = 'Asia/Manila';
@@ -41,11 +41,11 @@ function cancellationTime(assignment: Assignment): number | null {
 }
 
 export function deliveryDateHeading(tab: DeliveryTab): string {
-  return tab === 'active' ? 'Scheduled Delivery' : tab === 'completed' ? 'Completed Date' : 'Cancelled Date';
+  return tab === 'active' || tab === 'delayed' ? 'Scheduled Delivery' : tab === 'completed' ? 'Completed Date' : 'Cancelled Date';
 }
 
 export function deliveryDateColumn(assignment: Assignment, tab: DeliveryTab): { date: string; time: string | null; scheduled: string | null } {
-  if (tab === 'active') return { date: assignment.deliveryDate?.trim() || '—', time: null, scheduled: null };
+  if (tab === 'active' || tab === 'delayed') return { date: assignment.deliveryDate?.trim() || '—', time: null, scheduled: null };
   const eventTime = tab === 'completed' ? completionTime(assignment as CompletedTask) : cancellationTime(assignment);
   const stamp = eventTime === null ? null : splitDisplayDateTime(new Date(eventTime).toISOString());
   return {
@@ -59,7 +59,7 @@ export function matchesDeliveryPeriod(assignment: Assignment, tab: DeliveryTab, 
   if (period === 'all') return true;
   const eventTime = tab === 'completed' ? completionTime(assignment as CompletedTask)
     : tab === 'cancelled' ? cancellationTime(assignment) : null;
-  const day = tab === 'active' ? scheduledDay(assignment.deliveryDate)
+  const day = tab === 'active' || tab === 'delayed' ? scheduledDay(assignment.deliveryDate)
     : eventTime === null ? null : manilaDay(eventTime);
   if (!day) return false;
   const current = manilaDay(now.getTime());
