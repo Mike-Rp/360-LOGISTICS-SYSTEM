@@ -581,8 +581,8 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                 {archivedTrucksPage.pageItems.map((t) => (
                   <div key={t.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 sm:px-5 py-3.5">
                     <div className="flex items-center gap-3 min-w-0 flex-1 basis-48">
-                      <div className="w-9 h-9 bg-muted rounded-full flex items-center justify-center flex-shrink-0 border border-border overflow-hidden grayscale">
-                        <TruckImage zoom className="w-full h-full" classification={t.classification} iconClassName="w-4 h-4 text-muted-foreground" />
+                      <div className="h-13 w-13 flex-shrink-0 overflow-hidden rounded-lg border border-border bg-muted p-0.5 grayscale">
+                        <TruckImage className="h-full w-full" classification={t.classification} iconClassName="w-5 h-5 text-muted-foreground" />
                       </div>
                       <div className="min-w-0">
                         <IdentifierCopy value={t.plateNumber} description="truck plate number" className="font-mono text-base font-bold tracking-wide" />
@@ -636,8 +636,8 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                     className={`grid ${!canManageFleetAccounts ? 'grid-cols-[minmax(180px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px] min-w-[640px]' : 'grid-cols-[minmax(180px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px_auto] min-w-[720px]'} gap-4 items-center px-5 py-3.5 hover:bg-muted/10 transition-colors`}>
                     {/* Plate */}
                     <div className="flex min-w-0 items-center gap-3">
-                      <div className="w-9 h-9 bg-[#0d9488]/15 rounded-full flex items-center justify-center flex-shrink-0 border border-[#0d9488]/20 overflow-hidden">
-                        <TruckImage zoom className="w-full h-full" classification={t.classification} iconClassName="w-4 h-4 text-[#0d9488]" />
+                      <div className="h-13 w-13 flex-shrink-0 overflow-hidden rounded-lg border border-[#0d9488]/20 bg-[#0d9488]/15 p-0.5">
+                        <TruckImage className="h-full w-full" classification={t.classification} iconClassName="w-5 h-5 text-[#0d9488]" />
                       </div>
                       <div className="min-w-0">
                         <div><IdentifierCopy value={t.plateNumber} description="truck plate number" className="font-mono text-base font-bold tracking-wide" /></div>
@@ -686,8 +686,8 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                 {activeTrucksPage.pageItems.map((t) => (
                   <div key={t.id} className="p-4">
                     <div className="flex flex-wrap items-start gap-3">
-                      <div className="w-9 h-9 bg-[#0d9488]/15 rounded-full flex items-center justify-center flex-shrink-0 border border-[#0d9488]/20 overflow-hidden">
-                        <TruckImage zoom className="w-full h-full" classification={t.classification} iconClassName="w-4 h-4 text-[#0d9488]" />
+                      <div className="h-13 w-13 flex-shrink-0 overflow-hidden rounded-lg border border-[#0d9488]/20 bg-[#0d9488]/15 p-0.5">
+                        <TruckImage className="h-full w-full" classification={t.classification} iconClassName="w-5 h-5 text-[#0d9488]" />
                       </div>
                       <div className="min-w-[150px] flex-1">
                         <div><IdentifierCopy value={t.plateNumber} description="truck plate number" className="font-mono text-base font-bold tracking-wide" /></div>

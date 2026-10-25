@@ -34,7 +34,7 @@ import { hasUnsavedDispatchDetails } from '../../lib/dispatchDraft';
 import { ADMIN_NAVIGATION_EVENT, pushAdminNavigation } from '../../lib/adminNavigation';
 import type { ActionFeedbackToast, ActivityKey } from '../../lib/notificationEvents';
 import { hasOpenBlockingIssue } from '../../lib/issueWorkflow';
-import { TRUCK_CLASSIFICATIONS, truckSideImageFor, capacityKgOnly } from '../../data/truckTypes';
+import { TRUCK_CLASSIFICATIONS, truckFullImageFor, capacityKgOnly } from '../../data/truckTypes';
 import { destinationAreaEnabled, getAssignmentRoute, getDeliveryLocation } from '../../data/assignmentRoute';
 import {
   verifyOwnPassword, editAssignment, cancelAssignment, notifyAssignmentCancelled, loadAdminData,
@@ -571,7 +571,7 @@ function TruckPreviewCard({ truck }: { truck: LocalTruck }) {
   );
 }
 
-/* Side-view picture + plate, highlighted type and capacity badge.
+/* Full truck picture + plate, highlighted type and capacity badge.
    Used by View Details (plate first) and the Edit preview (type first — it's what you're choosing). */
 function TruckSummary({ truck, fallbackPlate, typeFirst = false, compact = false }: {
   truck: LocalTruck | null; fallbackPlate?: string; typeFirst?: boolean; compact?: boolean;
@@ -589,9 +589,9 @@ function TruckSummary({ truck, fallbackPlate, typeFirst = false, compact = false
   );
   return (
     <div className="flex items-center gap-3 sm:gap-4">
-      {/* Side view: shows the left part of the 1200×400 canvas, where the truck is */}
+      {/* Keep the full uploaded truck visible within the existing details area. */}
       <div className={`${compact ? 'w-24 lg:w-32' : 'w-[40%] max-w-[11rem]'} aspect-[7/5] flex items-center justify-center flex-shrink-0 overflow-hidden`}>
-        <TruckImage anchorLeft src={truckSideImageFor(truck?.classification)} alt={truck?.classification}
+        <TruckImage src={truckFullImageFor(truck?.classification)} alt={truck?.classification}
           className="w-full h-full" iconClassName="w-10 h-10 text-muted-foreground" />
       </div>
       <div className="flex-1 min-w-0">
