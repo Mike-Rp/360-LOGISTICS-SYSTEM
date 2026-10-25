@@ -92,6 +92,9 @@ function IdentifierCopy({ value, description, className = '' }: { value: string;
   </span>;
 }
 
+const truckPlateTextClass = 'text-base font-semibold leading-6 tracking-normal text-foreground [&_.asn-copy-target]:min-h-6 [&_.asn-copy-target]:py-0';
+const truckIdTextClass = 'whitespace-nowrap text-sm font-medium leading-5 tracking-normal text-muted-foreground';
+
 function PhoneContact({ driver }: { driver: LocalDriver }) {
   if (!driver.phone || driver.phone === '—') return <span className="text-sm italic text-muted-foreground">No number</span>;
   const mobile = parsePhilippineMobile(driver.phone);
@@ -584,11 +587,11 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                       <div className="h-13 w-13 flex-shrink-0 overflow-hidden rounded-lg border border-border bg-muted p-0.5 grayscale">
                         <TruckImage className="h-full w-full" classification={t.classification} iconClassName="w-5 h-5 text-muted-foreground" />
                       </div>
-                      <div className="min-w-0">
-                        <IdentifierCopy value={t.plateNumber} description="truck plate number" className="font-mono text-base font-bold tracking-wide" />
+                      <div className="flex min-w-0 flex-col items-start justify-center gap-0.5">
+                        <IdentifierCopy value={t.plateNumber} description="truck plate number" className={truckPlateTextClass} />
                         <div className="flex min-w-0 flex-wrap items-center gap-x-2 text-sm">
+                          <span className={truckIdTextClass}>{t.id}</span>
                           <span className="break-words text-[15px] font-medium text-muted-foreground">{t.classification || 'Type not set'}</span>
-                          <span className="whitespace-nowrap font-medium text-muted-foreground">{t.id}</span>
                         </div>
                       </div>
                     </div>
@@ -639,9 +642,9 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                       <div className="h-13 w-13 flex-shrink-0 overflow-hidden rounded-lg border border-[#0d9488]/20 bg-[#0d9488]/15 p-0.5">
                         <TruckImage className="h-full w-full" classification={t.classification} iconClassName="w-5 h-5 text-[#0d9488]" />
                       </div>
-                      <div className="min-w-0">
-                        <div><IdentifierCopy value={t.plateNumber} description="truck plate number" className="font-mono text-base font-bold tracking-wide" /></div>
-                        <p className="mt-0.5 whitespace-nowrap text-sm font-medium text-muted-foreground">{t.id}</p>
+                      <div className="flex min-w-0 flex-col items-start justify-center gap-0.5">
+                        <IdentifierCopy value={t.plateNumber} description="truck plate number" className={truckPlateTextClass} />
+                        <p className={truckIdTextClass}>{t.id}</p>
                       </div>
                     </div>
                     {/* Classification */}
@@ -689,9 +692,9 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                       <div className="h-13 w-13 flex-shrink-0 overflow-hidden rounded-lg border border-[#0d9488]/20 bg-[#0d9488]/15 p-0.5">
                         <TruckImage className="h-full w-full" classification={t.classification} iconClassName="w-5 h-5 text-[#0d9488]" />
                       </div>
-                      <div className="min-w-[150px] flex-1">
-                        <div><IdentifierCopy value={t.plateNumber} description="truck plate number" className="font-mono text-base font-bold tracking-wide" /></div>
-                        <p className="mt-0.5 whitespace-nowrap text-sm font-medium text-muted-foreground">{t.id}</p>
+                      <div className="flex min-w-[150px] flex-1 flex-col items-start justify-center gap-0.5">
+                        <IdentifierCopy value={t.plateNumber} description="truck plate number" className={truckPlateTextClass} />
+                        <p className={truckIdTextClass}>{t.id}</p>
                       </div>
                       <span className={`inline-flex max-w-full items-center rounded-full border px-2.5 py-1 text-sm font-medium ${t.status === 'Available' ? availabilityConfig.available.badge : availabilityConfig.onDelivery.badge}`}>
                         <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${t.status === 'Available' ? availabilityConfig.available.dot : availabilityConfig.onDelivery.dot}`} />
