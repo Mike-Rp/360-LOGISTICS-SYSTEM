@@ -52,6 +52,36 @@ function manilaTimestamp(year: number, month: number, day: number, hour: number,
   return Date.UTC(year, month - 1, day, hour, minute) - MANILA_OFFSET_MS;
 }
 
+/** The stored schedule fields are Philippine wall time, regardless of the viewer's timezone. */
+export function isScheduledDeliveryToday(deliveryDate: string, now = new Date()): boolean {
+  const scheduled = parseDate(deliveryDate);
+  if (!scheduled) return false;
+  const manilaNow = new Date(now.getTime() + MANILA_OFFSET_MS);
+  return scheduled.year === manilaNow.getUTCFullYear()
+    && scheduled.month === manilaNow.getUTCMonth() + 1
+    && scheduled.day === manilaNow.getUTCDate();
+}
+
+export function scheduledPickupTimestamp(pickedUpDate: string, pickupTime: string): number | null {
+  const date = parseDate(pickedUpDate);
+  const time = parseTime(pickupTime);
+  return date && time ? manilaTimestamp(date.year, date.month, date.day, time.hour, time.minute) : null;
+}
+
+/** Active assignments scheduled today; only an unstarted, future pickup can be "next". */
+export function getDashboardSchedule(assignments: readonly Pick<Assignment,
+  'taskStatus' | 'deliveryDate' | 'pickedUpDate' | 'pickupTime' | 'operationalStage' | 'pickupArrivedAt'>[], now = new Date()) {
+  const scheduledToday = assignments.filter((assignment) =>
+    assignment.taskStatus !== 'Cancelled' && isScheduledDeliveryToday(assignment.deliveryDate, now)).length;
+  const upcoming = assignments.flatMap((assignment) => {
+    if (assignment.taskStatus !== 'Assigned' || assignment.operationalStage || assignment.pickupArrivedAt
+      || !isScheduledDeliveryToday(assignment.pickedUpDate, now)) return [];
+    const timestamp = scheduledPickupTimestamp(assignment.pickedUpDate, assignment.pickupTime);
+    return timestamp !== null && timestamp > now.getTime() ? [timestamp] : [];
+  });
+  return { scheduledToday, nextPickupAt: upcoming.length ? Math.min(...upcoming) : null };
+}
+
 export function statusPhotoTimestamp(value?: string): number | null {
   if (!value) return null;
   // New driver photo evidence stores a year-bearing local display stamp without an offset.

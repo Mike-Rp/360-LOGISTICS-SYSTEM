@@ -12,6 +12,7 @@ export const ADMIN_PATHS = {
 
 export type AdminPage = keyof typeof ADMIN_PATHS;
 export const ADMIN_NAVIGATION_EVENT = '360-admin-navigation';
+export type DeliveriesView = 'delayed' | 'today';
 
 // Dashboard review actions use an exact document target for one pending upload, otherwise the queue.
 export function pendingDocumentReviewTarget(assignments: readonly Pick<Assignment, 'id' | 'documents'>[]) {
@@ -37,7 +38,7 @@ export function adminPageFromUrl(url = new URL(window.location.href)): AdminPage
   return 'Dashboard';
 }
 
-export function adminHref(page: AdminPage, target?: { assignmentId?: string; docType?: string; review?: boolean; activityKey?: string; summary?: boolean; focusOnly?: boolean }, tab?: 'completed'): string {
+export function adminHref(page: AdminPage, target?: { assignmentId?: string; docType?: string; review?: boolean; activityKey?: string; summary?: boolean; focusOnly?: boolean }, tab?: 'active' | 'completed', view?: DeliveriesView): string {
   const params = new URLSearchParams();
   if (target) {
     if (target.assignmentId !== undefined) params.set('assignment', target.assignmentId);
@@ -48,6 +49,7 @@ export function adminHref(page: AdminPage, target?: { assignmentId?: string; doc
     if (target.focusOnly) params.set('focus', 'true');
   }
   if (page === 'Deliveries' && tab) params.set('tab', tab);
+  if (page === 'Deliveries' && view) params.set('view', view);
   const query = params.toString();
   return ADMIN_PATHS[page] + (query ? `?${query}` : '');
 }
@@ -58,8 +60,8 @@ export function followAdminLink(event: MouseEvent<HTMLAnchorElement>, navigate: 
   navigate();
 }
 
-export function pushAdminNavigation(page: AdminPage, target?: { assignmentId?: string; docType?: string; review?: boolean; activityKey?: string; summary?: boolean; focusOnly?: boolean }, tab?: 'completed'): void {
-  const href = adminHref(page, target, tab);
+export function pushAdminNavigation(page: AdminPage, target?: { assignmentId?: string; docType?: string; review?: boolean; activityKey?: string; summary?: boolean; focusOnly?: boolean }, tab?: 'active' | 'completed', view?: DeliveriesView): void {
+  const href = adminHref(page, target, tab, view);
   if (!target && window.location.pathname + window.location.search === href) return;
   window.history.pushState({ ...window.history.state, adminNavigation: true }, '', href);
   window.dispatchEvent(new Event(ADMIN_NAVIGATION_EVENT));

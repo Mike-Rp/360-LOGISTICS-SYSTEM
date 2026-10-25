@@ -5,12 +5,14 @@ import { taskStatusConfig } from '../../data/assignmentTypes';
 import { statusColors } from '../../data/statusColors';
 import { assignmentDisplayStatusConfig, getAssignmentDisplayStatus, getAssignmentDocumentProgress } from '../../lib/assignmentWorkflow';
 import { ADMIN_NAVIGATION_EVENT, adminHref, followAdminLink, pushAdminNavigation } from '../../lib/adminNavigation';
+import type { DeliveriesView } from '../../lib/adminNavigation';
 import { deliveryDateColumn, deliveryDateHeading, matchesDeliveryPeriod, sortCancelledNewestFirst } from '../../lib/deliveryDateColumn';
 import type { DeliveryTab, DeliveryPeriod } from '../../lib/deliveryDateColumn';
 import ASNWithCopy from './ASNWithCopy';
 import CompletedDeliverySummary from './CompletedDeliverySummary';
 import DeliveryTimingBadge from './DeliveryTimingBadge';
-import { getDeliveryTimingStatus } from '../../lib/assignmentTiming';
+import { getDeliveryTimingStatus, isScheduledDeliveryToday } from '../../lib/assignmentTiming';
+import { isDashboardDelayedAssignment } from '../../lib/dashboardDelayed';
 import { formatOperationalStamp } from '../../lib/assignmentOperational';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
 import { sortNewestFirst, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
@@ -21,6 +23,10 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, Di
 
 type FilterPeriod = DeliveryPeriod;
 const DELIVERIES_PAGE_SIZE = 7;
+const deliveryViewFromUrl = (): DeliveriesView | null => {
+  const value = new URLSearchParams(window.location.search).get('view');
+  return value === 'delayed' || value === 'today' ? value : null;
+};
 
 interface DeliveryTableProps {
   fullView?: boolean;
@@ -233,6 +239,7 @@ export default function DeliveryTable({
   const timingNow = new Date();
 
   const [tab, setTab]       = useState<'active' | 'completed' | 'cancelled'>(() => new URLSearchParams(window.location.search).get('tab') === 'completed' ? 'completed' : 'active');
+  const [activeView, setActiveView] = useState<DeliveriesView | null>(deliveryViewFromUrl);
   const [period, setPeriod] = useState<FilterPeriod>('all');
   const [remarksAssignment, setRemarksAssignment] = useState<Assignment | null>(null);
   const [cancelledDetails, setCancelledDetails] = useState<Assignment | null>(null);
@@ -256,6 +263,8 @@ export default function DeliveryTable({
   const summaryAssignment = completed.find((assignment) => assignment.id === summaryId) ?? null;
   const filteredActive = sortNewestFirst(assignments
     .filter((a) => a.taskStatus !== 'Cancelled')
+    .filter((a) => activeView === 'delayed' ? isDashboardDelayedAssignment(a, timingNow)
+      : activeView === 'today' ? isScheduledDeliveryToday(a.deliveryDate, timingNow) : true)
     .filter((a) => matchesDeliveryPeriod(a, 'active', period))
     .filter((a) => matchesSearch([a.truckPlate, a.id, a.driverName, a.destination, a.destinationArea ?? '', a.company, a.taskStatus])), (assignment) => assignment.id);
 
@@ -276,34 +285,40 @@ export default function DeliveryTable({
     cancelledPage.setPage(1);
   };
   useEffect(() => {
-    const openCompleted = () => {
+    const syncDeliveryRoute = () => {
       const params = new URLSearchParams(window.location.search);
       if (params.get('tab') !== 'completed') {
+        setTab('active');
+        setActiveView(deliveryViewFromUrl());
         setLinkedCompletedId(null);
+        resetPages();
         return;
       }
       setTab('completed');
+      setActiveView(null);
       setLinkedCompletedId(params.get('assignment'));
       setSummaryId(params.get('summary') === 'true' ? params.get('assignment') : null);
       resetPages();
     };
-    openCompleted();
-    window.addEventListener('popstate', openCompleted);
-    window.addEventListener(ADMIN_NAVIGATION_EVENT, openCompleted);
+    syncDeliveryRoute();
+    window.addEventListener('popstate', syncDeliveryRoute);
+    window.addEventListener(ADMIN_NAVIGATION_EVENT, syncDeliveryRoute);
     return () => {
-      window.removeEventListener('popstate', openCompleted);
-      window.removeEventListener(ADMIN_NAVIGATION_EVENT, openCompleted);
+      window.removeEventListener('popstate', syncDeliveryRoute);
+      window.removeEventListener(ADMIN_NAVIGATION_EVENT, syncDeliveryRoute);
     };
   }, []);
   const selectTab = (next: 'active' | 'completed' | 'cancelled') => {
     setTab(next);
+    setActiveView(null);
     setLinkedCompletedId(null);
     setSummaryId(null);
     setHighlightCompletedId(null);
     resetPages();
     const url = new URL(window.location.href);
-    if (url.searchParams.has('tab') || url.searchParams.has('assignment') || url.searchParams.has('summary')) {
+    if (url.searchParams.has('tab') || url.searchParams.has('view') || url.searchParams.has('assignment') || url.searchParams.has('summary')) {
       url.searchParams.delete('tab');
+      url.searchParams.delete('view');
       url.searchParams.delete('assignment');
       url.searchParams.delete('summary');
       window.history.replaceState(window.history.state, '', url);
@@ -329,7 +344,7 @@ export default function DeliveryTable({
   useLayoutEffect(() => { resetPages(); }, [search]);
 
   /* A time range or search is narrowing the list */
-  const filtering = !!q || period !== 'all';
+  const filtering = !!q || period !== 'all' || (tab === 'active' && activeView !== null);
 
   /* Cancelled rows are plain Assignment objects, exactly like active ones, so both tabs
      render through the same table/card markup below instead of a duplicated copy. */
@@ -337,7 +352,7 @@ export default function DeliveryTable({
   const pageRows = tab === 'cancelled' ? cancelledPage.pageItems : activePage.pageItems;
   const selectedPage = tab === 'completed' ? completedPage : tab === 'cancelled' ? cancelledPage : activePage;
   const selectedCount = tab === 'completed' ? filteredDone.length : listRows.length;
-  const pageArea = useStablePageHeight(selectedPage.page, selectedCount, DELIVERIES_PAGE_SIZE, `${tab}|${period}|${search}`);
+  const pageArea = useStablePageHeight(selectedPage.page, selectedCount, DELIVERIES_PAGE_SIZE, `${tab}|${period}|${search}|${activeView}`);
 
   return (
     <div className="bg-white rounded-xl border border-border shadow-sm overflow-hidden">
@@ -393,6 +408,15 @@ export default function DeliveryTable({
             {tab === 'completed' ? filteredDone.length : listRows.length} result{(tab === 'completed' ? filteredDone.length : listRows.length) !== 1 ? 's' : ''} for <span className="font-semibold text-foreground">"{search}"</span>
           </p>
         )}
+        {tab === 'active' && activeView && (
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+            <span>Showing {activeView === 'delayed' ? 'delayed active deliveries' : "today's scheduled active deliveries"}</span>
+            <button type="button" onClick={() => pushAdminNavigation('Deliveries', undefined, 'active')}
+              className="rounded-md px-2 py-1 font-medium text-primary hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+              Show all active
+            </button>
+          </div>
+        )}
       </div>
 
       {/* ── Active / Cancelled Assignments (same row shape) ── */}
@@ -408,7 +432,7 @@ export default function DeliveryTable({
               </p>
               <p className="text-sm text-muted-foreground mt-1">
                 {filtering
-                  ? 'Try a different time range or search term.'
+                  ? activeView && tab === 'active' ? 'Show all active deliveries or adjust the current filters.' : 'Try a different time range or search term.'
                   : tab === 'cancelled'
                     ? 'Assignments cancelled from Monitor will appear here.'
                     : 'Assign tasks from Drivers Management to see them here.'}

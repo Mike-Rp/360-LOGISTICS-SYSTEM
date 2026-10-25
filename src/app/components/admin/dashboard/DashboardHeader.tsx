@@ -1,91 +1,49 @@
+import { useEffect, useState } from 'react';
 import { Plus } from 'lucide-react';
-import type { Assignment, CompletedTask } from '../../../data/assignmentTypes';
-import { adminHref, followAdminLink, pushAdminNavigation, pendingDocumentReviewTarget } from '../../../lib/adminNavigation';
+import type { Assignment } from '../../../data/assignmentTypes';
+import { getDashboardSchedule } from '../../../lib/assignmentTiming';
+import { adminHref, followAdminLink, pushAdminNavigation } from '../../../lib/adminNavigation';
+import WelcomeGreeting from './WelcomeGreeting';
 
 interface Props {
   assignments: Assignment[];
-  completed: CompletedTask[];
   adminName?: string;
   isViewOnly: boolean;
-  onNavigate: (page: 'Deliveries' | 'Documents') => void;
   onDispatch: () => void;     // opens Monitor's existing Dispatch Truck form
 }
 
-const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+/** Only the clock refreshes here; assignment data still arrives through the existing poll. */
+export function WelcomeSummary({ assignments }: Pick<Props, 'assignments'>) {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
-/* Same rule as the Delayed Deliveries stat card (DashboardStatCards.tsx, itself copied
-   from KPICards.tsx) so the two numbers always agree — including its known limitation:
-   stored dates are "Sep 23, 2026", so the "/" split never parses and only delay
-   reports count. */
-function countDelayed(assignments: Assignment[]): number {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return assignments.filter((a) => {
-    const active =
-      a.taskStatus === 'Assigned' ||
-      a.taskStatus === 'Picked Up' ||
-      a.taskStatus === 'In Transit';
-    if (!active) return false;
-    if (a.delayReports && a.delayReports.length > 0) return true;
-    if (a.deliveryDate) {
-      const [m, d, y] = a.deliveryDate.split('/').map(Number);
-      const due = new Date(y, m - 1, d);
-      if (due < today) return true;
-    }
-    return false;
-  }).length;
+  const { scheduledToday, nextPickupAt } = getDashboardSchedule(assignments, now);
+  const scheduledText = scheduledToday === 0 ? 'No deliveries scheduled today'
+    : `${scheduledToday} ${scheduledToday === 1 ? 'delivery' : 'deliveries'} scheduled today`;
+  const nextPickup = nextPickupAt === null ? null : new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila', hour: 'numeric', minute: '2-digit', hour12: true,
+  }).format(new Date(nextPickupAt));
+
+  return <p className="mt-2 text-sm text-muted-foreground">
+    {scheduledText} <span aria-hidden="true">·</span>{' '}
+    {nextPickup ? `Next pickup at ${nextPickup}` :
+      <a href={adminHref('Deliveries', undefined, 'active', 'today')}
+        onClick={(event) => followAdminLink(event, () => pushAdminNavigation('Deliveries', undefined, 'active', 'today'))}
+        className="rounded text-foreground underline decoration-dotted underline-offset-4 hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+        View today's schedule
+      </a>}
+  </p>;
 }
 
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
-
-/* The live summary line: "3 deliveries scheduled today · 1 delayed
-   · 2 documents waiting for review" — only the parts that apply. Used by this header
-   and by the welcome banner (DashboardHome.tsx). */
-export function WelcomeSummary({ assignments, completed, onNavigate }: Pick<Props, 'assignments' | 'completed' | 'onNavigate'>) {
-  const now = new Date();
-
-  /* Delivery dates are stored as display text, e.g. "Sep 23, 2026" (isoToDisplay in
-     DriversManagement.tsx) — build today's in the same format and compare. */
-  const todayStored = `${MONTHS[now.getMonth()]} ${now.getDate()}, ${now.getFullYear()}`;
-  /* Scheduled today = active + completed deliveries due today (cancelled excluded) */
-  const scheduledToday = [...assignments, ...completed].filter((a) => a.deliveryDate === todayStored).length;
-  const delayed        = countDelayed(assignments);
-  /* Same count as the Docs Pending Review stat card */
-  const docsPending    = assignments.reduce(
-    (sum, a) => sum + a.documents.filter((d) => d.uploaded && d.docStatus === 'pending').length, 0
-  );
-  const reviewTarget = pendingDocumentReviewTarget(assignments);
-
-  const linkCls = 'font-medium text-foreground underline decoration-dotted underline-offset-4 hover:text-primary transition-colors';
-  const parts: React.ReactNode[] = [];
-  if (scheduledToday > 0) parts.push(plural(scheduledToday, 'delivery', 'deliveries') + ' scheduled today');
-  if (delayed > 0) parts.push(
-    /* Deliveries has no "Delayed" filter — this opens its Active tab, which includes them */
-    <a key="delayed" href={adminHref('Deliveries')} onClick={(event) => followAdminLink(event, () => onNavigate('Deliveries'))} className={linkCls}>{delayed} delayed</a>
-  );
-  if (docsPending > 0) parts.push(
-    <a key="docs" href={adminHref('Monitor', reviewTarget)} onClick={(event) => followAdminLink(event, () => pushAdminNavigation('Monitor', reviewTarget))} className={linkCls}>
-      {plural(docsPending, 'document', 'documents')} waiting for review
-    </a>
-  );
-
-  return (
-    <p className="text-sm text-muted-foreground mt-2">
-      {parts.length === 0
-        ? "No deliveries scheduled today. Everything's up to date."
-        : parts.map((p, i) => <span key={i}>{i > 0 && ' · '}{p}</span>)}
-    </p>
-  );
-}
-
-export default function DashboardHeader({ assignments, completed, adminName, isViewOnly, onNavigate, onDispatch }: Props) {
+export default function DashboardHeader({ assignments, adminName, isViewOnly, onDispatch }: Props) {
   return (
     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
       <div className="min-w-0">
-        <h1 className="text-2xl sm:text-3xl font-semibold text-foreground leading-tight">
-          Welcome back, {adminName ?? 'Admin User'}
-        </h1>
-        <WelcomeSummary assignments={assignments} completed={completed} onNavigate={onNavigate} />
+        <WelcomeGreeting name={adminName} />
+        <WelcomeSummary assignments={assignments} />
       </div>
       {!isViewOnly && (
         <a href={adminHref('Monitor')} onClick={(event) => followAdminLink(event, onDispatch)}

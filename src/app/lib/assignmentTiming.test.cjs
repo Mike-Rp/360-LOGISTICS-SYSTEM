@@ -9,7 +9,27 @@ const source = ts.transpileModule(readFileSync(join(__dirname, 'assignmentTiming
 }).outputText;
 const moduleForTest = { exports: {} };
 new Function('require', 'module', 'exports', source)(require, moduleForTest, moduleForTest.exports);
-const { getDeliveryTimingStatus, getPickupTimingStatus, getDispatchTimingNotices } = moduleForTest.exports;
+const { getDeliveryTimingStatus, getPickupTimingStatus, getDispatchTimingNotices, getDashboardSchedule } = moduleForTest.exports;
+
+test('Dashboard schedule uses the Manila day and the earliest future unstarted pickup', () => {
+  const now = new Date('2026-10-25T23:00:00Z'); // Oct 26, 7 AM in Manila
+  const item = (id, deliveryDate, pickedUpDate, pickupTime, extras = {}) => ({
+    id, taskStatus: 'Assigned', deliveryDate, pickedUpDate, pickupTime, ...extras,
+  });
+  const schedule = getDashboardSchedule([
+    item('later', 'Oct 26, 2026', 'Oct 26, 2026', '1:00 PM'),
+    item('next', '2026-10-26', 'Oct 26, 2026', '10:30 AM'),
+    item('past', 'Oct 26, 2026', 'Oct 26, 2026', '6:30 AM'),
+    item('arrived', 'Oct 26, 2026', 'Oct 26, 2026', '8:00 AM', { operationalStage: 'pickup_arrived' }),
+    item('cancelled', 'Oct 26, 2026', 'Oct 26, 2026', '9:00 AM', { taskStatus: 'Cancelled' }),
+    item('tomorrow', 'Oct 27, 2026', 'Oct 27, 2026', '8:00 AM'),
+  ], now);
+  assert.equal(schedule.scheduledToday, 4);
+  assert.equal(new Date(schedule.nextPickupAt).toISOString(), '2026-10-26T02:30:00.000Z');
+  assert.deepEqual(getDashboardSchedule([item('past', 'Oct 26, 2026', 'Oct 26, 2026', '6:30 AM')], now), {
+    scheduledToday: 1, nextPickupAt: null,
+  });
+});
 
 const assignment = (taskStatus, deliveryDate = 'Oct 15, 2026', eta = '2:00 PM', timestamp) => ({
   taskStatus, deliveryDate, eta,

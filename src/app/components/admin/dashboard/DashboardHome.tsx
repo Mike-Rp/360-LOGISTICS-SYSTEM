@@ -6,6 +6,7 @@ import DeliveryOverviewChart from './DeliveryOverviewChart';
 import RecentActivityTable from './RecentActivityTable';
 import DriversFleetCards from './DriversFleetCards';
 import DashboardHeader, { WelcomeSummary } from './DashboardHeader';
+import WelcomeGreeting from './WelcomeGreeting';
 import { adminHref, followAdminLink } from '../../../lib/adminNavigation';
 
 /* ── Redesigned admin Dashboard ──────────────────────────────────────────────
@@ -42,13 +43,13 @@ export default function DashboardHome({
 
       {/* ── Welcome: banner card (current) or the plain header (kept, switched off) ── */}
       {SHOW_WELCOME_BANNER
-        ? <WelcomeBanner assignments={assignments} completed={completed} adminName={adminName}
-            isViewOnly={isViewOnly} onNavigate={onNavigate} onDispatch={onDispatch} />
-        : <DashboardHeader assignments={assignments} completed={completed} adminName={adminName}
-            isViewOnly={isViewOnly} onNavigate={onNavigate} onDispatch={onDispatch} />}
+        ? <WelcomeBanner assignments={assignments} adminName={adminName}
+            isViewOnly={isViewOnly} onDispatch={onDispatch} />
+        : <DashboardHeader assignments={assignments} adminName={adminName}
+            isViewOnly={isViewOnly} onDispatch={onDispatch} />}
 
       {/* ── Stat cards ── */}
-      <DashboardStatCards assignments={assignments} completed={completed} onNavigate={onNavigate} />
+      <DashboardStatCards assignments={assignments} completed={completed} />
 
       {/* ── One shared 50/50 grid for the two bottom rows, so edges and the middle gap
           line up exactly; each row's two cards stretch to equal height.
@@ -67,9 +68,9 @@ export default function DashboardHome({
 
 /* ── Welcome banner — shown while SHOW_WELCOME_BANNER is true.
    Image: public/dashboard/hero-banner-wide.webp (hero-banner.png is kept but unused). */
-function WelcomeBanner({ assignments, completed, adminName, isViewOnly, onNavigate, onDispatch }: {
-  assignments: Assignment[]; completed: CompletedTask[]; adminName?: string; isViewOnly: boolean;
-  onNavigate: (page: 'Deliveries' | 'Documents') => void; onDispatch: () => void;
+function WelcomeBanner({ assignments, adminName, isViewOnly, onDispatch }: {
+  assignments: Assignment[]; adminName?: string; isViewOnly: boolean;
+  onDispatch: () => void;
 }) {
   /* The banner image is optional: if the file is missing, the card is text only */
   const [bannerOk, setBannerOk] = useState(true);
@@ -94,10 +95,8 @@ function WelcomeBanner({ assignments, completed, adminName, isViewOnly, onNaviga
       )}
       <div className="relative h-full flex flex-col justify-center gap-3 px-6 py-6 sm:px-8 xl:py-0 xl:max-w-[calc(100%-400px)]">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-semibold text-foreground leading-tight">
-            Welcome back, {adminName ?? 'Admin User'}
-          </h1>
-          <WelcomeSummary assignments={assignments} completed={completed} onNavigate={onNavigate} />
+          <WelcomeGreeting name={adminName} />
+          <WelcomeSummary assignments={assignments} />
         </div>
         {!isViewOnly && (
           <a href={adminHref('Monitor')} onClick={(event) => followAdminLink(event, onDispatch)}

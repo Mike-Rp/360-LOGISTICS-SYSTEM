@@ -25,3 +25,12 @@ test('a newly dispatched card uses the existing assignment route with focus-only
   assert.equal(loaded.exports.adminHref('Monitor', { assignmentId: 'ASN21630', focusOnly: true }),
     '/dispatch?assignment=ASN21630&focus=true');
 });
+
+test('Dashboard actions point to explicit Deliveries tabs and scoped active views', () => {
+  const { adminHref } = loaded.exports;
+  assert.equal(adminHref('Deliveries', undefined, 'active'), '/deliveries?tab=active');
+  assert.equal(adminHref('Deliveries', undefined, 'completed'), '/deliveries?tab=completed');
+  assert.equal(adminHref('Deliveries', undefined, 'active', 'delayed'), '/deliveries?tab=active&view=delayed');
+  assert.equal(adminHref('Deliveries', undefined, 'active', 'today'), '/deliveries?tab=active&view=today');
+  assert.equal(adminHref('Monitor', { review: true }), '/dispatch?review=true');
+});
