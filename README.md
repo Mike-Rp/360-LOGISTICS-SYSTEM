@@ -151,32 +151,6 @@ supabase/
 └── tests/                     Database behavior checks
 ```
 
-## Getting Started
-
-Use a **development** Supabase project configured for this application. The repository does not provide public demo credentials or a ready-to-use database. Do not place service-role keys in frontend environment variables.
-
-```bash
-git clone https://github.com/Mike-Rp/360-LOGISTICS-SYSTEM.git
-cd 360-LOGISTICS-SYSTEM
-pnpm install
-cp .env.example .env.local
-```
-
-Set the required values in `.env.local` using your development project's settings:
-
-```dotenv
-VITE_SUPABASE_URL=https://<project-ref>.supabase.co
-VITE_SUPABASE_ANON_KEY=<development-anon-key>
-VITE_DESTINATION_AREA_ENABLED=false
-```
-
-`VITE_DESTINATION_AREA_ENABLED` is a feature flag described in [`.env.example`](.env.example); enable it only when the corresponding database support exists in your development project. Restart Vite after changing environment variables.
-
-```bash
-pnpm dev         # local development server, normally http://localhost:5173
-pnpm typecheck   # TypeScript check
-pnpm build       # production build check
-```
 
 ## Project Status
 
