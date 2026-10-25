@@ -24,3 +24,8 @@ pnpm-debug.log*
 
 # Supabase CLI local cache (linked-project metadata, version files)
 supabase/.temp/
+
+# Postman's local Git-based workspace scratch files (auto-created by the
+# desktop app when it's opened against this repo — not part of the project)
+.postman/
+postman/
