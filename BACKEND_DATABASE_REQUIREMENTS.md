@@ -450,13 +450,31 @@ read (badge count dropped), then "Mark all as read" to clear the rest.
 Confirmed via SQL that all 3 rows persisted `read = true` with real `read_at`
 timestamps, not just local UI state.
 
-**Deliberately deferred — document rejection:** unlike the other 3 events,
-document approve/reject is not backed by a dedicated RPC — it still goes
-through the generic `syncAdminData()`/`flatten()` diff-sync path (see "Still
-needed" item 1 above). Adding a driver notification there would mean either
-bolting it onto that untrusted client-driven path, or doing the larger RPC
-conversion first. This pass intentionally stopped at the 3 events that already
-had a trustworthy hook. Revisit once that RPC conversion happens.
+**Deliberately deferred — document review events:** approve/reject now use
+dedicated RPCs (`20261025000006_document_review_rpcs.sql`), but those RPCs do
+not create Driver-targeted notification records. The Driver Portal still shows
+current document status summaries without persisted read state or event time.
+
+### DRIVER UI CHANGES - REQ16 follow-up — persistent document review alerts
+
+**Status:** Pending. **Approval:** Pending. The document review path now uses
+`approve_document` and `reject_document` RPCs
+(`20261025000006_document_review_rpcs.sql`). Those RPCs still do not insert
+Driver-targeted notification rows. The frontend currently derives current
+approved/rejected document cards from the active assignment's document status.
+They have no independent event timestamp, read flag, or historical feed entry.
+
+For a fully persistent, chronological Driver document notification feed, have
+each authorized review RPC create one idempotent notification for the affected
+driver, with a stable event ID, canonical approval/rejection type, assignment ID,
+document type, actual review timestamp, and rejection reason where applicable.
+Return those fields through the existing driver notification query, and use the
+existing guarded read RPCs for per-driver read state. Preserve the recipient
+ownership check (`recipient_driver_id = my_driver_id()`) and do not expose staff
+records or another driver's documents. Backend tests should cover idempotency,
+ownership, read persistence, approval and rejection events, and correction
+reviews. Until implemented, the frontend keeps **Current document reviews** as
+actionable status summaries without claiming they are server-persisted alerts.
 
 ### A. Existing implementation (pre-2026-10-25, kept for reference)
 

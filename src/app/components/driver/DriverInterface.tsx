@@ -21,6 +21,7 @@ import { checkPhoto, loadVehicleDetector, type PhotoCheckFailure } from '../../l
 import { MILESTONE_NOTIFICATIONS } from '../../lib/notificationEvents';
 import { BLOCKING_ISSUE_REASONS, hasOpenBlockingIssue } from '../../lib/issueWorkflow';
 import { newNotificationIds, notificationSoundEnabled, playNotificationSound, setNotificationSoundEnabled } from '../../lib/notificationSound';
+import { canOpenDocumentReview, driverNotificationDestination } from '../../lib/driverNotificationNavigation';
 import { observeDriverCompletion, type DriverCompletionSnapshot } from './driverCompletion';
 import type { CancelledHistoryItem } from '../../lib/driverHistory';
 import { completedPhotoGroup, getNextRequiredAction, getNextRequiredDocument, getNextRequiredPhoto, getRequiredPhotoProgress } from './driverPhotoGuidance';
@@ -44,7 +45,7 @@ interface NormDoc {
   type: string; uploaded: boolean; docStatus: DocStatus; rejectReason?: string; fileUrl?: string;
 }
 interface DriverNotif {
-  id: string; type: 'rejection' | 'approval'; title: string; body: string; docType: string;
+  id: string; assignmentId: string; type: 'rejection' | 'approval'; title: string; body: string; docType: string;
 }
 
 type HistoryDetail = CompletedTask & { documents: Array<Assignment['documents'][number] & { uploadedAt?: string }> };
@@ -985,22 +986,13 @@ function DocRow({ doc, onUpload, isDelivered, isBlurry, isFocused, isHighlighted
 }) {
   const { t, document: documentText } = useDriverI18n();
   const inputRef = useRef<HTMLInputElement>(null);
-  const rowRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!isFocused) return;
-    const frame = requestAnimationFrame(() => {
-      rowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      rowRef.current?.focus({ preventScroll: true });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [isFocused]);
   const isApproved  = doc.uploaded && doc.docStatus === 'approved';
   const isRejected  = doc.uploaded && doc.docStatus === 'rejected';
   const isPending   = doc.uploaded && doc.docStatus === 'pending';
   const canUpload   = isDelivered && (!doc.uploaded || isRejected);
 
   return (
-    <div ref={rowRef} tabIndex={-1} data-driver-doc-type={doc.type} className={`rounded-2xl border p-4 space-y-3 transition-shadow duration-500 motion-reduce:transition-none ${isFocused || isHighlighted ? 'ring-2 ring-green-600 ring-offset-2' : ''} ${
+    <div tabIndex={-1} data-driver-doc-type={doc.type} className={`rounded-2xl border p-4 space-y-3 transition-shadow duration-500 motion-reduce:transition-none ${isFocused || isHighlighted ? 'ring-2 ring-green-600 ring-offset-2' : ''} ${
       isApproved  ? 'bg-green-50 border-green-200' :
       isRejected  ? 'bg-red-50 border-red-200' :
       isPending   ? 'bg-cyan-50 border-cyan-200' :
@@ -1156,7 +1148,7 @@ function CancelledDetailField({ label, value }: { label: string; value?: string 
   </div>;
 }
 
-function CancelledHistoryDetails({ item, onClose }: { item: CancelledHistoryItem; onClose: () => void }) {
+function CancelledHistoryDetails({ item, onClose, issueNotification }: { item: CancelledHistoryItem; onClose: () => void; issueNotification?: DriverNotificationRecord | null }) {
   const { t } = useDriverI18n();
   return <DriverDrawer title={t('history.cancelledDetails')} onClose={onClose} compact>
     <div className="min-w-0">
@@ -1164,6 +1156,11 @@ function CancelledHistoryDetails({ item, onClose }: { item: CancelledHistoryItem
         <p className="break-all text-lg font-bold text-foreground">{item.id}</p>
         <span className={`rounded-full border px-2.5 py-1 text-sm font-medium ${statusColors.Cancelled.badge}`}>{t('history.cancelled')}</span>
       </div>
+      {issueNotification?.assignmentId === item.id && <div className="mt-3 rounded-xl border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-900">
+        <p className="font-semibold">{t('notifications.issueResolved')}</p>
+        <p className="mt-1 break-words">{issueNotification.message}</p>
+        {issueNotification.reason && <p className="mt-1 break-words">{t('notifications.resolutionNote', { reason: issueNotification.reason })}</p>}
+      </div>}
       <div className="mt-3">
         <CancelledDetailField label={t('history.truck')} value={item.truckPlate || t('common.notAvailable')} />
         <CancelledDetailField label={t('history.driver')} value={item.driverName} />
@@ -1295,7 +1292,7 @@ function DriverNotificationRow({ notification, index, onOpen }: { notification: 
         <p className="text-base font-bold text-foreground [overflow-wrap:anywhere]">{n.title}</p>
         <p className="text-sm text-gray-600 mt-1 leading-relaxed [overflow-wrap:anywhere]">{n.body}</p>
       </div>
-      {onOpen && <ChevronRight className="w-5 h-5 shrink-0 self-center text-red-500" aria-hidden="true" />}
+      {onOpen && <ChevronRight className="w-5 h-5 shrink-0 self-center text-gray-500" aria-hidden="true" />}
     </>
   );
   const className = `w-full min-w-0 min-h-20 rounded-2xl border p-4 flex items-start gap-3 text-left motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-3 motion-safe:duration-300 ${n.type === 'rejection' ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`;
@@ -1306,16 +1303,22 @@ function DriverNotificationRow({ notification, index, onOpen }: { notification: 
 }
 
 function RealNotificationRow({ notification, index, onOpen }: { notification: DriverNotificationRecord; index: number; onOpen: () => void }) {
+  const { t } = useDriverI18n();
   const Icon = notification.type === 'driver_cancelled' ? XCircle
     : notification.type === 'driver_issue_resolved' ? CheckCircle2 : Package;
+  const title = t(notification.type === 'driver_cancelled' ? 'notifications.deliveryCancelled'
+    : notification.type === 'driver_issue_resolved' ? 'notifications.issueResolved'
+    : notification.type === 'driver_dispatched' ? 'notifications.newAssignment' : 'notifications.update');
   return (
     <button type="button" onClick={onOpen} style={{ animationDelay: `${index * 70}ms` }}
+      aria-label={`${title}. ${notification.message}. ${notification.read ? '' : t('notifications.unread') + '. '}${t('notifications.openNotification')}`}
       className={`w-full min-w-0 min-h-20 rounded-2xl border p-4 flex items-start gap-3 text-left motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-3 motion-safe:duration-300 focus-visible:outline-2 focus-visible:outline-green-700 ${notification.read ? 'bg-white border-gray-200' : 'bg-blue-50 border-blue-200'}`}>
       <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${notification.read ? 'bg-gray-100' : 'bg-blue-100'}`}>
         <Icon className={`w-7 h-7 ${notification.read ? 'text-gray-500' : 'text-blue-600'}`} />
       </div>
       <div className="flex-1 min-w-0">
-        <p className={`text-base [overflow-wrap:anywhere] ${notification.read ? 'font-semibold text-gray-700' : 'font-bold text-foreground'}`}>{notification.message}</p>
+        <p className={`text-sm ${notification.read ? 'font-medium text-gray-600' : 'font-bold text-foreground'}`}>{title}</p>
+        <p className={`mt-0.5 text-base [overflow-wrap:anywhere] ${notification.read ? 'font-medium text-gray-700' : 'font-semibold text-foreground'}`}>{notification.message}</p>
         <p className="text-sm text-gray-500 mt-1">{manilaStamp(notification.createdAt)}</p>
       </div>
       {!notification.read && <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-blue-600" aria-hidden="true" />}
@@ -1359,7 +1362,7 @@ function DriverDrawer({ title, onClose, children, compact = false }: { title: st
   );
 }
 
-function HistoryDetailsSheet({ driverId, driverName, assignmentId, onClose, onCheckSession }: { driverId: string; driverName: string; assignmentId: string; onClose: () => void; onCheckSession: () => Promise<boolean> }) {
+function HistoryDetailsSheet({ driverId, driverName, assignmentId, onClose, onCheckSession, issueNotification }: { driverId: string; driverName: string; assignmentId: string; onClose: () => void; onCheckSession: () => Promise<boolean>; issueNotification?: DriverNotificationRecord | null }) {
   const { t, document: documentText, status: statusText } = useDriverI18n();
   const [detail, setDetail] = useState<HistoryDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1463,6 +1466,11 @@ function HistoryDetailsSheet({ driverId, driverName, assignmentId, onClose, onCh
           {loading ? <p className="text-gray-500 py-8 text-center">{t('history.loading')}</p> : error ? <p className="text-red-600 py-8 text-center">{error}</p> : !detail ? (
             <p className="text-gray-500 py-8 text-center">{t('history.unavailable')}</p>
           ) : <>
+            {issueNotification?.assignmentId === assignmentId && <div className="rounded-xl border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-900">
+              <p className="font-semibold">{t('notifications.issueResolved')}</p>
+              <p className="mt-1 break-words">{issueNotification.message}</p>
+              {issueNotification.reason && <p className="mt-1 break-words">{t('notifications.resolutionNote', { reason: issueNotification.reason })}</p>}
+            </div>}
             <div className="text-sm space-y-2 break-words">
               <p><span className="font-semibold text-gray-500">{t('history.route')} </span>{getAssignmentRoute(detail)}</p>
               <p><span className="font-semibold text-gray-500">{t('history.customer')} </span>{detail.company}</p>
@@ -1549,6 +1557,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   };
   /* ── Server state ── */
   const [data,     setData]     = useState<DriverData | null>(null);
+  const latestDriverData = useRef<DriverData | null>(null);
   const [online,   setOnline]   = useState(true);
   const [lastSync, setLastSync] = useState<Date | null>(null);
   const [syncing,  setSyncing]  = useState(false);
@@ -1594,10 +1603,14 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   const [acknowledgingCancellation, setAcknowledgingCancellation] = useState(false);
   const [notificationPage, setNotificationPage] = useState(1);
   const [realNotifPage, setRealNotifPage] = useState(1);
+  const [notificationError, setNotificationError] = useState('');
+  const [markAllPending, setMarkAllPending] = useState(false);
+  const notificationReadInFlight = useRef(new Set<string>());
   const [activeDrawer, setActiveDrawer] = useState<'notifications' | 'menu' | 'language' | null>(null);
   const [languageNotice, setLanguageNotice] = useState<DriverLanguage | null>(null);
   const [statusNotice, setStatusNotice] = useState<TaskStatus | null>(null);
   const [focusedDocType, setFocusedDocType] = useState<string | null>(null);
+  const [focusedIssueNotification, setFocusedIssueNotification] = useState<DriverNotificationRecord | null>(null);
   const taskScrollRef = useRef<HTMLDivElement>(null);
   const taskHeaderRef = useRef<HTMLElement>(null);
   const stickyActionRef = useRef<HTMLDivElement>(null);
@@ -1606,6 +1619,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   const [highlightPhotoKey, setHighlightPhotoKey] = useState<OperationalPhotoKey | null>(null);
   const [highlightDocuments, setHighlightDocuments] = useState(false);
   const [highlightDocumentType, setHighlightDocumentType] = useState<string | null>(null);
+  const [highlightIssue, setHighlightIssue] = useState(false);
   const [autoGuide, setAutoGuide] = useState<{ assignmentId: string; phase: DriverPhase; target: OperationalPhotoKey | 'documents' } | null>(null);
   const autoScrollRef = useRef<{ scroller: HTMLElement | Window; timer: number } | null>(null);
   const [scrollTopVisible, setScrollTopVisible] = useState(false);
@@ -1626,10 +1640,11 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   const closeHistoryDetail = useCallback(() => setSelectedHistoryId(null), []);
   const closeDrawer = useCallback(() => setActiveDrawer(null), []);
 
-  const scrollToRequirement = useCallback((targetKey: OperationalPhotoKey | 'documents', section = false, documentType?: string) => {
+  const scrollToRequirement = useCallback((targetKey: OperationalPhotoKey | 'documents' | 'issue', section = false, documentType?: string) => {
     const content = taskScrollRef.current;
     if (!content) return false;
-    const target = targetKey === 'documents' ? (documentType
+    const target = targetKey === 'issue' ? content.querySelector<HTMLElement>('#driver-resolved-issue')
+      : targetKey === 'documents' ? (documentType
       ? Array.from(content.querySelectorAll<HTMLElement>('[data-driver-doc-type]'))
         .find((row) => row.dataset.driverDocType === documentType) : null)
       ?? content.querySelector<HTMLElement>('#driver-required-documents')
@@ -1650,14 +1665,16 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
       if (autoScrollRef.current) window.clearTimeout(autoScrollRef.current.timer);
       autoScrollRef.current = { scroller, timer: window.setTimeout(() => { autoScrollRef.current = null; }, reducedMotion ? 0 : 900) };
     }
-    setHighlightPhotoKey(targetKey === 'documents' ? null : targetKey);
+    setHighlightPhotoKey(targetKey === 'documents' || targetKey === 'issue' ? null : targetKey);
     setHighlightDocuments(targetKey === 'documents');
     setHighlightDocumentType(targetKey === 'documents' ? documentType ?? null : null);
+    setHighlightIssue(targetKey === 'issue');
     if (photoHighlightTimer.current) window.clearTimeout(photoHighlightTimer.current);
     photoHighlightTimer.current = window.setTimeout(() => {
       setHighlightPhotoKey(null);
       setHighlightDocuments(false);
       setHighlightDocumentType(null);
+      setHighlightIssue(false);
     }, 1800);
     return true;
   }, []);
@@ -1677,6 +1694,8 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
     setHighlightPhotoKey(null);
     setHighlightDocuments(false);
     setHighlightDocumentType(null);
+    setHighlightIssue(false);
+    setFocusedIssueNotification(null);
   }, [driverId, data?.assignment?.id]);
 
   useEffect(() => {
@@ -1724,6 +1743,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   const openCompletedHistory = (item: CompletedHistoryItem) => {
     const index = data?.completedHistory?.findIndex(delivery => delivery.id === item.id) ?? -1;
     setCompletionNotice(null);
+    setFocusedIssueNotification(null);
     setHistoryTab('completed');
     setHistorySearch('');
     setHistoryPage(index >= 0 ? Math.floor(index / 8) + 1 : 1);
@@ -1757,6 +1777,20 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
     const timer = window.setTimeout(() => setFocusedDocType(null), 3000);
     return () => window.clearTimeout(timer);
   }, [focusedDocType, screen]);
+
+  useEffect(() => {
+    if (screen !== 'task' || (!focusedDocType && !focusedIssueNotification)) return;
+    const frame = window.requestAnimationFrame(() => {
+      const target = focusedDocType
+        ? Array.from(taskScrollRef.current?.querySelectorAll<HTMLElement>('[data-driver-doc-type]') ?? [])
+          .find((row) => row.dataset.driverDocType === focusedDocType)
+        : taskScrollRef.current?.querySelector<HTMLElement>('#driver-resolved-issue');
+      if (!target) return;
+      scrollToRequirement(focusedDocType ? 'documents' : 'issue', false, focusedDocType ?? undefined);
+      target.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [screen, focusedDocType, focusedIssueNotification?.id, data?.assignment?.id, scrollToRequirement]);
 
   /* Per-document "please retake, this looks blurry" message — keyed by doc
      type since more than one document row can exist at once. */
@@ -1811,6 +1845,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
           && json.assignment.taskStatus !== 'Failed / Issue') setIssueResolvedNotice(true);
       if (openIssue || previousIssue?.assignmentId !== assignmentId) setIssueResolvedNotice(false);
       issueSnapshot.current = { assignmentId, open: openIssue };
+      latestDriverData.current = json;
       setData(json); setOnline(true); setLastSync(new Date());
     } catch (err) {
       if (!sessionActiveRef.current || sequence !== fetchSequence.current) return;
@@ -1884,22 +1919,43 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
     }
   };
 
-  /* REQ10: optimistic — the row flips to read locally immediately, then the guarded
-     RPC persists it. A failure just leaves it unread again on the next poll. */
-  const markNotificationRead = async (id: string) => {
-    setData((prev) => prev ? {
-      ...prev, notifications: (prev.notifications ?? []).map((n) => n.id === id ? { ...n, read: true } : n),
-    } : prev);
-    try { await markDriverNotificationRead(id); }
-    catch (err) { console.error('[markDriverNotificationRead] error:', err); }
+  /* Only show a saved read state after the guarded RPC succeeds. Polling then
+     refreshes the server's read_at value without a local-only substitute. */
+  const markNotificationRead = async (id: string): Promise<boolean> => {
+    if (notificationReadInFlight.current.has(id)) return false;
+    notificationReadInFlight.current.add(id);
+    try {
+      await markDriverNotificationRead(id);
+      setData((prev) => prev ? {
+        ...prev, notifications: (prev.notifications ?? []).map((n) => n.id === id ? { ...n, read: true } : n),
+      } : prev);
+      void fetchData(true);
+      return true;
+    } catch (err) {
+      console.error('[markDriverNotificationRead] error:', err);
+      setNotificationError(t('notifications.readError'));
+      return false;
+    } finally {
+      notificationReadInFlight.current.delete(id);
+    }
   };
 
   const markAllNotificationsRead = async () => {
-    setData((prev) => prev ? {
-      ...prev, notifications: (prev.notifications ?? []).map((n) => ({ ...n, read: true })),
-    } : prev);
-    try { await markAllDriverNotificationsRead(); }
-    catch (err) { console.error('[markAllDriverNotificationsRead] error:', err); }
+    if (markAllPending) return;
+    setMarkAllPending(true);
+    setNotificationError('');
+    try {
+      await markAllDriverNotificationsRead();
+      setData((prev) => prev ? {
+        ...prev, notifications: (prev.notifications ?? []).map((n) => ({ ...n, read: true })),
+      } : prev);
+      await fetchData(true);
+    } catch (err) {
+      console.error('[markAllDriverNotificationsRead] error:', err);
+      setNotificationError(t('notifications.readError'));
+    } finally {
+      setMarkAllPending(false);
+    }
   };
 
   const notifyMilestone = async (assignment: Assignment, event: keyof typeof MILESTONE_NOTIFICATIONS) => {
@@ -2287,10 +2343,11 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
      persisted Driver notification records and have no read state. */
   const driverNotifs = useMemo((): DriverNotif[] => {
     const notifs: DriverNotif[] = [];
+    if (!a) return notifs;
     normalizedDocs.forEach((doc) => {
       if (doc.uploaded && doc.docStatus === 'rejected') {
         notifs.push({
-          id: `reject-${doc.type}`, type: 'rejection', docType: doc.type,
+          id: `reject-${a.id}-${doc.type}`, assignmentId: a.id, type: 'rejection', docType: doc.type,
           title: t('notifications.rejectedTitle', { document: documentText(doc.type) }),
           body: doc.rejectReason
             ? t('notifications.rejectedReason', { reason: doc.rejectReason })
@@ -2301,14 +2358,14 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
     normalizedDocs.forEach((doc) => {
       if (doc.uploaded && doc.docStatus === 'approved') {
         notifs.push({
-          id: `approve-${doc.type}`, type: 'approval', docType: doc.type,
+          id: `approve-${a.id}-${doc.type}`, assignmentId: a.id, type: 'approval', docType: doc.type,
           title: t('notifications.approvedTitle', { document: documentText(doc.type) }),
           body: t('notifications.approvedBody'),
         });
       }
     });
     return notifs;
-  }, [normalizedDocs, t, documentText]);
+  }, [a?.id, normalizedDocs, t, documentText]);
 
   const completedHistory = data?.completedHistory ?? [];
   const cancelledHistory = data?.cancelledHistory ?? [];
@@ -2331,10 +2388,54 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   const realNotifPages = Math.max(1, Math.ceil(realNotifs.length / 8));
   const shownRealNotifPage = Math.min(realNotifPage, realNotifPages);
   const realNotifRows = realNotifs.slice((shownRealNotifPage - 1) * 8, shownRealNotifPage * 8);
-  const openDocumentFromNotification = (docType: string) => {
+  const openDocumentFromNotification = (assignmentId: string, docType: string) => {
+    if (!canOpenDocumentReview(a?.id, assignmentId, docType, normalizedDocs)) {
+      setNotificationError(t('notifications.unavailable'));
+      setActionError(t('notifications.unavailable'));
+      return;
+    }
     setActiveDrawer(null);
+    setFocusedIssueNotification(null);
     setFocusedDocType(docType);
     setScreen('task');
+  };
+
+  const openStoredNotification = async (notification: DriverNotificationRecord) => {
+    setNotificationError('');
+    if (!notification.read && !await markNotificationRead(notification.id)) {
+      setActionError(t('notifications.readError'));
+    }
+    const current = latestDriverData.current ?? data;
+    const currentCompleted = current?.completedHistory ?? [];
+    const currentCancelled = current?.cancelledHistory ?? [];
+    const destination = driverNotificationDestination(notification.type, notification.assignmentId,
+      current?.assignment?.id, currentCompleted.map((item) => item.id), currentCancelled.map((item) => item.id));
+    if (destination === 'unavailable') {
+      setNotificationError(t('notifications.unavailable'));
+      return;
+    }
+    setFocusedDocType(null);
+    if (destination === 'task') {
+      setFocusedIssueNotification(notification.type === 'driver_issue_resolved' ? notification : null);
+      setActiveDrawer(null);
+      setScreen('task');
+    } else if (destination === 'completed') {
+      const item = currentCompleted.find((entry) => entry.id === notification.assignmentId);
+      if (!item) return;
+      openCompletedHistory(item);
+      setFocusedIssueNotification(notification.type === 'driver_issue_resolved' ? notification : null);
+      setSelectedHistoryId(item.id);
+    } else {
+      const index = currentCancelled.findIndex((item) => item.id === notification.assignmentId);
+      if (index < 0) return;
+      setHistoryTab('cancelled');
+      setHistorySearch('');
+      setHistoryPage(Math.floor(index / 8) + 1);
+      setSelectedCancelledId(notification.assignmentId);
+      setFocusedIssueNotification(notification.type === 'driver_issue_resolved' ? notification : null);
+      setActiveDrawer(null);
+      setScreen('history');
+    }
   };
 
   useEffect(() => { if (historyPage > historyPages) setHistoryPage(historyPages); }, [historyPage, historyPages]);
@@ -2452,34 +2553,34 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   );
 
   const DriverDrawers = activeDrawer === 'notifications' ? (
-    <DriverDrawer title={t('notifications.title')} onClose={closeDrawer}>
+    <DriverDrawer title={t('notifications.title')} onClose={closeDrawer} compact>
+      {notificationError && <p role="alert" className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{notificationError}</p>}
       {realNotifs.length > 0 ? (
         <section aria-label={t('notifications.title')}>
-          {unreadRealCount > 0 && (
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <p className="text-sm font-semibold text-gray-600">{t('notifications.unreadCount', { count: unreadRealCount })}</p>
-              <button type="button" onClick={() => { void markAllNotificationsRead(); }}
-                className="min-h-9 rounded-lg px-3 text-sm font-bold text-green-700 hover:bg-green-50 focus-visible:outline-2 focus-visible:outline-green-700">
-                {t('notifications.markAllRead')}
-              </button>
-            </div>
-          )}
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <p className="text-sm font-semibold text-gray-600">{t('notifications.unreadCount', { count: unreadRealCount })}</p>
+            <button type="button" onClick={() => { void markAllNotificationsRead(); }}
+              disabled={unreadRealCount === 0 || markAllPending}
+              className="min-h-9 rounded-lg px-3 text-sm font-bold text-green-700 hover:bg-green-50 focus-visible:outline-2 focus-visible:outline-green-700 disabled:text-gray-500 disabled:hover:bg-transparent">
+              {unreadRealCount ? t('notifications.markAllRead') : t('notifications.allRead')}
+            </button>
+          </div>
           <div className="grid min-w-0 grid-cols-1 gap-3">
             {realNotifRows.map((notification, index) => <RealNotificationRow key={notification.id} notification={notification} index={index}
-              onOpen={() => { if (!notification.read) void markNotificationRead(notification.id); }} />)}
+              onOpen={() => { void openStoredNotification(notification); }} />)}
           </div>
           <DriverPageControls page={shownRealNotifPage} pages={realNotifPages} onPage={setRealNotifPage} />
         </section>
-      ) : (
+      ) : driverNotifs.length === 0 ? (
         <div role="status" className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
           <p className="text-sm font-semibold text-gray-700">{t('notifications.empty')}</p>
         </div>
-      )}
+      ) : null}
       {driverNotifs.length > 0 && <section aria-label={t('notifications.documentReview')} className="mt-5">
         <h3 className="mb-3 text-sm font-bold text-gray-700">{t('notifications.documentReview')}</h3>
         <div className="grid min-w-0 grid-cols-1 gap-3">
           {notificationRows.map((notification, index) => <DriverNotificationRow key={notification.id} notification={notification} index={index}
-            onOpen={notification.type === 'rejection' ? () => openDocumentFromNotification(notification.docType) : undefined} />)}
+            onOpen={() => openDocumentFromNotification(notification.assignmentId, notification.docType)} />)}
         </div>
         <DriverPageControls page={shownNotificationPage} pages={notificationPages} onPage={setNotificationPage} />
       </section>}
@@ -2487,7 +2588,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   ) : activeDrawer === 'menu' ? (
     <DriverDrawer title={t('menu.title')} onClose={closeDrawer} compact>
       <div className="flex flex-col">
-        <button type="button" onClick={() => { setHistoryTab('completed'); setHistorySearch(''); setHistoryPage(1); setActiveDrawer(null); setScreen('history'); }}
+        <button type="button" onClick={() => { setFocusedIssueNotification(null); setHistoryTab('completed'); setHistorySearch(''); setHistoryPage(1); setActiveDrawer(null); setScreen('history'); }}
           className="w-full min-h-16 rounded-2xl border border-gray-200 bg-white px-4 py-3 text-left flex items-center gap-3 focus-visible:outline-2 focus-visible:outline-green-700">
           <History className="w-6 h-6 text-green-700 shrink-0" aria-hidden="true" />
           <span className="flex-1 font-bold text-foreground">{t('history.title')}</span>
@@ -2553,7 +2654,6 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
       {t('slide.statusSaved', { status: statusText(statusNotice) })}
     </div>
   );
-
   /* ════════════════════════════════════════════════════════════
      DASHBOARD SCREEN
   ════════════════════════════════════════════════════════════ */
@@ -2574,7 +2674,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2.5 mt-3">
-              <button type="button" onClick={() => { setNotificationPage(1); setRealNotifPage(1); setActiveDrawer('notifications'); }} aria-haspopup="dialog"
+              <button type="button" onClick={() => { setNotificationError(''); setNotificationPage(1); setRealNotifPage(1); setActiveDrawer('notifications'); }} aria-haspopup="dialog"
                 aria-label={unreadRealCount > 0 ? t('notifications.titleUnread', { count: unreadRealCount }) : t('notifications.title')}
                 className="min-w-0 min-h-12 px-2 rounded-xl border border-gray-200 bg-white text-gray-700 text-sm sm:text-base font-semibold flex items-center justify-center gap-3 focus-visible:outline-2 focus-visible:outline-green-700">
                 <span className="relative shrink-0" aria-hidden="true">
@@ -2597,7 +2697,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
         <div className="flex-1 overflow-y-auto w-full max-w-2xl mx-auto px-4 py-5 space-y-5 pb-10">
 
           {rejectedNotifs.length > 0 && displayStatus !== 'Needs Correction' && (
-            <button type="button" onClick={() => openDocumentFromNotification(rejectedNotifs[0].docType)}
+            <button type="button" onClick={() => openDocumentFromNotification(rejectedNotifs[0].assignmentId, rejectedNotifs[0].docType)}
               className="w-full rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-left flex items-center gap-3 focus-visible:outline-2 focus-visible:outline-red-600">
               <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" aria-hidden="true" />
               <span className="flex-1 min-w-0">
@@ -2773,8 +2873,8 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
         </div>}
         </div>
       </main>
-      {selectedHistoryId && <HistoryDetailsSheet key={selectedHistoryId} driverId={driverId} driverName={driverName} assignmentId={selectedHistoryId} onClose={closeHistoryDetail} onCheckSession={onCheckSession} />}
-      {selectedCancelledHistory && <CancelledHistoryDetails item={selectedCancelledHistory} onClose={() => setSelectedCancelledId(null)} />}
+      {selectedHistoryId && <HistoryDetailsSheet key={selectedHistoryId} driverId={driverId} driverName={driverName} assignmentId={selectedHistoryId} onClose={closeHistoryDetail} onCheckSession={onCheckSession} issueNotification={focusedIssueNotification} />}
+      {selectedCancelledHistory && <CancelledHistoryDetails item={selectedCancelledHistory} onClose={() => setSelectedCancelledId(null)} issueNotification={focusedIssueNotification} />}
       {LanguageNotice}
       {StatusNotice}
       {CompletionPopup}
@@ -2918,6 +3018,14 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
                     <p className="text-xs font-semibold text-red-700">{t('task.waitingStaff')}</p>
                   </div>
                 </div>
+              </div>
+            )}
+            {focusedIssueNotification?.assignmentId === a.id && (
+              <div id="driver-resolved-issue" tabIndex={-1} role="status"
+                className={`rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-900 outline outline-2 outline-offset-2 motion-reduce:transition-none ${highlightIssue ? 'outline-green-600' : 'outline-transparent'}`}>
+                <p className="font-bold">{t('notifications.issueResolved')}</p>
+                <p className="mt-1 break-words">{focusedIssueNotification.message}</p>
+                {focusedIssueNotification.reason && <p className="mt-1 break-words">{t('notifications.resolutionNote', { reason: focusedIssueNotification.reason })}</p>}
               </div>
             )}
             {issueResolvedNotice && !issueOpen && !isTerminal && (

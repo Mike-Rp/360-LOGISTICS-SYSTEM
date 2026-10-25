@@ -1097,7 +1097,7 @@ export async function completeCsrPasswordReset(token: string, newPassword: strin
 
 export interface DriverNotificationRecord {
   id: string; type: string; message: string; assignmentId: string;
-  read: boolean; createdAt: string; readAt: string | null;
+  read: boolean; createdAt: string; readAt: string | null; reason?: string | null;
 }
 
 export interface DriverViewData {
@@ -1127,6 +1127,7 @@ export async function loadDriverData(driverId: string): Promise<DriverViewData> 
   const notifications: DriverNotificationRecord[] = (notif.data ?? []).map((r) => ({
     id: r.id, type: r.type, message: r.message ?? '', assignmentId: r.assignment_id,
     read: !!r.read, createdAt: r.created_at, readAt: r.read_at ?? null,
+    reason: r.reason ?? null,
   }));
 
   const rows = asn.data ?? [];
