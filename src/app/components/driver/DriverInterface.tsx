@@ -28,6 +28,7 @@ import { completedPhotoGroup, getNextRequiredAction, getNextRequiredDocument, ge
 import { galleryPhotoMetadata, gpsAccuracyLevel, isCurrentPhotoLocationRequest, isPhotoLocationStale, savedPhotoMetadata } from './driverPhotoEvidence';
 import UploadedFilePreviewModal from '../admin/UploadedFilePreviewModal';
 import TestSoundButton, { type TestSoundState } from './TestSoundButton';
+import { formatDriverHomeDate, manilaDateKey, msUntilNextManilaDay } from './driverHomeDate';
 import { LimitedTextCounter, STANDARD_REMARK_LIMIT, withinTextLimit } from '../ui/LimitedTextCounter';
 
 /* ── Types ── */
@@ -211,25 +212,33 @@ function isBlurryImage(dataUrl: string, threshold = 45): Promise<boolean> {
   });
 }
 
-function DriverHomeClock() {
+function DriverHomeDate() {
   const { language } = useDriverI18n();
   const [now, setNow] = useState(() => new Date());
 
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(new Date()), 30_000);
-    return () => window.clearInterval(timer);
+    let timer: number;
+    const refreshDate = () => {
+      const current = new Date();
+      setNow(current);
+      window.clearTimeout(timer);
+      timer = window.setTimeout(refreshDate, msUntilNextManilaDay(current));
+    };
+    const refreshOnReturn = () => {
+      if (document.visibilityState === 'visible') refreshDate();
+    };
+    refreshDate();
+    document.addEventListener('visibilitychange', refreshOnReturn);
+    window.addEventListener('pageshow', refreshOnReturn);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', refreshOnReturn);
+      window.removeEventListener('pageshow', refreshOnReturn);
+    };
   }, []);
 
-  const parts = new Intl.DateTimeFormat(language === 'fil' ? 'fil-PH' : 'en-US', {
-    weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
-    hour: 'numeric', minute: '2-digit', hour12: true,
-  }).formatToParts(now);
-  const part = (type: string) => parts.find((item) => item.type === type)?.value ?? '';
-  const date = `${part('weekday')}, ${part('month')} ${part('day')}, ${part('year')}`;
-  const time = `${part('hour')}:${part('minute')} ${part('dayPeriod')}`;
-
-  return <time dateTime={now.toISOString()} className="block mt-1 text-xs sm:text-sm leading-snug text-gray-500">
-    <span>{date}</span><span className="whitespace-nowrap">{' • '}{time}</span>
+  return <time dateTime={manilaDateKey(now)} className="mt-1 block text-sm font-medium leading-snug text-gray-500">
+    {formatDriverHomeDate(now, language)}
   </time>;
 }
 
@@ -2730,7 +2739,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
             <div className="flex items-start justify-between gap-3 sm:gap-6">
               <div className="min-w-0 flex-1">
                 <p className="text-sm sm:text-base text-green-700 font-extrabold uppercase tracking-wide leading-tight">360 Logistics</p>
-                <DriverHomeClock />
+                <DriverHomeDate />
               </div>
               <div className="min-w-0 flex-1 text-right">
                 <p className="text-base sm:text-lg font-bold text-foreground leading-tight break-words [overflow-wrap:anywhere]">{driverName}</p>
