@@ -22,6 +22,7 @@ import { MILESTONE_NOTIFICATIONS } from '../../lib/notificationEvents';
 import { BLOCKING_ISSUE_REASONS, hasOpenBlockingIssue } from '../../lib/issueWorkflow';
 import { newNotificationIds, notificationSoundEnabled, playNotificationSound, setNotificationSoundEnabled } from '../../lib/notificationSound';
 import { observeDriverCompletion, type DriverCompletionSnapshot } from './driverCompletion';
+import type { CancelledHistoryItem } from '../../lib/driverHistory';
 import { completedPhotoGroup, getNextRequiredAction, getNextRequiredDocument, getNextRequiredPhoto, getRequiredPhotoProgress } from './driverPhotoGuidance';
 import { galleryPhotoMetadata, gpsAccuracyLevel, isCurrentPhotoLocationRequest, isPhotoLocationStale, savedPhotoMetadata } from './driverPhotoEvidence';
 import UploadedFilePreviewModal from '../admin/UploadedFilePreviewModal';
@@ -35,6 +36,7 @@ interface DriverData {
   driver: { id: string; name: string; phone: string; status: string; currentLocation: string };
   assignment: Assignment | null;
   completedHistory?: CompletedHistoryItem[];
+  cancelledHistory?: CancelledHistoryItem[];
   cancelledNotice?: { id: string; reason: string | null; cancelledAt: string } | null;
   notifications?: DriverNotificationRecord[];
 }
@@ -1125,6 +1127,57 @@ function PastDeliveryRow({ item, onOpen, highlighted = false }: { item: Complete
   );
 }
 
+function CancelledDeliveryRow({ item, onOpen }: { item: CancelledHistoryItem; onOpen: () => void }) {
+  const { t } = useDriverI18n();
+  return (
+    <article className="min-w-0 rounded-2xl border border-gray-200 bg-white px-4 py-3">
+      <div className="flex min-w-0 items-start justify-between gap-3">
+        <p className="min-w-0 break-all text-base font-bold text-foreground">{item.id}</p>
+        <span className={`shrink-0 rounded-full border px-2.5 py-1 text-sm font-medium ${statusColors.Cancelled.badge}`}>{t('history.cancelled')}</span>
+      </div>
+      <p className="mt-1 break-words text-sm text-gray-600">{t('history.truck')}: {item.truckPlate || t('common.notAvailable')}</p>
+      <p className="mt-1 text-sm text-gray-500">{item.cancelledAt
+        ? t('history.cancelledAtShort', { date: manilaStamp(item.cancelledAt) })
+        : t('history.cancelledAtUnavailable')}</p>
+      {item.cancelReason?.trim() && <p className="mt-2 line-clamp-2 break-words text-sm text-gray-700">{item.cancelReason}</p>}
+      <button type="button" onClick={onOpen}
+        className="mt-2 inline-flex min-h-10 items-center gap-1 rounded-xl border border-gray-200 px-3 text-sm font-semibold text-foreground hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-green-700">
+        {t('history.viewDetails')} <ChevronRight className="h-4 w-4" aria-hidden="true" />
+      </button>
+    </article>
+  );
+}
+
+function CancelledDetailField({ label, value }: { label: string; value?: string | null }) {
+  if (!value?.trim()) return null;
+  return <div className="border-b border-gray-100 py-3 last:border-0">
+    <p className="text-sm font-medium text-gray-500">{label}</p>
+    <p className="mt-0.5 whitespace-pre-wrap break-words text-base text-foreground">{value}</p>
+  </div>;
+}
+
+function CancelledHistoryDetails({ item, onClose }: { item: CancelledHistoryItem; onClose: () => void }) {
+  const { t } = useDriverI18n();
+  return <DriverDrawer title={t('history.cancelledDetails')} onClose={onClose} compact>
+    <div className="min-w-0">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="break-all text-lg font-bold text-foreground">{item.id}</p>
+        <span className={`rounded-full border px-2.5 py-1 text-sm font-medium ${statusColors.Cancelled.badge}`}>{t('history.cancelled')}</span>
+      </div>
+      <div className="mt-3">
+        <CancelledDetailField label={t('history.truck')} value={item.truckPlate || t('common.notAvailable')} />
+        <CancelledDetailField label={t('history.driver')} value={item.driverName} />
+        <CancelledDetailField label={t('history.customer')} value={item.company} />
+        <CancelledDetailField label={t('history.pickupLocation')} value={item.pickupLocation} />
+        <CancelledDetailField label={t('history.deliveryLocation')} value={item.deliveryLocation} />
+        <CancelledDetailField label={t('history.deliveryDate')} value={manilaDate(item.deliveryDate, t('common.notAvailable'))} />
+        <CancelledDetailField label={t('history.cancelledAt')} value={manilaStamp(item.cancelledAt ?? undefined, t('common.notAvailable'))} />
+        <CancelledDetailField label={t('history.cancellationReason')} value={item.cancelReason?.trim() || t('common.notAvailable')} />
+      </div>
+    </div>
+  </DriverDrawer>;
+}
+
 function DeliveryCompleteDialog({ item, onClose, onViewHistory }: {
   item: CompletedHistoryItem; onClose: () => void; onViewHistory: () => void;
 }) {
@@ -1532,6 +1585,8 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   const [issueSheet,   setIssueSheet]   = useState(false);
   const [logoutDlg,    setLogoutDlg]    = useState(false);
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
+  const [selectedCancelledId, setSelectedCancelledId] = useState<string | null>(null);
+  const [historyTab, setHistoryTab] = useState<'completed' | 'cancelled'>('completed');
   const [historySearch, setHistorySearch] = useState('');
   const [historyPage, setHistoryPage] = useState(1);
   const [historyHighlightId, setHistoryHighlightId] = useState<string | null>(null);
@@ -1656,7 +1711,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   }, [screen, data?.assignment?.id, data?.assignment?.taskStatus, data?.assignment?.operationalStage, data?.assignment?.documents]);
 
   useEffect(() => {
-    if (screen !== 'history' || !historyHighlightId) return;
+    if (screen !== 'history' || historyTab !== 'completed' || !historyHighlightId) return;
     const frame = window.requestAnimationFrame(() => {
       const row = document.querySelector<HTMLElement>('[data-history-target="true"]');
       row?.scrollIntoView({ block: 'center' });
@@ -1664,11 +1719,12 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
     });
     const timer = window.setTimeout(() => setHistoryHighlightId(null), 2500);
     return () => { window.cancelAnimationFrame(frame); window.clearTimeout(timer); };
-  }, [screen, historyHighlightId, historyPage]);
+  }, [screen, historyTab, historyHighlightId, historyPage]);
 
   const openCompletedHistory = (item: CompletedHistoryItem) => {
     const index = data?.completedHistory?.findIndex(delivery => delivery.id === item.id) ?? -1;
     setCompletionNotice(null);
+    setHistoryTab('completed');
     setHistorySearch('');
     setHistoryPage(index >= 0 ? Math.floor(index / 8) + 1 : 1);
     setHistoryHighlightId(item.id);
@@ -2255,11 +2311,17 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   }, [normalizedDocs, t, documentText]);
 
   const completedHistory = data?.completedHistory ?? [];
-  const filteredHistory = completedHistory.filter((item) =>
+  const cancelledHistory = data?.cancelledHistory ?? [];
+  const selectedCancelledHistory = cancelledHistory.find((item) => item.id === selectedCancelledId);
+  const filteredCompletedHistory = completedHistory.filter((item) =>
     `${item.truckPlate} ${item.company}`.toLowerCase().includes(historySearch.trim().toLowerCase()));
+  const filteredCancelledHistory = cancelledHistory.filter((item) =>
+    `${item.id} ${item.truckPlate} ${item.company} ${item.cancelReason ?? ''}`.toLowerCase().includes(historySearch.trim().toLowerCase()));
+  const filteredHistory = historyTab === 'completed' ? filteredCompletedHistory : filteredCancelledHistory;
   const historyPages = Math.max(1, Math.ceil(filteredHistory.length / 8));
   const shownHistoryPage = Math.min(historyPage, historyPages);
-  const historyRows = filteredHistory.slice((shownHistoryPage - 1) * 8, shownHistoryPage * 8);
+  const completedRows = filteredCompletedHistory.slice((shownHistoryPage - 1) * 8, shownHistoryPage * 8);
+  const cancelledRows = filteredCancelledHistory.slice((shownHistoryPage - 1) * 8, shownHistoryPage * 8);
   const notificationPages = Math.max(1, Math.ceil(driverNotifs.length / 8));
   const shownNotificationPage = Math.min(notificationPage, notificationPages);
   const notificationRows = driverNotifs.slice((shownNotificationPage - 1) * 8, shownNotificationPage * 8);
@@ -2425,7 +2487,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   ) : activeDrawer === 'menu' ? (
     <DriverDrawer title={t('menu.title')} onClose={closeDrawer} compact>
       <div className="flex flex-col">
-        <button type="button" onClick={() => { setHistorySearch(''); setHistoryPage(1); setActiveDrawer(null); setScreen('history'); }}
+        <button type="button" onClick={() => { setHistoryTab('completed'); setHistorySearch(''); setHistoryPage(1); setActiveDrawer(null); setScreen('history'); }}
           className="w-full min-h-16 rounded-2xl border border-gray-200 bg-white px-4 py-3 text-left flex items-center gap-3 focus-visible:outline-2 focus-visible:outline-green-700">
           <History className="w-6 h-6 text-green-700 shrink-0" aria-hidden="true" />
           <span className="flex-1 font-bold text-foreground">{t('history.title')}</span>
@@ -2682,20 +2744,37 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
       </header>
       <main className="min-w-0 max-w-2xl mx-auto px-4 py-5">
         <p className="text-sm text-gray-500 mb-4">{t('history.subtitle')}</p>
-        <label htmlFor="driver-history-search" className="sr-only">{t('history.searchLabel')}</label>
+        <div role="tablist" aria-label={t('history.title')} className="mb-4 grid grid-cols-2 gap-1 rounded-xl border border-gray-200 bg-gray-100 p-1">
+          {(['completed', 'cancelled'] as const).map((tab) => <button key={tab} type="button" role="tab"
+            id={`history-tab-${tab}`} aria-controls="history-tab-panel" aria-selected={historyTab === tab}
+            onClick={() => { setHistoryTab(tab); setHistorySearch(''); setHistoryPage(1); setSelectedHistoryId(null); setSelectedCancelledId(null); }}
+            className={`min-h-11 rounded-lg px-3 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-green-700 ${historyTab === tab ? 'bg-white text-green-700 shadow-sm' : 'text-gray-600 hover:text-foreground'}`}>
+            {t(tab === 'completed' ? 'history.completed' : 'history.cancelled')}
+          </button>)}
+        </div>
+        <div id="history-tab-panel" role="tabpanel" aria-labelledby={`history-tab-${historyTab}`}>
+        <label htmlFor="driver-history-search" className="sr-only">{t(historyTab === 'completed' ? 'history.searchLabel' : 'history.searchCancelledLabel')}</label>
         <input id="driver-history-search" type="search" value={historySearch}
           onChange={(event) => { setHistorySearch(event.target.value); setHistoryPage(1); }}
-          placeholder={t('history.searchPlaceholder')} className="w-full min-w-0 h-12 px-4 rounded-xl border border-gray-200 bg-white text-base mb-4" />
+          placeholder={t(historyTab === 'completed' ? 'history.searchPlaceholder' : 'history.searchCancelledPlaceholder')}
+          className="w-full min-w-0 h-12 px-4 rounded-xl border border-gray-200 bg-white text-base mb-4" />
         {filteredHistory.length ? <>
           <div className="grid gap-2">
-            {historyRows.map((item) => <PastDeliveryRow key={item.id} item={item}
-              highlighted={historyHighlightId === item.id} onOpen={() => setSelectedHistoryId(item.id)} />)}
-            {Array.from({ length: 8 - historyRows.length }, (_, index) => <div key={`empty-${index}`} aria-hidden="true" className="invisible min-h-20 rounded-2xl border px-4 py-3" />)}
+            {historyTab === 'completed'
+              ? completedRows.map((item) => <PastDeliveryRow key={item.id} item={item}
+                  highlighted={historyHighlightId === item.id} onOpen={() => setSelectedHistoryId(item.id)} />)
+              : cancelledRows.map((item) => <CancelledDeliveryRow key={item.id} item={item} onOpen={() => setSelectedCancelledId(item.id)} />)}
+            {historyTab === 'completed' && Array.from({ length: 8 - completedRows.length }, (_, index) => <div key={`empty-${index}`} aria-hidden="true" className="invisible min-h-20 rounded-2xl border px-4 py-3" />)}
           </div>
           <DriverPageControls page={shownHistoryPage} pages={historyPages} onPage={setHistoryPage} />
-        </> : <div className="bg-white rounded-2xl border border-gray-200 px-5 py-7 text-center text-gray-500">{historySearch ? t('history.noMatches') : t('history.empty')}</div>}
+        </> : <div className="rounded-2xl border border-gray-200 bg-white px-5 py-7 text-center text-sm text-gray-500">
+          <p className="font-semibold text-foreground">{historySearch ? t('history.noMatches') : t(historyTab === 'completed' ? 'history.emptyCompleted' : 'history.emptyCancelled')}</p>
+          {!historySearch && <p className="mt-1">{t(historyTab === 'completed' ? 'history.emptyCompletedDescription' : 'history.emptyCancelledDescription')}</p>}
+        </div>}
+        </div>
       </main>
       {selectedHistoryId && <HistoryDetailsSheet key={selectedHistoryId} driverId={driverId} driverName={driverName} assignmentId={selectedHistoryId} onClose={closeHistoryDetail} onCheckSession={onCheckSession} />}
+      {selectedCancelledHistory && <CancelledHistoryDetails item={selectedCancelledHistory} onClose={() => setSelectedCancelledId(null)} />}
       {LanguageNotice}
       {StatusNotice}
       {CompletionPopup}

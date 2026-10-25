@@ -20,6 +20,7 @@ import { DOCUMENT_TYPES } from '../data/assignmentTypes';
 import { destinationAreaEnabled } from '../data/assignmentRoute';
 import { locationFieldsFromRow, locationColumnsForRow, invalidLocationEdit } from './assignmentLocation';
 import { storagePathOf, storedFileRef, sameStoredFile } from './storageRefs';
+import { cancelledHistoryForDriver, type CancelledHistoryItem } from './driverHistory';
 import type {
   Assignment, AssignmentDoc, CompletedTask, LocalDriver, LocalTruck, AppNotification,
   AdminActivityEntry, AdminRole, StatusPhoto, DelayReport, TeamMember,
@@ -1103,6 +1104,7 @@ export interface DriverViewData {
   driver: { id: string; name: string; phone: string; status: string; currentLocation: string };
   assignment: Assignment | null;
   completedHistory: Array<{ id: string; destination: string; destinationArea?: string | null; company: string; deliveryDate: string; completedAt: string; truckPlate: string; taskStatus: string }>;
+  cancelledHistory: CancelledHistoryItem[];
   /** Most recent cancelled assignment the driver hasn't dismissed yet, or null. */
   cancelledNotice: { id: string; reason: string | null; cancelledAt: string } | null;
   /** REQ10: persisted, newest-first. */
@@ -1156,6 +1158,8 @@ export async function loadDriverData(driverId: string): Promise<DriverViewData> 
       completedAt: r.completed_at ?? '', truckPlate: r.truck_plate, taskStatus: r.task_status,
     }));
 
+  const cancelledHistory = cancelledHistoryForDriver(rows, driverId);
+
   const unacknowledgedCancellation = rows.filter((r) => r.state === 'cancelled' && !r.cancel_acknowledged_at)
     .sort((a, b) => (b.cancelled_at ?? '').localeCompare(a.cancelled_at ?? ''))[0];
   const cancelledNotice = unacknowledgedCancellation
@@ -1164,7 +1168,7 @@ export async function loadDriverData(driverId: string): Promise<DriverViewData> 
 
   return {
     driver: { id: drv.data.id, name: drv.data.name, phone: drv.data.phone, status: drv.data.status, currentLocation: drv.data.current_location ?? '—' },
-    assignment, completedHistory, cancelledNotice, notifications,
+    assignment, completedHistory, cancelledHistory, cancelledNotice, notifications,
   };
 }
 
