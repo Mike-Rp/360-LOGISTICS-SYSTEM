@@ -51,6 +51,7 @@ and their SQL test files passed (each test rolls itself back).
 | REQ-012 Per-account profile persistence | `20261022000000` | — | Implemented |
 | REQ-013 Completion/cancellation timestamps | `20261022000001` | — | Implemented |
 | REQ-014 Driver notifications (dispatch/cancel/issue resolved) | `20261025000003` | — | Implemented |
+| REQ-015 Server-side duplicate operational photo detection | `20261025000004`, `000005` + Edge Function | `logic.test.cjs` 8/8 | Implemented |
 | REQ-008 Recoverable delivery issues | `20261023000000`–`20261023000002` | — | Implemented |
 | REQ-007 Report ID + QR verification | `20261023000008`, `000009` | — | Implemented |
 
@@ -510,6 +511,94 @@ read persistence after refresh; denial of another Driver's read/update;
 staff feed separation; concurrent duplicate read calls; and old/replaced
 session denial. Frontend functional tests remain blocked until these reads,
 writes, and persisted event rows exist.
+
+---
+
+## [REQ-015] Server-Side Duplicate Operational Photo Detection
+
+**Status:** Implemented and verified live (2026-10-25)
+
+**Area:** Driver App — operational evidence photos (pickup/loading/pretrip/unloading)
+
+**Requested change (adviser-driven):** A driver should not be able to reuse
+the same "stock" photo of their truck as evidence across different
+deliveries/reports — e.g. submitting an old undamaged-truck photo when the
+truck actually has a new, real problem, masking it from review.
+
+**Why backend/database support is required:** The check has to be genuinely
+server-side. If the hash were computed in the browser and only checked before
+a normal client write, a tampered client could still pass the check with a
+real photo, then write a different/fake hash straight to the row afterward —
+defeating the check for every future comparison. A trustworthy check means
+the same trusted step that computes the hash also has to be the one that
+saves the photo.
+
+**Implemented:**
+- New Edge Function `supabase/functions/upload-operational-photo` (service
+  role) is now the only path that can write an OPERATIONAL-category
+  `status_photos` row (pickup/pretrip/loading/unloading — 12 keys). It:
+  verifies the caller is a real signed-in driver who owns the assignment
+  (via a client scoped to the caller's own JWT, governed by the existing
+  `assignments_select` RLS — never the service role for this check); computes
+  SHA-256 of the photo bytes it actually receives (never trusting anything
+  the client claims about its own photo); rejects an exact repeat of any
+  operational photo ever saved by **any** driver; and only if it's new,
+  uploads to Storage and saves the `status_photos` row itself, hash included,
+  in one step. Pure decision logic lives in `logic.ts` (unit tested,
+  `logic.test.cjs`, 8/8 passing); `index.ts` wires it to Supabase.
+- `supabase/migrations/20261025000004_operational_photo_duplicate_guard.sql`
+  — adds `status_photos.file_hash` (+ index), and tightens `photos_insert`/
+  `photos_update` RLS so a driver's own browser can no longer write one of
+  the 12 operational categories directly — only the Edge Function can. The
+  **legacy milestone photos** (the older one-photo-per-`Picked Up`/
+  `In Transit`/`Delivered` mechanism, a separate code path) and staff
+  (`can_write()`) are completely untouched; this is scoped to operational
+  evidence photos only, per the actual scenario described.
+- `supabase/migrations/20261025000005_grant_service_role_status_photos.sql`
+  — fix applied after the first live test failed with "permission denied for
+  table status_photos": every other Edge Function in this project only ever
+  touches the database through RPCs (each with its own
+  `grant execute ... to service_role`), so this project had never needed a
+  direct table GRANT for `service_role` before. Granted
+  `select, insert, update on status_photos to service_role`.
+- Deployed via `npx supabase functions deploy upload-operational-photo`, with
+  a new `PHOTO_UPLOAD_ALLOWED_ORIGINS` secret (same origins as
+  `RESET_ALLOWED_ORIGINS`) for CORS.
+
+**Deliberate scope limits:**
+- Detection is **exact-content hashing only** (SHA-256 of the file bytes),
+  not visual/perceptual similarity — this matches the actual scenario
+  described (reusing the same stock file), not a driver taking a genuinely
+  new photo that happens to look similar.
+- Hashing/blocking applies to **operational evidence photos only**, not the
+  6 formal documents (`assignment_documents`) and not legacy milestone
+  photos — scoped to what was actually asked for.
+- Scope is **across all drivers** (a shared stock photo passed around would
+  still be caught), per explicit decision.
+- On a match, the upload is **blocked outright** (not just flagged for
+  review), per explicit decision.
+
+**Frontend:** `db.ts` gained `uploadOperationalPhoto()` (calls the Edge
+Function via `supabase.functions.invoke`, re-signs the returned path for
+immediate display, same tail as the existing `uploadImage()`) and a
+`DuplicatePhotoError` class. `DriverInterface.tsx`'s
+`handleOperationalPhotoConfirmed` now calls this instead of
+`uploadImage()` + `driverUpdate()` directly; `PhotoSheet`'s `confirmPhoto()`
+shows a dedicated message (`photo.duplicateError`, English + Filipino) when
+that specific error comes back, instead of the generic save-failed message.
+
+**Verified live (2026-10-25):** uploaded a genuine first-time photo for
+`ASN82575`'s `pickup_front` — saved normally, confirmed via SQL with a real
+`file_hash`. Re-selected that exact same gallery image for `pickup_left` —
+rejected with "This looks like a photo you've used before. Please take a new
+one.", confirmed via SQL that **no row was created** for the rejected
+attempt. Took a genuinely different photo for `pickup_left` afterward —
+saved normally, confirming the check only blocks true duplicates.
+
+**Migration required:** Yes — both applied and verified against the shared
+project, plus one Edge Function deployed.
+
+**Approval:** Approved — local development (2026-10-25).
 
 ---
 
