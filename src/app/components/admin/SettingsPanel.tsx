@@ -12,6 +12,7 @@ import { playNotificationSound } from '../../lib/notificationSound';
 import { useModalFocus } from './useModalFocus';
 import type { StaffSession } from '../../lib/db';
 import AccountRoleBadge from './AccountRoleBadge';
+import { passwordUpdateError, validatePasswordForm, type PasswordFormError } from '../../lib/passwordFormError';
 
 /* Mirrors update_own_display_name()'s server-side rule exactly. */
 const NAME_PATTERN = /^[A-Za-z][A-Za-z\s'.-]*$/;
@@ -61,7 +62,7 @@ export default function SettingsPanel({ open, onClose, profile, avatarUrl, onPro
   const [showCur,     setShowCur]     = useState(false);
   const [showNew,     setShowNew]     = useState(false);
   const [showConf,    setShowConf]    = useState(false);
-  const [passError,   setPassError]   = useState('');
+  const [passError,   setPassError]   = useState<PasswordFormError | null>(null);
   const [passSaved,   setPassSaved]   = useState(false);
   const [passBusy,    setPassBusy]    = useState(false);
 
@@ -163,11 +164,11 @@ export default function SettingsPanel({ open, onClose, profile, avatarUrl, onPro
   }, [open]);
 
   const handleSavePassword = async () => {
-    setPassError('');
     if (passBusy) return;
-    if (!curPass) { setPassError('Enter your current password.'); return; }
-    if (newPass.length < 8) { setPassError('New password must be at least 8 characters.'); return; }
-    if (newPass !== confPass) { setPassError('New passwords do not match.'); return; }
+    setPassError(null);
+    setPassSaved(false);
+    const validationError = validatePasswordForm(curPass, newPass, confPass);
+    if (validationError) { setPassError(validationError); return; }
 
     /* Real change: the account is a Supabase Auth login, so this updates the actual password
        (the old one stops working at the login screen straight away). */
@@ -175,18 +176,13 @@ export default function SettingsPanel({ open, onClose, profile, avatarUrl, onPro
     try {
       await changeOwnPassword(curPass, newPass);
       setCurPass(''); setNewPass(''); setConfPass('');
+      setPassError(null);
       setPassSaved(true);
       setTimeout(() => setPassSaved(false), 3000);
     } catch (e) {
       console.error('[changeOwnPassword] error:', e);
       const code = e instanceof PasswordError ? e.code : 'network';
-      setPassError(
-        code === 'wrong_current'  ? 'Your current password is incorrect.' :
-        code === 'same_password'  ? 'The new password must be different from your current one.' :
-        code === 'weak_password'  ? 'That password is too weak. Try a longer or less common one.' :
-        code === 'not_signed_in'  ? 'Your session has expired. Please sign in again.' :
-                                    'Could not update the password. Check your connection and try again.'
-      );
+      setPassError(passwordUpdateError(code));
     } finally {
       setPassBusy(false);
     }
@@ -321,15 +317,18 @@ export default function SettingsPanel({ open, onClose, profile, avatarUrl, onPro
                     id="settings-current-password"
                     type={showCur ? 'text' : 'password'}
                     value={curPass}
-                    onChange={(e) => { setCurPass(e.target.value); setPassError(''); }}
+                    onChange={(e) => { setCurPass(e.target.value); setPassError((error) => error?.field === 'current' ? null : error); }}
                     placeholder="Enter current password"
-                    className={`${inputCls(!!passError && !curPass)} pr-12`}
+                    aria-invalid={passError?.field === 'current' || undefined}
+                    aria-describedby={passError?.field === 'current' ? 'settings-current-password-error' : undefined}
+                    className={`${inputCls(passError?.field === 'current')} pr-12`}
                   />
                   <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => setShowCur((v) => !v)} aria-label={showCur ? 'Hide password' : 'Show password'}
                     className="absolute right-1 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary">
                     {showCur ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
+                {passError?.field === 'current' && <p id="settings-current-password-error" role="alert" className="text-sm text-red-600">{passError.message}</p>}
               </Field>
               <Field label="New Password" htmlFor="settings-new-password">
                 <div className="relative">
@@ -337,15 +336,18 @@ export default function SettingsPanel({ open, onClose, profile, avatarUrl, onPro
                     id="settings-new-password"
                     type={showNew ? 'text' : 'password'}
                     value={newPass}
-                    onChange={(e) => { setNewPass(e.target.value); setPassError(''); }}
+                    onChange={(e) => { setNewPass(e.target.value); setPassError((error) => error?.field === 'new' ? null : error); }}
                     placeholder="Enter new password"
-                    className={`${inputCls(!!passError)} pr-12`}
+                    aria-invalid={passError?.field === 'new' || undefined}
+                    aria-describedby={passError?.field === 'new' ? 'settings-new-password-error' : undefined}
+                    className={`${inputCls(passError?.field === 'new')} pr-12`}
                   />
                   <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => setShowNew((v) => !v)} aria-label={showNew ? 'Hide password' : 'Show password'}
                     className="absolute right-1 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary">
                     {showNew ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
+                {passError?.field === 'new' && <p id="settings-new-password-error" role="alert" className="text-sm text-red-600">{passError.message}</p>}
               </Field>
               <Field label="Confirm New Password" htmlFor="settings-confirm-password">
                 <div className="relative">
@@ -353,17 +355,20 @@ export default function SettingsPanel({ open, onClose, profile, avatarUrl, onPro
                     id="settings-confirm-password"
                     type={showConf ? 'text' : 'password'}
                     value={confPass}
-                    onChange={(e) => { setConfPass(e.target.value); setPassError(''); }}
+                    onChange={(e) => { setConfPass(e.target.value); setPassError((error) => error?.field === 'confirm' ? null : error); }}
                     placeholder="Confirm new password"
-                    className={`${inputCls(!!passError && confPass !== newPass)} pr-12`}
+                    aria-invalid={passError?.field === 'confirm' || undefined}
+                    aria-describedby={passError?.field === 'confirm' ? 'settings-confirm-password-error' : undefined}
+                    className={`${inputCls(passError?.field === 'confirm')} pr-12`}
                   />
                   <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => setShowConf((v) => !v)} aria-label={showConf ? 'Hide password' : 'Show password'}
                     className="absolute right-1 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary">
                     {showConf ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
+                {passError?.field === 'confirm' && <p id="settings-confirm-password-error" role="alert" className="text-sm text-red-600">{passError.message}</p>}
               </Field>
-              {passError && <p className="text-xs text-red-500">{passError}</p>}
+              {passError?.field === 'general' && <p role="alert" className="text-sm text-red-600">{passError.message}</p>}
               {passSaved && (
                 <p className="flex items-center gap-1 text-xs text-green-600">
                   <CheckCircle2 className="w-3.5 h-3.5" /> Password updated successfully
