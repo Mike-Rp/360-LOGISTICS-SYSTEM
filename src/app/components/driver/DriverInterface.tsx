@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import {
   LogOut, Package, CheckCircle2, XCircle, Camera, WifiOff,
-  Clock, Truck, AlertTriangle, FileText, Building2,
+  Clock, Truck, AlertTriangle, FileText, Building2, FileCheck, FileX,
   ChevronRight, ChevronLeft, Lock, ArrowDown, ArrowUp,
   RefreshCw, RotateCcw, X, Phone, Bell, Menu, History, Languages, MapPin, Images, CalendarDays,
 } from 'lucide-react';
@@ -1329,9 +1329,13 @@ function DriverNotificationRow({ notification, index, onOpen }: { notification: 
 function RealNotificationRow({ notification, index, onOpen }: { notification: DriverNotificationRecord; index: number; onOpen: () => void }) {
   const { t } = useDriverI18n();
   const Icon = notification.type === 'driver_cancelled' ? XCircle
-    : notification.type === 'driver_issue_resolved' ? CheckCircle2 : Package;
+    : notification.type === 'driver_issue_resolved' ? CheckCircle2
+    : notification.type === 'driver_doc_approved' ? FileCheck
+    : notification.type === 'driver_doc_rejected' ? FileX : Package;
   const title = t(notification.type === 'driver_cancelled' ? 'notifications.deliveryCancelled'
     : notification.type === 'driver_issue_resolved' ? 'notifications.issueResolved'
+    : notification.type === 'driver_doc_approved' ? 'notifications.docApproved'
+    : notification.type === 'driver_doc_rejected' ? 'notifications.docRejected'
     : notification.type === 'driver_dispatched' ? 'notifications.newAssignment' : 'notifications.update');
   return (
     <button type="button" onClick={onOpen} style={{ animationDelay: `${index * 70}ms` }}
