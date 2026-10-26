@@ -12,6 +12,7 @@ import VerifyReportScreen from './components/auth/VerifyReportScreen';
 import { canDispatchAssignments } from './lib/staffPermissions';
 import { ADMIN_PATHS, ADMIN_NAVIGATION_EVENT, adminPageFromUrl, startAdminNavigation, redirectToAdminLogin } from './lib/adminNavigation';
 import { pendingLocalRecordIds, confirmLocalRecordCreated } from './lib/recordOrdering';
+import { isResetLoginIntent } from './lib/resetLoginNavigation';
 import type { Assignment, CompletedTask, LocalDriver, LocalTruck, AppNotification, AdminRole, AdminActivityEntry, AdminActivityInput } from './data/assignmentTypes';
 
 type AppView = 'login' | 'admin' | 'driver';
@@ -309,6 +310,9 @@ export default function App() {
         // The one-time reset link and the public report-verification page are
         // available without an authenticated session.
         if (window.location.pathname === '/reset-password' || window.location.pathname === '/verify-report') return;
+        // This tab intentionally shows the staff login after leaving a reset link.
+        // The Supabase session remains untouched, including sessions in other tabs.
+        if (isResetLoginIntent(new URL(window.location.href))) return;
         const stored = (await supabase.auth.getSession()).data.session;
         if (cancelled) return;
         if (stored && !await checkAppSession()) return;

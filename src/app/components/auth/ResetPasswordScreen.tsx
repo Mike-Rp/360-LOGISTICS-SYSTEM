@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Eye, EyeOff, Loader2 } from 'lucide-react';
 import imgLogo from 'figma:asset/5e73e3c08e898d68c86717993c6e7442d03e9ac4.png';
 import { completeCsrPasswordReset } from '../../lib/db';
+import { clearResetTokenFromHistory, resetLoginHref } from '../../lib/resetLoginNavigation';
 
 const feedback: Record<string, string> = {
   reset_link_invalid_or_expired: 'This reset link is invalid or has expired. Ask your OPM administrator for a new reset link.',
@@ -59,14 +60,14 @@ export default function ResetPasswordScreen() {
             <div>
               <label htmlFor="new-password" className="mb-1 block text-sm font-medium">New Password</label>
               <div className="relative">
-                <input id="new-password" type={showPassword ? 'text' : 'password'} autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} className="min-h-12 w-full rounded-xl border px-4 pr-12 text-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary" />
+                <input id="new-password" type={showPassword ? 'text' : 'password'} autoComplete="new-password" placeholder="Enter your new password" value={password} onChange={(event) => setPassword(event.target.value)} className="min-h-12 w-full rounded-xl border pl-3 pr-10 text-base placeholder:text-sm placeholder:text-muted-foreground sm:pl-4 sm:pr-12 sm:placeholder:text-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary" />
                 <button type="button" onClick={() => setShowPassword((shown) => !shown)} aria-label={showPassword ? 'Hide password' : 'Show password'} className="absolute right-1 top-1 grid h-10 w-10 place-items-center rounded-lg focus-visible:outline-2 focus-visible:outline-primary">{showPassword ? <EyeOff size={19} /> : <Eye size={19} />}</button>
               </div>
             </div>
             <div>
               <label htmlFor="confirm-password" className="mb-1 block text-sm font-medium">Confirm Password</label>
               <div className="relative">
-                <input id="confirm-password" type={showConfirmation ? 'text' : 'password'} autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} className="min-h-12 w-full rounded-xl border px-4 pr-12 text-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary" />
+                <input id="confirm-password" type={showConfirmation ? 'text' : 'password'} autoComplete="new-password" placeholder="Re-enter your new password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} className="min-h-12 w-full rounded-xl border pl-3 pr-10 text-base placeholder:text-sm placeholder:text-muted-foreground sm:pl-4 sm:pr-12 sm:placeholder:text-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary" />
                 <button type="button" onClick={() => setShowConfirmation((shown) => !shown)} aria-label={showConfirmation ? 'Hide password' : 'Show password'} className="absolute right-1 top-1 grid h-10 w-10 place-items-center rounded-lg focus-visible:outline-2 focus-visible:outline-primary">{showConfirmation ? <EyeOff size={19} /> : <Eye size={19} />}</button>
               </div>
             </div>
@@ -74,7 +75,7 @@ export default function ResetPasswordScreen() {
             <button type="submit" disabled={busy} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 font-semibold text-white disabled:opacity-50">{busy ? <><Loader2 size={18} className="animate-spin" /> Saving…</> : 'Save New Password'}</button>
           </form>}
       </>}
-      <a href="/login?account=staff" className="mt-5 block text-center text-sm font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary">Back to Login</a>
+      <a href={resetLoginHref} onClick={clearResetTokenFromHistory} className="mt-5 block text-center text-sm font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary">Back to Login</a>
     </section>
   </main>;
 }
