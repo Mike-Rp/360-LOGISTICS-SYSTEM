@@ -19,7 +19,8 @@ import { ADMIN_NAVIGATION_EVENT, adminPageFromUrl, pushAdminNavigation } from '.
 import { canDispatchAssignments, canManageFleetAccounts as mayManageFleetAccounts } from '../../lib/staffPermissions';
 import { isActivityKey, notificationDestination, type ActionFeedbackToast, type ActivityKey } from '../../lib/notificationEvents';
 import { notificationSoundEnabled, setNotificationSoundEnabled } from '../../lib/notificationSound';
-import type { StaffSession } from '../../lib/db';
+import { listCsrPasswordResetRequests, type CsrPasswordResetRequest, type StaffSession } from '../../lib/db';
+import { pendingPasswordResetRequests } from '../../lib/pendingPasswordResetRequests';
 import type { Assignment, CompletedTask, LocalDriver, LocalTruck, AppNotification, AdminRole, AdminActivityEntry, AdminActivityInput } from '../../data/assignmentTypes';
 
 type NavItem = 'Dashboard' | 'Monitor' | 'Deliveries' | 'Documents' | 'Reports' | 'Accounts';
@@ -104,6 +105,10 @@ export default function AdminDashboard({
   const [settingsOpen,  setSettingsOpen]  = useState(false);
   const [helpOpen,      setHelpOpen]      = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [resetRequestTarget, setResetRequestTarget] = useState<string | null>(null);
+  const [pendingResetRequests, setPendingResetRequests] = useState<CsrPasswordResetRequest[]>([]);
+  const [resetRequestLoadError, setResetRequestLoadError] = useState(false);
+  const refreshResetRequestsRef = useRef<() => void>(() => {});
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const feedbackSequence = useRef(0);
   const [feedback, setFeedback] = useState<ActionFeedbackToast[]>([]);
@@ -119,6 +124,41 @@ export default function AdminDashboard({
   const canManageFleetAccounts = mayManageFleetAccounts(adminRole);
   // OPM can inspect operational pages, while assignment and document writes remain CSR-only.
   const operationalReadOnly = isViewOnly || !canDispatchAssignments(adminRole);
+
+  useEffect(() => {
+    if (!isOperationManager || adminRole !== 'opm') return;
+    let active = true;
+    let inFlight = false;
+    let refreshAgain = false;
+    const refresh = async () => {
+      if (inFlight) { refreshAgain = true; return; }
+      inFlight = true;
+      try {
+        const requests = await listCsrPasswordResetRequests();
+        if (!active) return;
+        setPendingResetRequests(pendingPasswordResetRequests(requests));
+        setResetRequestLoadError(false);
+      } catch (error) {
+        if (!active) return;
+        console.error('[listCsrPasswordResetRequests] notification refresh failed:', error);
+        setResetRequestLoadError(true);
+      } finally {
+        inFlight = false;
+        if (active && refreshAgain) { refreshAgain = false; void refresh(); }
+      }
+    };
+    refreshResetRequestsRef.current = () => { void refresh(); };
+    void refresh();
+    const onFocus = () => { void refresh(); };
+    window.addEventListener('focus', onFocus);
+    const interval = window.setInterval(() => { void refresh(); }, 30_000);
+    return () => {
+      active = false;
+      refreshResetRequestsRef.current = () => {};
+      window.removeEventListener('focus', onFocus);
+      window.clearInterval(interval);
+    };
+  }, [adminRole, isOperationManager, adminEmail]);
 
   useEffect(() => {
     setSearchInput({ page: activeNav, value: '' });
@@ -315,6 +355,14 @@ export default function AdminDashboard({
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden pt-[calc(4rem+env(safe-area-inset-top))] md:pt-0">
         <Header
           notifications={notifications}
+          pendingResetRequests={isOperationManager ? pendingResetRequests : []}
+          resetRequestLoadError={isOperationManager && resetRequestLoadError}
+          onRetryResetRequests={() => refreshResetRequestsRef.current()}
+          onReviewResetRequest={(id) => {
+            setResetRequestTarget(id);
+            setWorkspaceOpen(true);
+            refreshResetRequestsRef.current();
+          }}
           setNotifications={setNotifications}
           onOpenNotification={openNotification}
           onLogout={onLogout}
@@ -325,7 +373,7 @@ export default function AdminDashboard({
           adminEmail={adminEmail}
           adminName={adminName}
           avatarUrl={avatarUrl}
-          onOpenWorkspaceSettings={() => setWorkspaceOpen(true)}
+          onOpenWorkspaceSettings={() => { setResetRequestTarget(null); setWorkspaceOpen(true); }}
           searchPlaceholder={SEARCH_PLACEHOLDERS[activeNav]}
           searchValue={currentSearchInput}
           onSearchChange={changeSearch}
@@ -369,7 +417,9 @@ export default function AdminDashboard({
       {isOperationManager && (
         <WorkspaceSettingsPanel
           open={workspaceOpen}
-          onClose={() => setWorkspaceOpen(false)}
+          onClose={() => { setWorkspaceOpen(false); setResetRequestTarget(null); refreshResetRequestsRef.current(); }}
+          targetRequestId={resetRequestTarget}
+          onRequestsChanged={() => refreshResetRequestsRef.current()}
           activityLog={activityLog}
           onLogActivity={onLogActivity}
           adminEmail={adminEmail}

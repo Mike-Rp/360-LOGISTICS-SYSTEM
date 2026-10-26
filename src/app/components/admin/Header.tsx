@@ -2,9 +2,10 @@ import { useState, useRef, useEffect } from 'react';
 import {
   User, ChevronDown, Bell, CalendarDays, Search, ArrowLeft, Settings, HelpCircle, LogOut,
   Truck, CheckCheck, X, Users,
-  FileText, AlertTriangle, AlertCircle,
+  FileText, AlertTriangle, AlertCircle, KeyRound,
 } from 'lucide-react';
 import type { AdminRole, AppNotification } from '../../data/assignmentTypes';
+import type { CsrPasswordResetRequest } from '../../lib/db';
 import AccountRoleBadge from './AccountRoleBadge';
 import { Popover, PopoverTrigger, PopoverContent } from '../ui/popover';
 import { adminHref, followAdminLink } from '../../lib/adminNavigation';
@@ -13,6 +14,10 @@ import { groupNotifications } from '../../lib/notificationGrouping';
 
 interface Props {
   notifications: AppNotification[];
+  pendingResetRequests: CsrPasswordResetRequest[];
+  resetRequestLoadError: boolean;
+  onRetryResetRequests: () => void;
+  onReviewResetRequest: (id: string) => void;
   setNotifications: React.Dispatch<React.SetStateAction<AppNotification[]>>;
   onOpenNotification: (notification: AppNotification) => void;
   onLogout: () => void;
@@ -51,7 +56,8 @@ function fmtTimestamp(ts: string): string {
 }
 
 export default function Header({
-  notifications, setNotifications, onOpenNotification, onLogout, onOpenSettings, onOpenHelp,
+  notifications, pendingResetRequests, resetRequestLoadError, onRetryResetRequests, onReviewResetRequest,
+  setNotifications, onOpenNotification, onLogout, onOpenSettings, onOpenHelp,
   isOperationManager, adminRole, adminEmail, adminName, avatarUrl, onOpenWorkspaceSettings,
   searchPlaceholder, searchValue, onSearchChange,
 }: Props) {
@@ -149,11 +155,15 @@ export default function Header({
         )}
 
         {/* ── Bell button ── */}
-        <Popover open={bellOpen} onOpenChange={setBellOpen}>
+        <Popover open={bellOpen} onOpenChange={(open) => {
+          setBellOpen(open);
+          if (open && isOperationManager) onRetryResetRequests();
+        }}>
           <PopoverTrigger asChild>
             <button
               onClick={() => setAccountOpen(false)}
-              title="Notifications"
+              title={isOperationManager && pendingResetRequests.length ? `Notifications · ${pendingResetRequests.length} pending password reset requests` : 'Notifications'}
+              aria-label={isOperationManager && pendingResetRequests.length ? `Notifications, ${pendingResetRequests.length} password reset requests pending review` : 'Notifications'}
               className="relative w-9 h-9 shrink-0 flex items-center justify-center rounded-full hover:bg-accent transition-colors"
             >
               <Bell className="w-5 h-5 text-muted-foreground" />
@@ -161,6 +171,9 @@ export default function Header({
                 <span className="absolute -top-1 -right-1 min-w-[20px] h-[20px] bg-green-500 text-white text-[12px] font-bold rounded-full flex items-center justify-center px-1 leading-none">
                   {unreadCount > 99 ? '99+' : unreadCount}
                 </span>
+              )}
+              {isOperationManager && pendingResetRequests.length > 0 && (
+                <span aria-hidden="true" className="absolute -bottom-1 -right-1 flex h-2.5 w-2.5 rounded-full border border-white bg-amber-500" />
               )}
             </button>
           </PopoverTrigger>
@@ -182,7 +195,37 @@ export default function Header({
 
               {/* Notification list */}
               <div className="max-h-72 overflow-x-hidden overflow-y-auto overscroll-contain">
-                {notifications.length === 0 ? (
+                {isOperationManager && pendingResetRequests.length > 0 && (
+                  <section aria-label="Pending password reset requests">
+                    <h4 className="border-b border-border/60 bg-amber-50/60 px-4 pb-1.5 pt-3 text-xs font-semibold text-amber-900">
+                      Pending Password Reset Requests · {pendingResetRequests.length}
+                    </h4>
+                    <div className="divide-y divide-border/60">
+                      {pendingResetRequests.map((request) => (
+                        <div key={request.id} className="flex min-w-0 items-start gap-2 px-4 py-3">
+                          <KeyRound aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold text-foreground">Password Reset Request</p>
+                            <p className="break-all text-sm text-foreground/90">{request.email} requested a password reset.</p>
+                            <p className="mt-1 text-xs text-muted-foreground">Pending OPM review · {fmtTimestamp(request.requestedAt)}</p>
+                            <button type="button" onClick={() => { setBellOpen(false); onReviewResetRequest(request.id); }}
+                              aria-label={`Review password reset request for ${request.email}`}
+                              className="mt-1 inline-flex min-h-9 items-center rounded-md text-sm font-medium text-primary hover:text-primary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+                              Review Request →
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+                {isOperationManager && resetRequestLoadError && (
+                  <div role="alert" className="flex items-center justify-between gap-2 border-b border-border px-4 py-3 text-sm text-muted-foreground">
+                    <span>Could not refresh password reset requests.</span>
+                    <button type="button" onClick={onRetryResetRequests} className="min-h-9 shrink-0 font-medium text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary">Retry</button>
+                  </div>
+                )}
+                {notifications.length === 0 && (!isOperationManager || pendingResetRequests.length === 0) && !resetRequestLoadError ? (
                   <div className="px-4 py-8 text-center">
                     <p className="text-sm text-muted-foreground">No notifications yet</p>
                   </div>

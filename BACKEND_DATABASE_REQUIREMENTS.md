@@ -1765,6 +1765,26 @@ never sets any CSR password requires converting member creation to an Auth
 invitation where the CSR chooses the initial password. Keep that work in this
 entry rather than adding a duplicate requirement.
 
+**ADMIN NOTIFICATIONS CHANGES - REQ01 follow-up (native notification):** The
+existing OPM-authorized `csr_password_reset_requests` read policy and
+`listCsrPasswordResetRequests()` provide real request IDs, email, status, and
+request time. The local frontend bell now derives pending review actions from
+those records. This review queue is separate from ordinary notifications and
+their persisted read state. The anonymous request RPC remains generic and does
+not prove a record was created.
+
+There is no server-generated admin notification with a stable reset-request
+reference and independently persisted read state. If cross-device read/unread
+history, sounds, or a merged chronological feed become required, the backend
+developer should emit one OPM-only event per real eligible request in the same
+transaction as creation. Return a stable event ID, request ID, server timestamp,
+and read timestamp, without reset tokens. Authorize list/read updates for OPM
+only and make retries idempotent. Approval, rejection, completion, and expiry
+should change actionability without deleting requests or audit history. Reading
+an event must never approve or reject its request. This native notification
+extension is **Pending** and has no approval to change schema, triggers, RPCs,
+or policies under the current frontend task.
+
 ---
 
 ## [REQ-007] Persistent verification for generated reports

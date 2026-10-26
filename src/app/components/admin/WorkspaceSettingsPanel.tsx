@@ -10,6 +10,7 @@ import ConfirmPasswordDialog from './ConfirmPasswordDialog';
 import type { AdminActivityEntry, AdminActivityType, AdminActivityInput, TeamMember } from '../../data/assignmentTypes';
 import { PaginationFooter } from './Pagination';
 import { pushAdminNavigation } from '../../lib/adminNavigation';
+import { pageForPasswordResetRequest } from '../../lib/pendingPasswordResetRequests';
 
 /* ── Activity log helpers — moved here from SettingsPanel.tsx, extended for member events ── */
 const ACT_CONFIG: Record<AdminActivityType, { label: string; icon: React.ElementType; color: string }> = {
@@ -240,13 +241,15 @@ function AddMemberModal({ onClose, onAdded }: {
 interface Props {
   open: boolean;
   onClose: () => void;
+  targetRequestId?: string | null;
+  onRequestsChanged?: () => void;
   activityLog: AdminActivityEntry[];
   onLogActivity: (entry: AdminActivityInput) => void;
   adminEmail: string | null;
   adminName?: string;
 }
 
-export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onLogActivity, adminEmail, adminName }: Props) {
+export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId, onRequestsChanged, activityLog, onLogActivity, adminEmail, adminName }: Props) {
   const [tab, setTab] = useState<'members' | 'resets' | 'activity'>('members');
   const contentScrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -267,6 +270,8 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
   const [logRole, setLogRole] = useState<'all' | 'csr' | 'opm'>('all');
   const [logDate, setLogDate] = useState<'all' | 'today' | 'week' | 'month'>('all');
   const [resetRequests, setResetRequests] = useState<CsrPasswordResetRequest[]>([]);
+  const [resetLoaded, setResetLoaded] = useState(false);
+  const resetFetchEpoch = useRef(0);
   const [resetStatus, setResetStatus] = useState<CsrPasswordResetRequest['status'] | 'all'>('all');
   const [resetSearch, setResetSearch] = useState('');
   const [resetPage, setResetPage] = useState(1);
@@ -276,6 +281,17 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
   const [resetClock, setResetClock] = useState(Date.now());
   const [logPage, setLogPage] = useState(1);
   const logPageSize = 10;
+
+  useEffect(() => { if (open) setResetLoaded(false); }, [open]);
+
+  useEffect(() => {
+    if (!open || !targetRequestId) return;
+    setTab('resets');
+    setResetStatus('all');
+    setResetSearch('');
+    setResetPage(1);
+    setResetNotice('');
+  }, [open, targetRequestId]);
 
   const fetchMembers = async () => {
     setLoading(true);
@@ -301,15 +317,18 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
     if (!open) return;
     let cancelled = false;
     const refresh = () => {
+      const epoch = ++resetFetchEpoch.current;
       setResetClock(Date.now());
       listCsrPasswordResetRequests().then((requests) => {
-        if (!cancelled) { setResetRequests(requests); setResetError(''); }
-      }).catch((error: unknown) => { if (!cancelled) setResetError(error instanceof Error ? error.message : 'Could not load password reset requests.'); });
+        if (!cancelled && epoch === resetFetchEpoch.current) { setResetRequests(requests); setResetError(''); setResetLoaded(true); }
+      }).catch((error: unknown) => {
+        if (!cancelled && epoch === resetFetchEpoch.current) { setResetError(error instanceof Error ? error.message : 'Could not load password reset requests.'); setResetLoaded(true); }
+      });
     };
     refresh();
     window.addEventListener('focus', refresh);
     const interval = window.setInterval(refresh, 30_000);
-    return () => { cancelled = true; window.removeEventListener('focus', refresh); window.clearInterval(interval); };
+    return () => { cancelled = true; resetFetchEpoch.current++; window.removeEventListener('focus', refresh); window.clearInterval(interval); };
   }, [open]);
 
   const handleResetReview = async (request: CsrPasswordResetRequest, approve: boolean) => {
@@ -319,8 +338,15 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
     try {
       if (request.status !== 'pending') return;
       await reviewCsrPasswordReset(request.id, approve);
-      setResetRequests(await listCsrPasswordResetRequests());
-      setResetNotice(approve ? 'Request approved. Copy the reset link to share it with the CSR.' : 'Request rejected.');
+      resetFetchEpoch.current++;
+      onRequestsChanged?.();
+      try {
+        const requests = await listCsrPasswordResetRequests();
+        setResetRequests(requests);
+        setResetNotice(approve ? 'Request approved. Copy the reset link to share it with the CSR.' : 'Request rejected.');
+      } catch {
+        setResetError('Request reviewed, but the latest list could not be loaded. Reopen Workspace Settings to refresh.');
+      }
     } catch (error) {
       setResetError(error instanceof Error ? error.message : 'Could not review this request.');
     } finally {
@@ -426,6 +452,16 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
   });
   const currentResetPage = Math.min(resetPage, Math.max(1, Math.ceil(filteredResets.length / pageSize)));
   const visibleResets = filteredResets.slice((currentResetPage - 1) * pageSize, currentResetPage * pageSize);
+  useEffect(() => {
+    if (!open || tab !== 'resets' || !targetRequestId || !resetLoaded || resetError) return;
+    const page = pageForPasswordResetRequest(filteredResets, targetRequestId, pageSize);
+    if (page === null) return;
+    if (currentResetPage !== page) { setResetPage(page); return; }
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById(`reset-request-${targetRequestId}`)?.scrollIntoView({ block: 'nearest' });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [open, tab, targetRequestId, resetLoaded, resetError, currentResetPage, resetRequests, resetStatus, resetSearch]);
   const filteredLog = activityLog.filter((entry) => {
     if (logAction !== 'all' && entry.type !== logAction) return false;
     if (logRole !== 'all' && activityRole(entry.adminRole)?.toLowerCase() !== logRole) return false;
@@ -565,10 +601,12 @@ export default function WorkspaceSettingsPanel({ open, onClose, activityLog, onL
               className="min-h-10 w-full rounded-lg border border-border bg-white px-3 text-sm focus-visible:outline-2 focus-visible:outline-primary" />
             {resetError && <p role="alert" className="text-sm text-red-600">{resetError}</p>}
             {resetNotice && <p role="status" className="text-sm text-green-700">{resetNotice}</p>}
-            {!resetError && (visibleResets.length === 0 ? <p className="py-8 text-center text-sm text-muted-foreground">No matching password reset requests.</p> :
+            {targetRequestId && resetLoaded && !resetError && !resetRequests.some((request) => request.id === targetRequestId) &&
+              <p role="status" className="text-sm text-muted-foreground">This request is no longer available. The list below shows the latest requests.</p>}
+            {!resetError && (!resetLoaded ? <p className="py-8 text-center text-sm text-muted-foreground">Loading requests…</p> : visibleResets.length === 0 ? <p className="py-8 text-center text-sm text-muted-foreground">No matching password reset requests.</p> :
               <div className="space-y-2">{visibleResets.map((request) => {
                 const effectiveStatus = effectiveResetStatus(request);
-                return <div key={request.id} className="flex flex-col gap-3 rounded-xl border border-border p-3 sm:flex-row sm:items-center sm:justify-between">
+                return <div key={request.id} id={`reset-request-${request.id}`} className={`flex flex-col gap-3 rounded-xl border p-3 sm:flex-row sm:items-center sm:justify-between ${targetRequestId === request.id ? 'border-amber-300 bg-amber-50/40' : 'border-border'}`}>
                   <div className="min-w-0">
                     <p className="break-words text-sm font-semibold">{members.find((member) => member.id === request.userId)?.name ?? request.email}</p>
                     <p className="break-all text-xs text-muted-foreground">{request.email}</p>
