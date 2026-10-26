@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>360 Logistics System — Product Film</title>
+<style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1114}canvas{display:block;width:1920px;height:1080px}</style></head>
+<body><canvas id="film" width="1920" height="1080" aria-label="360 Logistics System product film"></canvas>
+<script>
+// Deterministic single-canvas film. window.seek(seconds) is the only animation entry point.
+const W=1920,H=1080,ctx=document.getElementById('film').getContext('2d',{alpha:false});
+const assetNames={
+  logo:'logo.png', truckFront:'truck-front.jpg', truckSide:'truck-side.jpg',
+  truckRear:'truck-rear.jpg', truckFourth:'truck-fourth.jpg',
+  pod:'proof-of-delivery.jpg', dispatchSlip:'dispatch-slip.jpg',
+  bol:'bill-of-lading.jpg', rar:'receiving-acknowledgement.jpg',
+  invoice:'sales-invoice.jpg', waybill:'waybill.jpg',
+  dashboard:'csr-dashboard.png', dispatch:'dispatch.png',
+  driver:'driver.png', documents:'documents.png', documentsApproved:'documents-approved.png', completed:'completed.png'
+};
+const imgs={}; const failures=[];
+window.assetsReady=Promise.all(Object.entries(assetNames).map(([key,name])=>new Promise(resolve=>{
+  const im=new Image(); im.onload=()=>{imgs[key]=im;resolve()};
+  im.onerror=()=>{failures.push(name);resolve()}; im.src='assets/'+name;
+}))).then(()=>{window.missingAssets=failures;window.seek(0)});
+const C={dark:'#0B1114',ink:'#15272B',slate:'#65777A',warm:'#F8F9F5',white:'#FFFFFF',green:'#188B50',mint:'#EAF6EE',line:'#DDE6E1',amber:'#D6A24D'};
+const clamp=(x,a=0,b=1)=>Math.min(b,Math.max(a,x));
+const ease=x=>{x=clamp(x);return x*x*(3-2*x)};
+const spring=x=>x<=0?0:1-(1+10*x)*Math.exp(-10*x);
+function seq(initial,changes,t){let v=initial;for(const [at,target] of changes){let before=initial;for(const [a,b] of changes)if(a<at)before=b;v+=(target-before)*spring(t-at)}return v}
+function span(t,a,b,inDur=.3,outDur=.3){return clamp((t-a)/inDur)*clamp((b-t)/outDur)}
+function rounded(x,y,w,h,r){ctx.beginPath();ctx.roundRect(x,y,w,h,Math.min(r,w/2,h/2))}
+function fillRound(x,y,w,h,r,color){ctx.fillStyle=color;rounded(x,y,w,h,r);ctx.fill()}
+function strokeRound(x,y,w,h,r,color,width=2){ctx.lineWidth=width;ctx.strokeStyle=color;rounded(x,y,w,h,r);ctx.stroke()}
+function text(s,x,y,size=30,color=C.ink,weight=500,align='left',family='Arial, sans-serif',alpha=1){const oldAlpha=ctx.globalAlpha;ctx.globalAlpha=oldAlpha*alpha;ctx.font=`${weight} ${size}px ${family}`;ctx.textAlign=align;ctx.textBaseline='alphabetic';ctx.fillStyle=color;ctx.fillText(s,x,y);ctx.globalAlpha=oldAlpha}
+function label(s,x,y,alpha=1,color=C.slate){text(s.toUpperCase(),x,y,17,color,700,'left','Arial, sans-serif',alpha)}
+function imageCover(im,x,y,w,h,zoom=1,panX=0,panY=0){if(!im)return;const iw=im.naturalWidth,ih=im.naturalHeight;const scale=Math.max(w/iw,h/ih)*zoom;const sw=w/scale,sh=h/scale;const sx=clamp((iw-sw)/2+panX*(iw-sw)/2,0,Math.max(0,iw-sw));const sy=clamp((ih-sh)/2+panY*(ih-sh)/2,0,Math.max(0,ih-sh));ctx.drawImage(im,sx,sy,sw,sh,x,y,w,h)}
+function imageContain(im,x,y,w,h){if(!im)return;const scale=Math.min(w/im.naturalWidth,h/im.naturalHeight);const dw=im.naturalWidth*scale,dh=im.naturalHeight*scale;ctx.drawImage(im,x+(w-dw)/2,y+(h-dh)/2,dw,dh)}
+function inFrame(fn,rect){ctx.save();rounded(...rect);ctx.clip();fn();ctx.restore()}
+function caption(title,detail,t,a,b,dark=false){let k=span(t,a,b,.45,.45);if(k<=0)return;text(title,126,930,54,dark?C.white:C.ink,500,'left','Georgia, serif',k);if(detail)text(detail,128,973,23,dark?'#B7C5C7':C.slate,400,'left','Arial, sans-serif',k)}
+function line(x1,y1,x2,y2,color=C.line,width=2){ctx.strokeStyle=color;ctx.lineWidth=width;ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke()}
+
+const rectKeys={
+ x:[[0,245],[6,285],[8,315],[16,585],[20,735],[22,150],[30,180],[38,719],[44,295],[52,150],[56,655],[59,245]],
+ y:[[0,185],[6,170],[8,145],[16,155],[20,335],[22,92],[30,105],[38,66],[44,100],[52,92],[56,260],[59,185]],
+ w:[[0,1430],[6,1350],[8,1290],[16,750],[20,450],[22,1620],[30,1560],[38,482],[44,1330],[52,1620],[56,610],[59,1430]],
+ h:[[0,720],[6,740],[8,780],[16,770],[20,340],[22,870],[30,850],[38,948],[44,850],[52,870],[56,470],[59,720]],
+ r:[[0,28],[8,24],[16,20],[20,28],[22,20],[38,52],[44,25],[52,20],[56,30],[59,28]]
+};
+function mainRect(t){let o={};for(const key of Object.keys(rectKeys)){const list=rectKeys[key];o[key]=seq(list[0][1],list.slice(1),t)}return o}
+function rectArray(r){return [r.x,r.y,r.w,r.h,r.r]}
+function background(t){const k=ease((t-20.5)/1.6)*(1-ease((t-58.8)/1.15));ctx.fillStyle=C.dark;ctx.fillRect(0,0,W,H);if(k){ctx.globalAlpha=k;ctx.fillStyle=C.warm;ctx.fillRect(0,0,W,H);ctx.globalAlpha=1}return k}
+
+function truckScene(t,r){
+ const keys=['truckFront','truckSide','truckRear','truckFourth'];const idx=Math.min(3,Math.floor(t/2));const local=t-idx*2;
+ fillRound(r.x,r.y,r.w,r.h,r.r,'#1E2A2D');
+ inFrame(()=>{imageCover(imgs[keys[idx]],r.x,r.y,r.w,r.h,1.06+local*.045,local*.08-.08,0);
+  ctx.fillStyle='rgba(8,16,18,.28)';ctx.fillRect(r.x,r.y,r.w,r.h)},rectArray(r));
+ for(let i=0;i<3;i++){const at=2+i*1.45;const k=span(t,at,8,.28,.55);if(k){const ys=[295,380,465];fillRound(1170,ys[i]-37,510,54,12,'rgba(10,19,22,.88)');text(['Where is the delivery?','Which truck is assigned?','Are the documents complete?'][i],1193,ys[i],23,C.white,500,'left','Arial, sans-serif',k)}}
+ if(t<4.35)caption('Logistics should be simple.','Real trucks. Real work. Every day.',t,.55,4.4,true);
+ else caption('But managing it isn’t.','Updates, assignments and documents scattered apart.',t,4.25,8,true);
+}
+const docs=[['pod','Proof of Delivery'],['dispatchSlip','Dispatch Slip'],['bol','Bill of Lading'],['rar','Receiving Acknowledgement Report'],['invoice','Sales Invoice'],['waybill','Waybill / Delivery Receipt']];
+function paper(im,x,y,w,h,angle,alpha=1){if(!im)return;ctx.save();ctx.globalAlpha=alpha;ctx.translate(x+w/2,y+h/2);ctx.rotate(angle);ctx.shadowColor='rgba(0,0,0,.3)';ctx.shadowBlur=28;ctx.fillStyle='#fff';ctx.fillRect(-w/2,-h/2,w,h);ctx.shadowBlur=0;imageContain(im,-w/2+7,-h/2+7,w-14,h-14);ctx.restore()}
+function documentProblem(t,r){fillRound(r.x,r.y,r.w,r.h,r.r,'#162123');inFrame(()=>{
+  ctx.fillStyle='#172326';ctx.fillRect(r.x,r.y,r.w,r.h);
+  for(let i=0;i<docs.length;i++){const at=8+i*1.06;const k=span(t,at,16,.33,.25);if(k<=0)continue;
+    const x=r.x+80+(i%3)*365,y=r.y+58+Math.floor(i/3)*340;
+    paper(imgs[docs[i][0]],x,y,300,330,(i%2?1:-1)*.055,k);
+    text(docs[i][1],x+4,y+365,16,C.white,600,'left','Arial, sans-serif',k);
+  }
+ },rectArray(r));
+ const status=['STATUS UNKNOWN','WAITING FOR UPDATES','DOCUMENTS PENDING'];
+ for(let i=0;i<3;i++){const k=span(t,10.5+i*1.3,15.7,.3,.3);if(k){fillRound(1260,455+i*70,430,50,10,'#263436');text(status[i],1282,489+i*70,17,'#E7D1A5',700,'left','Arial, sans-serif',k)}}
+ const cap=span(t,11.6,16,.45,.4);
+ text('Too many processes. Not enough visibility.',126,977,48,C.white,500,'left','Georgia, serif',cap);
+ text('Six document types. One operation to coordinate.',128,1020,23,'#B7C5C7',400,'left','Arial, sans-serif',cap);
+}
+function transformScene(t,r){const p=ease((t-16)/3.4),logo=ease((t-19.15)/1.15);
+ fillRound(r.x,r.y,r.w,r.h,r.r,t>20.5?C.white:'#172326');
+ inFrame(()=>{
+  for(let i=0;i<6;i++){const ang=(i-2.5)*.19*(1-p),spread=(i-2.5)*195*(1-p);
+    const x=r.x+r.w/2-172+spread,y=r.y+r.h/2-235+Math.sin(i*2)*80*(1-p);
+    paper(imgs[docs[i][0]],x,y,344,470,ang,(1-logo)*(1-ease((p-.35)/.27))*.82);
+  }
+  if(p>.35){ctx.globalAlpha=ease((p-.35)/.2)*(1-logo);fillRound(r.x+70,r.y+55,r.w-140,r.h-110,18,C.white);
+    label('DOCUMENTS',r.x+100,r.y+110);line(r.x+100,r.y+133,r.x+r.w-100,r.y+133);
+    for(let i=0;i<6;i++){const yy=r.y+178+i*76;text(docs[i][1],r.x+104,yy,21,C.ink,600);text('DIGITIZED',r.x+r.w-180,yy,14,C.green,700)}ctx.globalAlpha=1}
+  if(logo){ctx.globalAlpha=logo;ctx.fillStyle=C.white;ctx.fillRect(r.x,r.y,r.w,r.h);imageContain(imgs.logo,r.x+40,r.y+20,r.w-80,r.h-40);ctx.globalAlpha=1}
+ },rectArray(r));
+ if(t>19.7&&t<22.2)text('ONE CONNECTED SYSTEM.',960,885,46,t<21.5?C.white:C.ink,700,'center','Arial, sans-serif',span(t,19.65,22.15));
+}
+function screen(im,r,zoom=1,panX=0,panY=0){fillRound(r.x,r.y,r.w,r.h,r.r,C.white);inFrame(()=>imageCover(im,r.x,r.y,r.w,r.h,zoom,panX,panY),rectArray(r));strokeRound(r.x,r.y,r.w,r.h,r.r,C.line,2)}
+function screenContain(im,r){fillRound(r.x,r.y,r.w,r.h,r.r,C.white);inFrame(()=>imageContain(im,r.x,r.y,r.w,r.h),rectArray(r));strokeRound(r.x,r.y,r.w,r.h,r.r,C.line,2)}
+function dashboardScene(t,r){screenContain(imgs.dashboard,r);
+ // Replace only the account wording in the genuine dashboard capture.
+ const s=Math.min(r.w/1550,r.h/880),ox=r.x+(r.w-1550*s)/2,oy=r.y+(r.h-880*s)/2;
+ fillRound(ox+255*s,oy+89*s,425*s,47*s,2,C.white);
+ text('Welcome back, CSR',ox+261*s,oy+122*s,26*s,C.ink,700);
+ fillRound(ox+1423*s,oy+15*s,105*s,33*s,4,C.white);
+ text('CSR',ox+1430*s,oy+36*s,15*s,C.ink,500);
+ // Existing dashboard screenshot remains the visual source; these are motion highlights, not new data.
+ const marks=[[24,235,228,315,87],[25,562,228,315,87],[26,890,228,315,87],[27,1218,228,315,87]];
+ for(const [at,x,y,w,h] of marks){const k=span(t,at,at+1.1,.15,.32);if(k){ctx.globalAlpha=k;strokeRound(ox+x*s,oy+y*s,w*s,h*s,12,C.green,5);ctx.globalAlpha=1}}
+ const chart=span(t,27.25,28.55,.25,.35),activity=span(t,28.3,29.6,.25,.35);
+ if(chart){ctx.globalAlpha=chart*.55;strokeRound(ox+235*s,oy+335*s,638*s,438*s,14,C.green,4);ctx.globalAlpha=1}
+ if(activity){ctx.globalAlpha=activity*.55;strokeRound(ox+894*s,oy+335*s,639*s,438*s,14,C.green,4);ctx.globalAlpha=1}
+ caption('Everything in one place.','A clearer view of the day’s operations.',t,27.5,30,false);
+}
+function dispatchScene(t,r){screen(imgs.dispatch,r,1.03+Math.max(0,t-30)*.012,0,0);
+ const k=span(t,32,37.7,.35,.35);if(k){fillRound(270,795,1370,82,14,'rgba(255,255,255,.96)');
+  const items=['DRIVER','TRUCK','ROUTE','DELIVERY'];for(let i=0;i<4;i++){
+    const x=365+i*340;text(items[i],x,829,17,C.slate,700,'center','Arial, sans-serif',k);if(i<3)line(x+102,823,x+236,823,C.green,3)
+  }}
+ if(t>33&&t<36.6){const p=ease((t-33)/.45)*(1-ease((t-36.2)/.4));
+  ctx.globalAlpha=p;fillRound(1240,178,505,310,15,C.white);inFrame(()=>imageCover(imgs.truckSide,1240,178,505,310,1.05,.1),[1240,178,505,310,15]);ctx.globalAlpha=1}
+ caption('Connected from dispatch.','Driver, truck, route and delivery in one workflow.',t,34.3,38,false);
+}
+function driverScene(t,r){screen(imgs.driver,r,1.08,0,0);strokeRound(r.x,r.y,r.w,r.h,r.r,C.ink,9);
+ const stages=['Assigned','At Pickup','In Transit','Delivered'];const n=Math.min(3,Math.max(0,Math.floor((t-39)/1.15)));
+ fillRound(156,360,490,335,18,C.white);label('DELIVERY PROGRESS',194,410);
+ for(let i=0;i<4;i++){const yy=468+i*66;ctx.fillStyle=i<=n?C.green:'#CDD8D2';ctx.beginPath();ctx.arc(203,yy-7,10,0,Math.PI*2);ctx.fill();text(stages[i],237,yy,28,i<=n?C.ink:C.slate,i===n?700:500);if(i<3)line(203,yy+9,203,yy+42,C.line,2)}
+ caption('To the final delivery.','Progress stays connected to the team.',t,41.5,44,false);
+}
+function verificationScene(t,r){
+ const source=t<49.4?imgs.documents:t<50.9?imgs.documentsApproved:imgs.completed;
+ if(t>=50.9)screenContain(source,r);else screen(source,r,1.02);
+ const k=span(t,44.2,48,.35,.45);if(k){ctx.globalAlpha=k;fillRound(205,175,450,655,16,C.white);
+  paper(imgs.pod,229,201,400,565,-.028,1);text('PHYSICAL PROOF OF DELIVERY',225,865,16,C.slate,700);ctx.globalAlpha=1}
+ const p=span(t,48,50.8,.3,.35);if(p){ctx.globalAlpha=p;fillRound(245,350,1420,200,20,C.white);label('DOCUMENT VERIFICATION',300,406);
+  text('Delivered',308,479,33,C.slate,600);text('→',535,479,36,C.green,700);
+  text('Awaiting Documents',603,479,31,C.ink,600);text('→',985,479,36,C.green,700);
+  text('Under Review',1051,479,31,C.ink,600);
+  ctx.globalAlpha=1}
+ if(t>=50.9){const q=span(t,50.9,52,.18,.18);ctx.globalAlpha=q;fillRound(595,367,730,142,18,C.white);text('Completed',960,454,51,C.green,700,'center');ctx.globalAlpha=1}
+ caption('Every document. Accounted for.','Physical evidence becomes a connected review.',t,48.4,52,false);
+}
+function connectedScene(t,r){screenContain(imgs.completed,r);
+ const k=span(t,52.5,55.4,.3,.35);if(k){ctx.globalAlpha=k;fillRound(170,760,1580,104,15,'rgba(255,255,255,.96)');
+  const items=['Dashboard','Dispatch','Deliveries','Documents'];for(let i=0;i<4;i++){const x=365+i*388;text(items[i],x,825,25,C.ink,600,'center');if(i<3)line(x+130,818,x+260,818,C.green,3)}ctx.globalAlpha=1}
+ caption('Less confusion. Better coordination.','One connected operational workflow.',t,53.5,56,false);
+}
+function brandScene(t,r){fillRound(r.x,r.y,r.w,r.h,r.r,C.white);inFrame(()=>imageContain(imgs.logo,r.x+95,r.y+44,r.w-190,r.h-105),rectArray(r));
+ const a=span(t,56.5,59.3,.35,.3);text('360 LOGISTICS SYSTEM',960,810,45,C.ink,700,'center','Arial, sans-serif',a);
+ text('SMART LOGISTICS. SIMPLIFIED OPERATIONS',960,867,23,C.green,700,'center','Arial, sans-serif',span(t,57.45,59.2,.4,.25));
+}
+const cursorPoints=[[0,1660,820],[2,1650,650],[4,1480,505],[8,1140,610],[10,1360,510],[12,1020,530],[16,960,540],[17,960,540],[22,1450,630],[24,810,408],[25,1070,408],[26,1320,408],[27,1160,710],[30,300,355],[32,975,560],[36,1110,765],[38,960,825],[40,945,495],[42,960,702],[44,1050,495],[46,1200,530],[48,1180,705],[50,1455,476],[52,920,535],[54,960,520],[56,960,540],[58,960,700],[59,1660,820],[60,1660,820]];
+function cursor(t){let a=cursorPoints[0],b=cursorPoints.at(-1);for(let i=0;i<cursorPoints.length-1;i++)if(t>=cursorPoints[i][0]&&t<=cursorPoints[i+1][0]){a=cursorPoints[i];b=cursorPoints[i+1];break}
+ const k=ease((t-a[0])/(b[0]-a[0]||1));let x=a[1]+(b[1]-a[1])*k,y=a[2]+(b[2]-a[2])*k;
+ ctx.save();ctx.translate(x,y);ctx.shadowColor='rgba(0,0,0,.2)';ctx.shadowBlur=8;ctx.fillStyle=t<21||t>=59?C.white:C.ink;ctx.strokeStyle=t<21||t>=59?C.ink:C.white;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(0,33);ctx.lineTo(9,26);ctx.lineTo(17,42);ctx.lineTo(25,38);ctx.lineTo(17,23);ctx.lineTo(29,21);ctx.closePath();ctx.fill();ctx.stroke();ctx.restore();
+ for(const click of [16.9,22,24,25,26,27,30,32,36,38,40,42,44,46,48,50,52,56]){const dt=t-click;if(dt>=0&&dt<.22){ctx.strokeStyle=t<21?'rgba(255,255,255,.65)':'rgba(24,139,80,.48)';ctx.lineWidth=4;ctx.beginPath();ctx.arc(x,y,16+dt*140,0,Math.PI*2);ctx.stroke()}}
+}
+function draw(t){
+ if(t>=59.983)t=0; // Final encoded frame matches the opening, cursor position and zero velocity included.
+ background(t);const r=mainRect(t);
+ // The same bounded frame persists and morphs; content is exchanged at short, timed seams.
+ if(t<8)truckScene(t,r);
+ else if(t<16)documentProblem(t,r);
+ else if(t<22)transformScene(t,r);
+ else if(t<30)dashboardScene(t,r);
+ else if(t<38)dispatchScene(t,r);
+ else if(t<44)driverScene(t,r);
+ else if(t<52)verificationScene(t,r);
+ else if(t<56)connectedScene(t,r);
+ else if(t<59)brandScene(t,r);
+ else truckScene(0,r);
+ cursor(t);
+ if(failures.length){fillRound(18,1010,1884,52,8,'#8C1B1B');text('MISSING SOURCE ASSETS: '+failures.join(', '),34,1044,21,C.white,700)}
+}
+window.seek=t=>{draw(clamp(Number(t)||0,0,60));return true};
+</script></body></html>
