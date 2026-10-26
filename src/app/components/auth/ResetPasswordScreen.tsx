@@ -3,15 +3,7 @@ import { Eye, EyeOff, Loader2 } from 'lucide-react';
 import imgLogo from 'figma:asset/5e73e3c08e898d68c86717993c6e7442d03e9ac4.png';
 import { completeCsrPasswordReset } from '../../lib/db';
 import { clearResetTokenFromHistory, resetLoginHref } from '../../lib/resetLoginNavigation';
-
-const feedback: Record<string, string> = {
-  reset_link_invalid_or_expired: 'This reset link is invalid or has expired. Ask your OPM administrator for a new reset link.',
-  password_too_short: 'Password is too short.',
-  password_too_long: 'Password is too long.',
-  weak_password: 'Choose a stronger password.',
-  invalid_request: 'This reset link is invalid or incomplete.',
-  reset_failed: 'Password could not be changed. Please try again or request a new link.',
-};
+import { clearResetPasswordFeedback, resetPasswordFeedback, validateResetPassword, type ResetPasswordFeedback } from '../../lib/resetPasswordFeedback';
 
 export default function ResetPasswordScreen() {
   const token = new URLSearchParams(window.location.search).get('token');
@@ -21,17 +13,15 @@ export default function ResetPasswordScreen() {
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<ResetPasswordFeedback | null>(null);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (busy || done || !token) return;
-    if (!password) { setError('Enter a new password.'); return; }
-    if (password.length < 6) { setError('Password is too short.'); return; }
-    if (new TextEncoder().encode(password).length > 72) { setError('Password is too long.'); return; }
-    if (password !== confirmation) { setError('Passwords do not match.'); return; }
+    const validationError = validateResetPassword(password, confirmation);
+    if (validationError) { setError(validationError); return; }
     setBusy(true);
-    setError('');
+    setError(null);
     try {
       await completeCsrPasswordReset(token, password);
       setDone(true);
@@ -39,8 +29,7 @@ export default function ResetPasswordScreen() {
       setConfirmation('');
       window.history.replaceState(window.history.state, '', '/reset-password');
     } catch (reason) {
-      const code = reason instanceof Error ? reason.message : 'reset_failed';
-      setError(feedback[code] ?? feedback.reset_failed);
+      setError(resetPasswordFeedback(reason instanceof Error ? reason.message : 'reset_failed'));
     } finally {
       setBusy(false);
     }
@@ -60,18 +49,26 @@ export default function ResetPasswordScreen() {
             <div>
               <label htmlFor="new-password" className="mb-1 block text-sm font-medium">New Password</label>
               <div className="relative">
-                <input id="new-password" type={showPassword ? 'text' : 'password'} autoComplete="new-password" placeholder="Enter your new password" value={password} onChange={(event) => setPassword(event.target.value)} className="min-h-12 w-full rounded-xl border pl-3 pr-10 text-base placeholder:text-sm placeholder:text-muted-foreground sm:pl-4 sm:pr-12 sm:placeholder:text-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary" />
+                <input id="new-password" type={showPassword ? 'text' : 'password'} autoComplete="new-password" placeholder="Enter your new password" value={password}
+                  onChange={(event) => { setPassword(event.target.value); setError((previous) => clearResetPasswordFeedback(previous, 'new')); }}
+                  aria-invalid={error?.field === 'new' || undefined} aria-describedby={error?.field === 'new' ? 'new-password-error' : undefined}
+                  className={`min-h-12 w-full rounded-xl border pl-3 pr-10 text-base placeholder:text-sm placeholder:text-muted-foreground sm:pl-4 sm:pr-12 sm:placeholder:text-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${error?.field === 'new' ? 'border-red-500 bg-red-50/40' : ''}`} />
                 <button type="button" onClick={() => setShowPassword((shown) => !shown)} aria-label={showPassword ? 'Hide password' : 'Show password'} className="absolute right-1 top-1 grid h-10 w-10 place-items-center rounded-lg focus-visible:outline-2 focus-visible:outline-primary">{showPassword ? <EyeOff size={19} /> : <Eye size={19} />}</button>
               </div>
+              {error?.field === 'new' && <p id="new-password-error" role="alert" className="mt-1.5 text-sm text-red-700">{error.message}</p>}
             </div>
             <div>
               <label htmlFor="confirm-password" className="mb-1 block text-sm font-medium">Confirm Password</label>
               <div className="relative">
-                <input id="confirm-password" type={showConfirmation ? 'text' : 'password'} autoComplete="new-password" placeholder="Re-enter your new password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} className="min-h-12 w-full rounded-xl border pl-3 pr-10 text-base placeholder:text-sm placeholder:text-muted-foreground sm:pl-4 sm:pr-12 sm:placeholder:text-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary" />
+                <input id="confirm-password" type={showConfirmation ? 'text' : 'password'} autoComplete="new-password" placeholder="Re-enter your new password" value={confirmation}
+                  onChange={(event) => { setConfirmation(event.target.value); setError((previous) => clearResetPasswordFeedback(previous, 'confirm')); }}
+                  aria-invalid={error?.field === 'confirm' || undefined} aria-describedby={error?.field === 'confirm' ? 'confirm-password-error' : undefined}
+                  className={`min-h-12 w-full rounded-xl border pl-3 pr-10 text-base placeholder:text-sm placeholder:text-muted-foreground sm:pl-4 sm:pr-12 sm:placeholder:text-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${error?.field === 'confirm' ? 'border-red-500 bg-red-50/40' : ''}`} />
                 <button type="button" onClick={() => setShowConfirmation((shown) => !shown)} aria-label={showConfirmation ? 'Hide password' : 'Show password'} className="absolute right-1 top-1 grid h-10 w-10 place-items-center rounded-lg focus-visible:outline-2 focus-visible:outline-primary">{showConfirmation ? <EyeOff size={19} /> : <Eye size={19} />}</button>
               </div>
+              {error?.field === 'confirm' && <p id="confirm-password-error" role="alert" className="mt-1.5 text-sm text-red-700">{error.message}</p>}
             </div>
-            {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
+            {error?.field === 'general' && <p role="alert" className="text-sm text-red-700">{error.message}</p>}
             <button type="submit" disabled={busy} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 font-semibold text-white disabled:opacity-50">{busy ? <><Loader2 size={18} className="animate-spin" /> Saving…</> : 'Save New Password'}</button>
           </form>}
       </>}

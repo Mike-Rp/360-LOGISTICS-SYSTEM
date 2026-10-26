@@ -21,6 +21,7 @@ import { destinationAreaEnabled } from '../data/assignmentRoute';
 import { locationFieldsFromRow, locationColumnsForRow, invalidLocationEdit } from './assignmentLocation';
 import { storagePathOf, storedFileRef, sameStoredFile } from './storageRefs';
 import { cancelledHistoryForDriver, type CancelledHistoryItem } from './driverHistory';
+import { normalizeCsrPasswordResetError } from './resetPasswordFeedback';
 import type {
   Assignment, AssignmentDoc, CompletedTask, LocalDriver, LocalTruck, AppNotification,
   AdminActivityEntry, AdminRole, StatusPhoto, DelayReport, TeamMember,
@@ -1070,14 +1071,7 @@ export async function createCsrPasswordResetLink(id: string): Promise<string> {
   return data;
 }
 
-export type CsrPasswordResetErrorCode =
-  | 'reset_link_invalid_or_expired' | 'password_too_short' | 'password_too_long'
-  | 'weak_password' | 'invalid_request' | 'reset_failed';
-
-const resetErrorCodes: CsrPasswordResetErrorCode[] = [
-  'reset_link_invalid_or_expired', 'password_too_short', 'password_too_long',
-  'weak_password', 'invalid_request', 'reset_failed',
-];
+export type { CsrPasswordResetErrorCode } from './resetPasswordFeedback';
 
 export async function completeCsrPasswordReset(token: string, newPassword: string): Promise<void> {
   const { data, error } = await supabase.functions.invoke('complete-csr-password-reset', {
@@ -1088,7 +1082,7 @@ export async function completeCsrPasswordReset(token: string, newPassword: strin
   if (error && 'context' in error && error.context instanceof Response) {
     try { code = (await error.context.json())?.error; } catch { /* keep generic feedback */ }
   }
-  throw new Error(resetErrorCodes.includes(code) ? code : 'reset_failed');
+  throw new Error(normalizeCsrPasswordResetError(code));
 }
 
 /* ════════════════════════════════════════════════════════════════════════════

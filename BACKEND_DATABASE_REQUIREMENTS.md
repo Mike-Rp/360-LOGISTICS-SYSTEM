@@ -1785,6 +1785,53 @@ an event must never approve or reject its request. This native notification
 extension is **Pending** and has no approval to change schema, triggers, RPCs,
 or policies under the current frontend task.
 
+### LOGIN PAGE CHANGES - REQ03 — Prevent Reusing Current Password During CSR Reset
+
+**Status: PENDING BACKEND IMPLEMENTATION.** The frontend recognizes a trusted
+`password_reused` response and marks New Password invalid, but it cannot enforce
+this rule. Do not describe password-reuse prevention as complete until the
+deployed backend and its security tests verify it.
+
+**Current gap:** `complete-csr-password-reset` validates the submitted token and
+password length, atomically calls `claim_csr_password_reset`, then calls the
+service-role Auth Admin `updateUserById` before finishing the request. Its
+`logic.ts`/`index.ts` do not verify whether `newPassword` matches the claimed
+CSR account's existing password. Auth may accept the same value, returning a
+misleading success and consuming the one-time link.
+
+**Required backend contract:** After a valid, eligible, unexpired token is
+claimed and bound to its canonical `target_user_id`, compare the proposed
+password with that user's current password verifier using a trusted server-side
+mechanism. The backend developer must confirm a supported and suitably
+restricted verification method; do not assume the Auth Admin API returns a
+password hash. Never accept an arbitrary email or user ID from the caller for
+this comparison. If identical, return a non-success response with
+`{ "error": "password_reused" }`, leave the password and request status
+unchanged, and release the claim through the existing
+`release_csr_password_reset_claim` operation so the same link can be retried
+until its original expiry. Do not extend that expiry. Only update the Auth
+password and call `finish_csr_password_reset` after a different valid password
+passes verification. Preserve the current one-time claim and concurrent-use
+protections. Release a claim only when verification or password rejection is
+definitive and the password certainly has not changed; retain the existing
+conservative handling of uncertain Auth/network outcomes.
+
+Keep the verifier, any hash, service-role credentials, plaintext password, and
+raw reset token out of browser responses and logs. Do not add a public endpoint
+that tests arbitrary passwords or ask the CSR for their previous password.
+Keep the existing OPM approval, link generation, request statuses, and audit
+history. The client must show its reuse message only for an explicit
+`password_reused` response from this trusted flow.
+
+**Backend verification required:** same password is rejected without changing
+the password or completing the request; the original unexpired link then
+succeeds with a different valid password; old credentials stop working and new
+credentials work after success; invalid/expired/replayed tokens and parallel
+attempts cannot bypass the check; weak-password and uncertain-update paths
+preserve their existing claim behavior; no verifier, password, token, or key is
+exposed or logged. This requirement has not been implemented or tested against
+the connected Supabase project in this frontend task.
+
 ---
 
 ## [REQ-007] Persistent verification for generated reports
