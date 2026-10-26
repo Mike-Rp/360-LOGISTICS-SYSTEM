@@ -5,7 +5,7 @@ import {
   X, Eye, Printer, Clock, Truck, Check,
   User, MapPin, Building2, Timer, AlarmClock, Gauge,
 } from 'lucide-react';
-import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { Assignment, CompletedTask, TaskStatus, LocalTruck } from '../../data/assignmentTypes';
 import { parseStoredTimestamp } from '../../data/assignmentTypes';
 import { splitDisplayDateTime } from '../../lib/displayDateTime';
@@ -19,6 +19,7 @@ import WeeklyPrintReport from './WeeklyPrintReport';
 import MonthlyPrintReport from './MonthlyPrintReport';
 import DelayPrintReport from './DelayPrintReport';
 import FleetUtilizationPrintReport from './FleetUtilizationPrintReport';
+import DeliveryStatusDonut from './DeliveryStatusDonut';
 
 const REPORT_PAGE_SIZE = 8;
 const INCIDENT_PAGE_SIZE = 10;
@@ -1535,49 +1536,13 @@ export default function Reports({ assignments, completed, cancelled, trucks }: R
             )}
           </div>
 
-          <div className="rounded-xl border border-border bg-white p-4 sm:p-5 shadow-sm min-w-0">
+          <div data-status-card className="rounded-xl border border-border bg-white p-4 sm:p-5 shadow-sm min-w-0">
             <h4 className="font-semibold text-foreground">Delivery Status Breakdown</h4>
             <p className="text-sm text-muted-foreground mt-1">Current status of assignments in the selected period.</p>
             {entries.length === 0 ? (
               <p className="py-12 text-center text-sm text-muted-foreground">No assignments for this period.</p>
             ) : (
-              <div className="mt-4 flex flex-col items-center gap-5 sm:flex-row sm:items-center sm:gap-6">
-                <div className="relative h-48 w-48 shrink-0" role="img" aria-label="Delivery status donut chart">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={statusCounts.filter(item => item.count > 0)} dataKey="count" nameKey="status"
-                        cx="50%" cy="50%" innerRadius={54} outerRadius={88} stroke="#ffffff" strokeWidth={2}>
-                        {statusCounts.filter(item => item.count > 0).map(item => <Cell key={item.status} fill={item.color} />)}
-                      </Pie>
-                      <Tooltip content={({ active, payload }) => {
-                        const item = payload?.[0]?.payload as (typeof statusCounts)[number] | undefined;
-                        if (!active || !item) return null;
-                        return <div className="rounded-lg border border-border bg-white px-3 py-2 text-xs shadow-sm">
-                          <div className="flex items-center gap-2">
-                            <span className="h-[11px] w-[11px] shrink-0 rounded-[3px]" style={{ backgroundColor: item.color }} />
-                            <span className="font-medium text-foreground">{item.status}</span>
-                          </div>
-                          <p className="mt-1 text-muted-foreground">{item.count} assignments · {Math.round(item.count / entries.length * 100)}%</p>
-                        </div>;
-                      }} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                  <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                    <span className="text-3xl font-semibold leading-none text-foreground">{entries.length}</span>
-                    <span className="text-xs text-muted-foreground">assignments</span>
-                  </div>
-                </div>
-                <div className="w-full min-w-0 space-y-2.5">
-                  {statusCounts.map(item => (
-                    <div key={item.status} className="flex items-center gap-2 text-xs sm:text-sm">
-                      <span className="h-[11px] w-[11px] shrink-0 rounded-[3px]" style={{ backgroundColor: item.color }} />
-                      <span className="min-w-0 flex-1 text-foreground">{item.status}</span>
-                      <span className="shrink-0 font-medium text-foreground">{item.count}</span>
-                      <span className="w-9 shrink-0 text-right text-muted-foreground">{Math.round(item.count / entries.length * 100)}%</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              <DeliveryStatusDonut statusCounts={statusCounts} total={entries.length} />
             )}
           </div>
         </div>

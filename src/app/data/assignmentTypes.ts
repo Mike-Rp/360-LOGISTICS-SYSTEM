@@ -238,6 +238,8 @@ export type AdminActivityType =
   | 'task_completed'
   | 'task_cancelled'
   | 'task_edited'
+  | 'issue_reported'
+  | 'issue_resolved'
   | 'doc_approved'
   | 'doc_rejected'
   | 'driver_added'
@@ -264,6 +266,7 @@ export interface AdminActivityEntry {
   driverName?: string;
   truckPlate?: string;
   assignmentId?: string;
+  issueId?: number;
   docType?: string;
   rejectReason?: string;
   destination?: string;

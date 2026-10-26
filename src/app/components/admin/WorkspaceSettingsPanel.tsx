@@ -20,6 +20,8 @@ const ACT_CONFIG: Record<AdminActivityType, { label: string; icon: React.Element
   task_cancelled:      { label: 'Delivery Cancelled', icon: XCircle, color: 'text-red-500' },
   task_edited:         { label: 'Task Edited',    icon: Pencil,       color: 'text-amber-500'  },
   driver_added:        { label: 'Driver Added',    icon: UserPlus,    color: 'text-blue-500'   },
+  issue_reported:      { label: 'Issue Reported',  icon: XCircle,      color: 'text-red-600'    },
+  issue_resolved:      { label: 'Issue Resolved',  icon: CheckCircle,  color: 'text-green-600'  },
   driver_archived:     { label: 'Driver Archived', icon: Archive,     color: 'text-orange-500' },
   driver_pin_reset:    { label: 'Driver PIN Reset', icon: KeyRound,   color: 'text-blue-600'   },
   truck_added:         { label: 'Truck Added',     icon: Truck,       color: 'text-blue-500'   },
@@ -64,6 +66,8 @@ function getDesc(e: AdminActivityEntry): string {
     case 'task_completed':       return 'Delivery marked complete';
     case 'task_cancelled':       return 'Assignment cancelled';
     case 'task_edited':          return `Edited ${e.assignmentId ?? 'delivery'} (${Object.keys(e.changes ?? {}).length} field${Object.keys(e.changes ?? {}).length === 1 ? '' : 's'}) — ${e.reason ?? 'no reason'}`;
+    case 'issue_reported':       return `Driver reported an issue${e.reason ? `: ${e.reason}` : ''}`;
+    case 'issue_resolved':       return `Blocking issue resolved${e.reason ? ` · Note: ${e.reason}` : ''}`;
     case 'doc_approved':         return `Approved "${e.docType ?? 'document'}" for ${e.driverName ?? '—'}`;
     case 'doc_rejected':         return `Rejected "${e.docType ?? 'document'}" for ${e.driverName ?? '—'}`;
     case 'driver_deleted':       return `Removed driver "${e.driverName ?? '—'}"`;
@@ -414,7 +418,6 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
     if (!archiveTarget) return;
     await archiveTeamMember(archiveTarget.id);
     await fetchMembers();
-    onLogActivity({ type: 'member_archived', memberName: archiveTarget.name, memberEmail: archiveTarget.email });
     setArchiveTarget(null);
   };
 
@@ -422,7 +425,6 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
     if (!restoreTarget) return;
     await restoreTeamMember(restoreTarget.id);
     await fetchMembers();
-    onLogActivity({ type: 'member_restored', memberName: restoreTarget.name, memberEmail: restoreTarget.email });
     setRestoreTarget(null);
   };
 

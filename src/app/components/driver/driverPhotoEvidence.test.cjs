@@ -31,9 +31,11 @@ test('Gallery uses the successful Storage upload time; Camera retains its app-ob
   const uploadedAt = '2026-10-22T11:30:00.000Z';
   assert.deepEqual(savedPhotoMetadata(pending, 'gallery', 'stored/gallery', uploadedAt), {
     ...pending, url: 'stored/gallery', timestamp: uploadedAt,
+    source: 'gallery', captureObservedAt: null,
   });
   assert.deepEqual(savedPhotoMetadata({ ...pending, timestamp: '2026-10-22T11:25:00.000Z' }, 'camera', 'stored/camera', uploadedAt), {
     ...pending, url: 'stored/camera', timestamp: '2026-10-22T11:25:00.000Z',
+    source: 'camera', captureObservedAt: '2026-10-22T11:25:00.000Z',
   });
 });
 

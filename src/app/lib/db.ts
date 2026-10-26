@@ -524,6 +524,7 @@ export async function loadAdminData(): Promise<AdminData & ArchivedData> {
     ...(r.driver_name ? { driverName: r.driver_name } : {}),
     ...(r.truck_plate ? { truckPlate: r.truck_plate } : {}),
     ...(r.assignment_id ? { assignmentId: r.assignment_id } : {}),
+    ...(r.issue_id != null ? { issueId: r.issue_id } : {}),
     ...(r.doc_type ? { docType: r.doc_type } : {}),
     ...(r.reject_reason ? { rejectReason: r.reject_reason } : {}),
     ...(r.destination ? { destination: r.destination } : {}),

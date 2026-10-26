@@ -1454,6 +1454,12 @@ that a row exists. Confirmed the matching "Driver Added" Activity tab entry.
 Separately confirmed the name-format rejection live on both the driver
 registration form and the staff "edit your name" field.
 
+**Frontend Activity Log presentation note:** Team Member Archive/Restore
+already writes server-side audit entries, so the client no longer adds
+duplicate entries. Existing `issue_reported` and `issue_resolved` events now
+have readable labels and details in the Activity tab. These presentation
+changes were checked in code, not retested against the live database here.
+
 **2026-10-23 — CSR setup link applied and verified (closes the "CSR setup
 link" backlog item):** `supabase/migrations/20261023000010_csr_setup_link.sql`.
 Previously, adding a CSR meant OPM typed or "Suggest"-generated a temporary

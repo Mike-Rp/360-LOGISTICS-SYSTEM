@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  X, KeyRound, Bell, Eye, EyeOff, UserRound,
+  X, KeyRound, Bell, Eye, EyeOff, MoreHorizontal,
   CheckCircle2, Pencil, ChevronDown, Camera, Trash2,
 } from 'lucide-react';
 import {
@@ -12,6 +12,7 @@ import { playNotificationSound } from '../../lib/notificationSound';
 import { useModalFocus } from './useModalFocus';
 import type { StaffSession } from '../../lib/db';
 import AccountRoleBadge from './AccountRoleBadge';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
 import { passwordUpdateError, validatePasswordForm, type PasswordFormError } from '../../lib/passwordFormError';
 
 /* Mirrors update_own_display_name()'s server-side rule exactly. */
@@ -73,11 +74,23 @@ export default function SettingsPanel({ open, onClose, profile, avatarUrl, onPro
   const [nameError,   setNameError]   = useState('');
   const [avatarBusy,  setAvatarBusy]  = useState(false);
   const [avatarError, setAvatarError] = useState('');
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const nameChanged = !!nameInput.trim() && nameInput.trim() !== (profile?.name ?? '').trim();
 
   useEffect(() => { if (!editingName) setNameInput(profile?.name ?? ''); }, [profile?.name, editingName]);
 
+  useEffect(() => {
+    if (open) {
+      setEditingName(false);
+      setProfileMenuOpen(false);
+      setNameError('');
+      setAvatarError('');
+    }
+  }, [open, profile?.id]);
+
   const handleSaveName = async () => {
+    if (nameBusy || !nameChanged) return;
     setNameError('');
     const trimmed = nameInput.trim();
     if (!trimmed) { setNameError('Name is required.'); return; }
@@ -150,10 +163,10 @@ export default function SettingsPanel({ open, onClose, profile, avatarUrl, onPro
 
   /* ── Close on Esc ── */
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented) onClose(); };
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented && !profileMenuOpen) onClose(); };
     if (open) document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [open, onClose]);
+  }, [open, onClose, profileMenuOpen]);
 
   /* ── Body scroll lock ── */
   useEffect(() => {
@@ -236,9 +249,9 @@ export default function SettingsPanel({ open, onClose, profile, avatarUrl, onPro
 
           {/* ── Profile ── */}
           <section className="pb-6">
-            <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-center sm:gap-6">
-              <div className="flex-shrink-0">
-                <div className="relative flex h-[104px] w-[104px] items-center justify-center overflow-hidden rounded-[18px] border border-green-700/30 bg-[#03624c] shadow-sm sm:h-[116px] sm:w-[116px]">
+            <div className="flex min-w-0 items-start gap-3 sm:items-center sm:gap-5">
+              <div className="shrink-0">
+                <div className="relative flex h-20 w-20 items-center justify-center overflow-hidden rounded-[18px] border border-green-700/30 bg-[#03624c] shadow-sm min-[390px]:h-24 min-[390px]:w-24 sm:h-28 sm:w-28">
                   {avatarUrl
                     ? <img src={avatarUrl} alt="" className="h-full w-full object-cover" />
                     : <span className="text-3xl font-bold tracking-wide text-white">{initials}</span>}
@@ -249,57 +262,54 @@ export default function SettingsPanel({ open, onClose, profile, avatarUrl, onPro
                   )}
                 </div>
                 <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <button type="button" onClick={() => fileInputRef.current?.click()} disabled={avatarBusy}
-                    className="flex items-center gap-1.5 rounded-lg border border-border bg-white px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-muted/40 disabled:cursor-not-allowed disabled:opacity-60">
-                    <Camera className="w-3.5 h-3.5" /> {profile?.avatarPath ? 'Change photo' : 'Add photo'}
-                  </button>
-                  {profile?.avatarPath && (
-                    <button type="button" onClick={handleRemoveAvatar} disabled={avatarBusy}
-                      className="flex items-center gap-1.5 rounded-lg border border-border bg-white px-2.5 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60">
-                      <Trash2 className="w-3.5 h-3.5" /> Remove
-                    </button>
-                  )}
-                </div>
-                {avatarError && <p className="mt-1.5 text-xs text-red-500">{avatarError}</p>}
               </div>
               <div className="min-w-0 flex-1">
-                {editingName ? (
-                  <div className="max-w-xs space-y-2">
-                    <input
-                      value={nameInput}
-                      onChange={(e) => { setNameInput(e.target.value); setNameError(''); }}
-                      placeholder="Your name"
-                      className={inputCls(!!nameError)}
-                      autoFocus
-                    />
-                    {nameError && <p className="text-xs text-red-500">{nameError}</p>}
-                    <div className="flex gap-2">
-                      <button type="button" onClick={handleSaveName} disabled={nameBusy}
-                        className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60">
-                        {nameBusy ? 'Saving…' : 'Save'}
-                      </button>
-                      <button type="button" disabled={nameBusy}
-                        onClick={() => { setEditingName(false); setNameInput(profile?.name ?? ''); setNameError(''); }}
-                        className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted/40">
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                    <p className="min-w-0 break-words text-2xl font-semibold leading-tight text-foreground sm:text-[28px]">{profile?.name || 'Account'}</p>
-                    <AccountRoleBadge role={profile?.role ?? null} />
-                    <button type="button" onClick={() => setEditingName(true)} aria-label="Edit name"
-                      className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary">
-                      <Pencil className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                )}
-                <p className="mt-2 break-all text-sm text-slate-600 sm:text-base">{profile?.email ?? 'Email unavailable'}</p>
-                <p className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground"><UserRound className="h-3.5 w-3.5 text-green-800" aria-hidden="true" />Account profile</p>
+                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                  <p className="min-w-0 break-words text-xl font-semibold leading-tight text-foreground sm:text-[26px]">{profile?.name || 'Account'}</p>
+                  <AccountRoleBadge role={profile?.role ?? null} />
+                </div>
+                <p className="mt-1 break-all text-sm text-slate-600 sm:text-base">{profile?.email ?? 'Email unavailable'}</p>
               </div>
+              <DropdownMenu open={profileMenuOpen} onOpenChange={setProfileMenuOpen}>
+                <DropdownMenuTrigger asChild>
+                  <button type="button" aria-label="Profile actions" disabled={avatarBusy || nameBusy}
+                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-green-50 hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-60">
+                    <MoreHorizontal className="h-5 w-5" aria-hidden="true" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="z-[70] min-w-44">
+                  <DropdownMenuItem onSelect={() => { setEditingName(true); setNameInput(profile?.name ?? ''); setNameError(''); }}>
+                    <Pencil aria-hidden="true" />Edit Display Name
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>
+                    <Camera aria-hidden="true" />{profile?.avatarPath ? 'Change Photo' : 'Add Photo'}
+                  </DropdownMenuItem>
+                  {profile?.avatarPath && <DropdownMenuItem onSelect={handleRemoveAvatar} variant="destructive">
+                    <Trash2 aria-hidden="true" />Remove Photo
+                  </DropdownMenuItem>}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
+            {avatarError && <p className="mt-2 text-sm text-red-600" role="alert">{avatarError}</p>}
+            {editingName && (
+              <div className="mt-5 max-w-sm space-y-3">
+                <Field label="Display Name" htmlFor="settings-display-name">
+                  <input id="settings-display-name" value={nameInput}
+                    onChange={(e) => { setNameInput(e.target.value); setNameError(''); }}
+                    className={inputCls(!!nameError)} autoFocus />
+                </Field>
+                {nameError && <p className="text-sm text-red-600" role="alert">{nameError}</p>}
+                <div className="flex flex-wrap justify-end gap-2">
+                  <button type="button" disabled={nameBusy}
+                    onClick={() => { setEditingName(false); setNameInput(profile?.name ?? ''); setNameError(''); }}
+                    className="min-h-10 rounded-lg border border-border px-3 text-sm font-medium text-foreground hover:bg-muted/40 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-60">Cancel</button>
+                  <button type="button" onClick={handleSaveName} disabled={nameBusy || !nameChanged}
+                    className="min-h-10 rounded-lg bg-primary px-3 text-sm font-medium text-white hover:bg-primary/90 focus-visible:outline-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-60">
+                    {nameBusy ? 'Saving…' : 'Save Changes'}
+                  </button>
+                </div>
+              </div>
+            )}
           </section>
 
           {/* ── Password ── */}

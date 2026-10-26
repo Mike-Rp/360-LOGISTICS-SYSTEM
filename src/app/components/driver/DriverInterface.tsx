@@ -992,6 +992,19 @@ function ReasonSheet({ title, subtitle, reasons, variant, onSubmit, onCancel }: 
 /* ════════════════════════════════════════════════════════════
    DOCUMENT ROW (redesigned)
    ════════════════════════════════════════════════════════════ */
+function PendingReviewIndicator() {
+  return (
+    <span className="relative flex h-11 w-11 items-center justify-center" aria-hidden="true">
+      <svg className="pointer-events-none absolute inset-1 h-9 w-9 animate-spin text-cyan-600 [animation-duration:3s] motion-reduce:animate-none"
+        viewBox="0 0 36 36" fill="none">
+        <circle cx="18" cy="18" r="15" stroke="currentColor" strokeWidth="1.5"
+          strokeDasharray="62 33" strokeLinecap="round" />
+      </svg>
+      <Clock className="relative h-6 w-6 text-cyan-700" />
+    </span>
+  );
+}
+
 function DocRow({ doc, onUpload, isDelivered, isBlurry, isFocused, isHighlighted }: {
   doc: NormDoc; onUpload: (type: string, file: File) => void; isDelivered: boolean; isBlurry?: boolean; isFocused?: boolean; isHighlighted?: boolean;
 }) {
@@ -1021,7 +1034,7 @@ function DocRow({ doc, onUpload, isDelivered, isBlurry, isFocused, isHighlighted
           {!isDelivered ? <Lock className="w-5 h-5 text-gray-300" /> :
            isApproved   ? <CheckCircle2 className="w-6 h-6 text-green-600" /> :
            isRejected   ? <XCircle className="w-6 h-6 text-red-500" /> :
-           isPending    ? <Clock className="w-6 h-6 text-cyan-600" /> :
+           isPending    ? <PendingReviewIndicator /> :
                           <Camera className="w-6 h-6 text-green-600" />}
         </div>
         <div className="flex-1 min-w-0">
@@ -2575,7 +2588,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   /* ── Shared failed-write banner ── rendered on both screens, like LogoutDialog below.
      Tap to dismiss; also clears by itself as soon as a write succeeds. */
   const ActionErrorBanner = actionError && (
-    <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[60] w-[92%] max-w-sm">
+    <div className="fixed left-1/2 top-[calc(4.75rem_+_env(safe-area-inset-top))] z-[60] w-[92%] max-w-sm -translate-x-1/2">
       <button
         onClick={() => setActionError('')}
         className="w-full bg-red-600 text-white text-sm font-semibold px-4 py-3 rounded-2xl shadow-lg flex items-start gap-2 text-left"
@@ -2715,18 +2728,26 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   ) : null;
 
   const LanguageNotice = languageNotice && (
-    <div role="status" aria-live="polite" className="fixed bottom-5 left-1/2 -translate-x-1/2 z-[70] w-[min(92vw,420px)] rounded-2xl bg-gray-900 px-4 py-3 text-white shadow-xl flex items-center gap-2 text-sm font-semibold">
+    <div role="status" className="rounded-2xl bg-gray-900 px-4 py-3 text-white shadow-xl flex items-center gap-2 text-sm font-semibold">
       <CheckCircle2 className="h-5 w-5 shrink-0" aria-hidden="true" />
       {languageNotice === 'fil' ? t('language.changedFil') : t('language.changedEn')}
     </div>
   );
 
   const StatusNotice = statusNotice && (
-    <div role="status" aria-live="polite" className="fixed bottom-5 left-1/2 -translate-x-1/2 z-[70] w-[min(92vw,420px)] rounded-2xl bg-green-800 px-4 py-3 text-white shadow-xl flex items-center gap-2 text-sm font-semibold">
+    <div role="status" className="rounded-2xl bg-green-800 px-4 py-3 text-white shadow-xl flex items-center gap-2 text-sm font-semibold">
       <CheckCircle2 className="h-5 w-5 shrink-0" aria-hidden="true" />
       {t('slide.statusSaved', { status: statusText(statusNotice) })}
     </div>
   );
+  const DriverNotices = (LanguageNotice || StatusNotice) && (
+    <div aria-live="polite" style={{ bottom: stickyActionHeight ? stickyActionHeight + 72 : undefined }}
+      className={`fixed left-1/2 z-[70] flex w-[min(92vw,420px)] -translate-x-1/2 flex-col gap-2 ${stickyActionHeight ? '' : 'bottom-[calc(1.25rem_+_env(safe-area-inset-bottom))]'}`}>
+      {LanguageNotice}
+      {StatusNotice}
+    </div>
+  );
+
   /* ════════════════════════════════════════════════════════════
      DASHBOARD SCREEN
   ════════════════════════════════════════════════════════════ */
@@ -2901,8 +2922,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
         {ActionErrorBanner}
         {DriverDrawers}
         {LogoutDialog}
-        {LanguageNotice}
-        {StatusNotice}
+        {DriverNotices}
         {CompletionPopup}
         {CancellationPopup}
       </div>
@@ -2948,8 +2968,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
       </main>
       {selectedHistoryId && <HistoryDetailsSheet key={selectedHistoryId} driverId={driverId} driverName={driverName} assignmentId={selectedHistoryId} onClose={closeHistoryDetail} onCheckSession={onCheckSession} issueNotification={focusedIssueNotification} />}
       {selectedCancelledHistory && <CancelledHistoryDetails item={selectedCancelledHistory} onClose={() => setSelectedCancelledId(null)} issueNotification={focusedIssueNotification} />}
-      {LanguageNotice}
-      {StatusNotice}
+      {DriverNotices}
       {CompletionPopup}
       {CancellationPopup}
     </div>;
@@ -3386,8 +3405,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
       {ActionErrorBanner}
       {DriverDrawers}
       {LogoutDialog}
-      {LanguageNotice}
-      {StatusNotice}
+      {DriverNotices}
       {CompletionPopup}
       {CancellationPopup}
     </div>
