@@ -10,7 +10,7 @@ import { adminHref, pushAdminNavigation } from '../../lib/adminNavigation';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/dialog';
 import ASNWithCopy from './ASNWithCopy';
 import DocumentsSummaryCard from './DocumentsSummaryCard';
-import { OperationalEvidence } from './ShipmentPhotoEvidence';
+import { OperationalEvidence, type OperationalPhotoSelection } from './ShipmentPhotoEvidence';
 import UploadedFilePreviewModal from './UploadedFilePreviewModal';
 
 function SummaryField({ label, value, emphasized = false }: { label: string; value?: string | null; emphasized?: boolean }) {
@@ -36,7 +36,7 @@ export default function CompletedDeliverySummary({ assignment, truck, onClose }:
   truck?: LocalTruck;
   onClose: () => void;
 }) {
-  const [preview, setPreview] = useState<{ url: string; type: string; timestamp?: string } | null>(null);
+  const [preview, setPreview] = useState<OperationalPhotoSelection | null>(null);
   const [expandedPhotoGroup, setExpandedPhotoGroup] = useState<string | null>(null);
   useEffect(() => {
     setExpandedPhotoGroup(null);
@@ -91,15 +91,16 @@ export default function CompletedDeliverySummary({ assignment, truck, onClose }:
           </div>
 
           <OperationalEvidence assignment={assignment} expandedGroup={expandedPhotoGroup}
-            onExpand={setExpandedPhotoGroup} onPreview={(url, type, timestamp) => setPreview({ url, type, timestamp })} />
+            onExpand={setExpandedPhotoGroup} onPreview={setPreview} />
         </div>
       </div>}
 
       <div className="shrink-0 border-t border-border bg-white px-4 py-3 text-right sm:px-6">
         <DialogClose className="min-h-10 rounded-lg border border-border px-5 py-2 text-sm font-medium text-foreground hover:bg-muted/30">Close</DialogClose>
       </div>
-      {preview && <UploadedFilePreviewModal url={preview.url} title={preview.type} kind="image" timestamp={preview.timestamp}
-        assignmentId={assignment?.id} onClose={() => setPreview(null)} />}
+      {preview && <UploadedFilePreviewModal key={`${preview.assignmentId}:${preview.slotKey}`} url={preview.photo.url}
+        title={preview.title} kind="image" timestamp={preview.photo.timestamp} operationalPhoto={preview.photo}
+        assignmentId={preview.assignmentId} onClose={() => setPreview(null)} />}
     </DialogContent>
   </Dialog>;
 }

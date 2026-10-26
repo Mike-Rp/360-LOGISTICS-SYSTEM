@@ -3,15 +3,20 @@ import { useEffect, useRef } from 'react';
 import type { Assignment, StatusPhoto } from '../../data/assignmentTypes';
 import { OPERATIONAL_PHOTO_GROUPS, findGroupLocationOutliers } from '../../lib/assignmentOperational';
 import { splitDisplayDateTime } from '../../lib/displayDateTime';
+import { selectOperationalPhoto, type OperationalPhotoSelection } from '../../lib/photoEvidenceDetails';
 
-export function OperationalPhotoItem({ groupTitle, label, photo, required = true, locationFlagged = false, onPreview }: {
+export type { OperationalPhotoSelection } from '../../lib/photoEvidenceDetails';
+
+export function OperationalPhotoItem({ assignmentId, slotKey, groupTitle, label, photo, required = true, locationFlagged = false, onPreview }: {
+  assignmentId: string;
+  slotKey: string;
   groupTitle: string;
   label: string;
   photo?: StatusPhoto;
   required?: boolean;
   /** This photo's own GPS is far from the rest of its group's — a derived cross-check, not proof of anything wrong. */
   locationFlagged?: boolean;
-  onPreview: (url: string, type: string, timestamp?: string) => void;
+  onPreview: (selection: OperationalPhotoSelection) => void;
 }) {
   const labelRow = <div className="mt-2">
     <span className="break-words text-sm font-medium text-foreground">{label}</span>
@@ -30,7 +35,7 @@ export function OperationalPhotoItem({ groupTitle, label, photo, required = true
   const deviceLocation = recordedLocation || (photo.coords
     ? `${photo.coords.lat.toFixed(5)}, ${photo.coords.lng.toFixed(5)}` : null);
   return <div className="min-w-0">
-    <button type="button" onClick={() => onPreview(photo.url, `${groupTitle} · ${label}`, photo.timestamp)}
+    <button type="button" onClick={() => onPreview(selectOperationalPhoto(assignmentId, slotKey, `${groupTitle} · ${label}`, photo))}
       className="group relative block w-full overflow-hidden rounded-md bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
       aria-label={`View ${groupTitle} ${label} photo`}>
       <span className="flex h-28 w-full items-center justify-center sm:h-32">
@@ -60,7 +65,7 @@ export function OperationalPhotoItem({ groupTitle, label, photo, required = true
 /** Shared read-only evidence accordion for active shipments and completed summaries. */
 export function OperationalEvidence({ assignment, onPreview, expandedGroup, onExpand }: {
   assignment: Assignment;
-  onPreview: (url: string, type: string, timestamp?: string) => void;
+  onPreview: (selection: OperationalPhotoSelection) => void;
   expandedGroup: string | null;
   onExpand: (group: string | null) => void;
 }) {
@@ -120,7 +125,7 @@ export function OperationalEvidence({ assignment, onPreview, expandedGroup, onEx
           <p className="mb-3 text-[13px] text-muted-foreground">{description}</p>
           <div className={`grid gap-x-3 gap-y-4 sm:gap-x-4 ${isAngles ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-1 min-[430px]:grid-cols-2'}`}>
             {group.slots.map(({ key, label, photo }) => <OperationalPhotoItem key={key}
-              groupTitle={group.title} label={label} photo={photo} locationFlagged={group.outliers.has(key)}
+              assignmentId={assignment.id} slotKey={key} groupTitle={group.title} label={label} photo={photo} locationFlagged={group.outliers.has(key)}
               onPreview={onPreview} />)}
           </div>
           {group.title === 'Loading' && assignment.loadingRemark && (

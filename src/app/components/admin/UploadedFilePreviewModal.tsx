@@ -1,16 +1,20 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { Download, X } from 'lucide-react';
+import { ChevronDown, Download, MapPin, X } from 'lucide-react';
+import type { StatusPhoto } from '../../data/assignmentTypes';
 import { splitDisplayDateTime } from '../../lib/displayDateTime';
+import { getPhotoEvidenceDetails } from '../../lib/photoEvidenceDetails';
 import ZoomableImage from './ZoomableImage';
 
 /** Viewer for the signed Storage URLs saved with photos and documents. */
-export default function UploadedFilePreviewModal({ url, title, kind, timestamp, assignmentId, onClose, labels }: {
+export default function UploadedFilePreviewModal({ url, title, kind, timestamp, assignmentId, operationalPhoto, onClose, labels }: {
   url: string;
   title: string;
   kind: 'image' | 'document';
   timestamp?: string;
   assignmentId?: string;
+  /** Present only when this image came from a selected operational photo slot. */
+  operationalPhoto?: StatusPhoto;
   onClose: () => void;
   labels?: Partial<{
     close: string; dateUnavailable: string; download: string; downloading: string;
@@ -22,9 +26,13 @@ export default function UploadedFilePreviewModal({ url, title, kind, timestamp, 
   const [imageFailed, setImageFailed] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState('');
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const detailsId = useId();
+  const detailsButtonId = useId();
   const isPdf = url.startsWith('data:application/pdf') || /\.pdf$/i.test(storedPath);
   const isImage = kind === 'image' || /^data:image\//i.test(url) || /\.(png|jpe?g|webp|gif|bmp)$/i.test(storedPath);
   const stamp = splitDisplayDateTime(timestamp);
+  const photoDetails = kind === 'image' && operationalPhoto ? getPhotoEvidenceDetails(operationalPhoto) : null;
 
   useEffect(() => { setImageFailed(false); }, [url]);
 
@@ -79,6 +87,25 @@ export default function UploadedFilePreviewModal({ url, title, kind, timestamp, 
                 onError={() => setImageFailed(true)} labels={labels} />
               : <p className="text-sm text-muted-foreground">{labels?.previewUnavailable ?? 'Preview unavailable'}</p>}
         </div>
+        {photoDetails && <section className="shrink-0 border-t border-border bg-white">
+          <button type="button" id={detailsButtonId} aria-expanded={detailsOpen} aria-controls={detailsId}
+            onClick={() => setDetailsOpen((open) => !open)}
+            className="flex min-h-11 w-full items-center gap-2 px-4 py-2 text-left text-sm font-semibold text-foreground hover:bg-muted/30 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-blue-500 sm:px-5">
+            <MapPin className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <span className="flex-1">Photo Details</span>
+            <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none ${detailsOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
+          </button>
+          {detailsOpen && <div id={detailsId} role="region" aria-labelledby={detailsButtonId}
+            className="max-h-[min(34dvh,260px)] overflow-y-auto border-t border-border px-4 py-3 sm:px-5">
+            <dl className="grid min-w-0 grid-cols-1 gap-x-6 gap-y-3 min-[600px]:grid-cols-2">
+              {photoDetails.rows.map(({ label, value }) => <div key={label} className="min-w-0">
+                <dt className="text-sm font-medium text-muted-foreground">{label}</dt>
+                <dd className="mt-0.5 break-words text-sm font-medium text-foreground [overflow-wrap:anywhere]">{value}</dd>
+              </div>)}
+            </dl>
+            {photoDetails.locationNote && <p className="mt-3 text-sm text-muted-foreground">{photoDetails.locationNote}</p>}
+          </div>}
+        </section>}
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-border bg-white px-4 py-3 pb-[max(12px,env(safe-area-inset-bottom))] sm:px-5">
           {downloadError && <p role="alert" className="mr-auto text-sm text-red-700">{downloadError}</p>}
           <button type="button" onClick={download} disabled={downloading}

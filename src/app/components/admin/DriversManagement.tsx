@@ -16,7 +16,7 @@ import { LimitedTextCounter, STANDARD_REMARK_LIMIT, validRequiredLimitedText, wi
 import TruckImage from '../TruckImage';
 import ASNWithCopy from './ASNWithCopy';
 import DocumentsSummaryCard from './DocumentsSummaryCard';
-import { OperationalEvidence } from './ShipmentPhotoEvidence';
+import { OperationalEvidence, type OperationalPhotoSelection } from './ShipmentPhotoEvidence';
 import UploadedFilePreviewModal from './UploadedFilePreviewModal';
 import PasswordVisibilityInput from './PasswordVisibilityInput';
 import ConfirmPasswordDialog from './ConfirmPasswordDialog';
@@ -61,7 +61,7 @@ function Highlight({ text, query }: { text: string; query: string }) {
 import {
   DEMO_ADMIN_EMAIL, parseStoredTimestamp,
   type Assignment, type CompletedTask, type LocalDriver, type LocalTruck,
-  type DocStatus, type AdminActivityEntry, type AdminActivityInput, type AssignmentDoc, type AppNotification,
+  type DocStatus, type AdminActivityEntry, type AdminActivityInput, type AssignmentDoc, type AppNotification, type StatusPhoto,
 } from '../../data/assignmentTypes';
 
 /* ─── Date & time values ───────────────────────────── */
@@ -989,7 +989,8 @@ function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClo
     setShowCancelPassword(false);
     setCancelError('');
   };
-  const [previewDoc,    setPreviewDoc]    = useState<{ url: string; type: string; kind: 'image' | 'document'; timestamp?: string } | null>(null);
+  const [previewDoc,    setPreviewDoc]    = useState<{ url: string; type: string; kind: 'image' | 'document'; timestamp?: string;
+    assignmentId?: string; photoSlotKey?: string; operationalPhoto?: StatusPhoto } | null>(null);
   const [rejectingDoc,  setRejectingDoc]  = useState<string | null>(null);
   const [rejectReason,  setRejectReason]  = useState('');
   const [docActionBusy, setDocActionBusy] = useState<string | null>(null);
@@ -1037,6 +1038,7 @@ function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClo
     return () => window.clearTimeout(timer);
   }, [activityTarget, activeTab, assignment?.id]);
   useEffect(() => {
+    setPreviewDoc(null);
     setPhotosViewed(false);
     setCompleteError('');
     setResolveNote('');
@@ -1285,7 +1287,9 @@ function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClo
 
         {activeTab === 'photos' && <OperationalEvidence assignment={assignment}
           expandedGroup={expandedPhotoGroup} onExpand={setExpandedPhotoGroup}
-          onPreview={(url, type, timestamp) => setPreviewDoc({ url, type, kind: 'image', timestamp })} />}
+          onPreview={({ assignmentId, slotKey, title, photo }: OperationalPhotoSelection) =>
+            setPreviewDoc({ url: photo.url, type: title, kind: 'image', timestamp: photo.timestamp,
+              assignmentId, photoSlotKey: slotKey, operationalPhoto: photo })} />}
 
         {activeTab === 'documents' && <div className="space-y-4">
           {/* Documents */}
@@ -1528,8 +1532,10 @@ function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClo
 
       {/* Image Preview */}
       {previewDoc && (
-        <UploadedFilePreviewModal url={previewDoc.url} title={previewDoc.type} kind={previewDoc.kind} timestamp={previewDoc.timestamp}
-          assignmentId={assignment?.id} onClose={() => setPreviewDoc(null)} />
+        <UploadedFilePreviewModal key={`${previewDoc.assignmentId ?? assignment?.id}:${previewDoc.photoSlotKey ?? previewDoc.type}`}
+          url={previewDoc.url} title={previewDoc.type} kind={previewDoc.kind} timestamp={previewDoc.timestamp}
+          operationalPhoto={previewDoc.kind === 'image' ? previewDoc.operationalPhoto : undefined}
+          assignmentId={previewDoc.assignmentId ?? assignment?.id} onClose={() => setPreviewDoc(null)} />
       )}
     </div>
   );
