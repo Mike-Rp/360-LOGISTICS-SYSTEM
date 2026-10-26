@@ -457,24 +457,27 @@ current document status summaries without persisted read state or event time.
 
 ### DRIVER UI CHANGES - REQ16 follow-up — persistent document review alerts
 
-**Status:** Pending. **Approval:** Pending. The document review path now uses
-`approve_document` and `reject_document` RPCs
-(`20261025000006_document_review_rpcs.sql`). Those RPCs still do not insert
-Driver-targeted notification rows. The frontend currently derives current
-approved/rejected document cards from the active assignment's document status.
-They have no independent event timestamp, read flag, or historical feed entry.
+**Status: Implemented and verified live (2026-10-27).**
+`supabase/migrations/20261027000000_document_review_driver_notifications.sql`.
+`approve_document()`/`reject_document()` (unchanged otherwise from
+`20261025000006_document_review_rpcs.sql`) each gained one idempotent
+`notifications` insert — deterministic id (`'notif-docapproved-'||assignment_id||'-'||doc_type`,
+same for rejected), driver-targeted (`recipient_driver_id`), with the review
+timestamp and rejection reason where applicable — same pattern as the other
+3 driver notification events from REQ-014. `notifications.type` widened for
+`driver_doc_approved`/`driver_doc_rejected`. No frontend fetch change needed
+(the existing per-driver notification query is type-agnostic); added proper
+icons (FileCheck/FileX) and titles instead of the generic fallback, in both
+English and Filipino. The existing client-derived "Current document reviews"
+section is kept, unchanged, alongside the new real feed — exactly as this
+entry originally asked.
 
-For a fully persistent, chronological Driver document notification feed, have
-each authorized review RPC create one idempotent notification for the affected
-driver, with a stable event ID, canonical approval/rejection type, assignment ID,
-document type, actual review timestamp, and rejection reason where applicable.
-Return those fields through the existing driver notification query, and use the
-existing guarded read RPCs for per-driver read state. Preserve the recipient
-ownership check (`recipient_driver_id = my_driver_id()`) and do not expose staff
-records or another driver's documents. Backend tests should cover idempotency,
-ownership, read persistence, approval and rejection events, and correction
-reviews. Until implemented, the frontend keeps **Current document reviews** as
-actionable status summaries without claiming they are server-persisted alerts.
+Verified live on `ASN58685`: approved "Proof of Delivery" and rejected
+"Receiving Acknowledgement Report" — both correctly appeared in the driver's
+notification feed with the right icon/title/message/read-state, confirmed
+via SQL (`notif-docapproved-ASN58685-Proof of Delivery`,
+`notif-docrejected-ASN58685-Receiving Acknowledgement Report`, correct
+types/messages/read flags persisted).
 
 ### A. Existing implementation (pre-2026-10-25, kept for reference)
 
