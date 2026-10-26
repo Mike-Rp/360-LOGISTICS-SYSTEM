@@ -1793,10 +1793,23 @@ or policies under the current frontend task.
 
 ### LOGIN PAGE CHANGES - REQ03 — Prevent Reusing Current Password During CSR Reset
 
-**Status: PENDING BACKEND IMPLEMENTATION.** The frontend recognizes a trusted
-`password_reused` response and marks New Password invalid, but it cannot enforce
-this rule. Do not describe password-reuse prevention as complete until the
-deployed backend and its security tests verify it.
+**Status: IMPLEMENTED (2026-10-26).** The backend now refuses the account's
+current password and returns `password_reused`; the frontend shows the message
+under New Password.
+
+**Implementation:** `supabase/migrations/20261026000003_csr_reset_password_reuse.sql`
+adds `csr_password_reset_password_matches(request_id, token_hash, password)`
+(service_role only; answers only for an approved, unexpired request claimed with
+that exact token hash; bcrypt compare via `extensions.crypt()`; never returns or
+stores the hash or password). The `complete-csr-password-reset` Edge Function
+(`logic.ts`, `index.ts`) calls it right after the claim: on a match it releases
+the claim and replies `password_reused` without touching the password, so the
+same link works until its original expiry; if the check itself fails it also
+releases the claim and replies `reset_failed`. The CSR setup link uses the same
+path. **Verification:** `supabase/tests/csr_reset_password_reuse.test.sql` 5/5
+passed; `logic.test.cjs` 14/14; Edge Function deployed 2026-10-26; the user
+tested live (same password refused, different password accepted on the same
+link). The text below is the original requirement, kept for history.
 
 **Current gap:** `complete-csr-password-reset` validates the submitted token and
 password length, atomically calls `claim_csr_password_reset`, then calls the

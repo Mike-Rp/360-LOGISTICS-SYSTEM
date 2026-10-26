@@ -23,14 +23,20 @@ const HASH = createHash('sha256').update(TOKEN).digest('hex');
 const PASSWORD = 'n3w-Passw0rd';
 
 /* A fake database + Auth that behaves like the real one: one claim per token. */
-function fakeBackend({ tokenHash = HASH, auth = () => ({ ok: true }), finishFails = 0 } = {}) {
-  const state = { claimed: false, completed: false, released: 0, finishCalls: 0, password: null, logs: [], calls: [] };
+function fakeBackend({ tokenHash = HASH, auth = () => ({ ok: true }), finishFails = 0, current = 'old-Passw0rd', reuseCheck = null } = {}) {
+  const state = { claimed: false, completed: false, released: 0, finishCalls: 0, password: current, logs: [], calls: [] };
   const deps = {
     async claim(h) {
       state.calls.push(['claim', h]);
       if (h !== tokenHash || state.claimed || state.completed) return null;
       state.claimed = true;
       return { requestId: 'req-1', userId: 'user-1' };
+    },
+    async passwordMatches(id, h, pw) {
+      state.calls.push(['passwordMatches', id, h]);          // the password itself is not recorded
+      if (reuseCheck) { const r = reuseCheck(); if (r instanceof Error) throw r; }
+      if (!state.claimed || h !== tokenHash) throw new Error('reset_not_claimed');
+      return pw === state.password;
     },
     async setPassword(userId, pw) {
       state.calls.push(['setPassword', userId]);
@@ -61,7 +67,7 @@ test('valid token + password: claims, changes the password, completes the reques
   assert.deepEqual(r, { status: 200, body: { ok: true } });
   assert.equal(state.password, PASSWORD);
   assert.equal(state.completed, true);
-  assert.deepEqual(state.calls.map((c) => c[0]), ['claim', 'setPassword', 'finish']);
+  assert.deepEqual(state.calls.map((c) => c[0]), ['claim', 'passwordMatches', 'setPassword', 'finish']);
   assert.equal(state.calls[0][1], HASH, 'only the hash is sent to the database');
 });
 
@@ -151,4 +157,36 @@ test('finish is retried once; password change still reported as done', async () 
   assert.equal((await logic.completeReset({ token: TOKEN, newPassword: PASSWORD }, b.deps)).status, 200);
   assert.equal(b.state.finishCalls, 2);
   assert.deepEqual(b.state.logs.map((l) => l[0]), ['finish_failed', 'finish_failed']);
+});
+
+test('the current password is refused: nothing changes, claim released, same link works with a new password', async () => {
+  const { deps, state } = fakeBackend({ current: PASSWORD });
+  const r = await logic.completeReset({ token: TOKEN, newPassword: PASSWORD }, deps);
+  assert.deepEqual(r, { status: 400, body: { error: 'password_reused' } });
+  assert.equal(state.calls.filter((c) => c[0] === 'setPassword').length, 0, 'Auth never asked');
+  assert.equal(state.released, 1);
+  assert.equal(state.completed, false);
+  assert.equal(JSON.stringify(state.logs).includes(PASSWORD), false);
+  const second = await logic.completeReset({ token: TOKEN, newPassword: 'Different-Passw0rd' }, deps);
+  assert.deepEqual(second, { status: 200, body: { ok: true } });
+  assert.equal(state.password, 'Different-Passw0rd');
+  assert.equal(state.completed, true);
+});
+
+test('the reuse check runs only after a successful claim (no tester for arbitrary links)', async () => {
+  const { deps, state } = fakeBackend({ current: PASSWORD });
+  const r = await logic.completeReset({ token: 'f'.repeat(64), newPassword: PASSWORD }, deps);
+  assert.equal(r.body.error, 'reset_link_invalid_or_expired');
+  assert.equal(state.calls.filter((c) => c[0] === 'passwordMatches').length, 0);
+});
+
+test('reuse check fails (database error): nothing changes, claim released, link can be retried', async () => {
+  let down = true;
+  const { deps, state } = fakeBackend({ reuseCheck: () => (down ? new Error('db down') : null) });
+  const r = await logic.completeReset({ token: TOKEN, newPassword: PASSWORD }, deps);
+  assert.deepEqual(r, { status: 500, body: { error: 'reset_failed' } });
+  assert.equal(state.calls.filter((c) => c[0] === 'setPassword').length, 0);
+  assert.equal(state.released, 1);
+  down = false;
+  assert.equal((await logic.completeReset({ token: TOKEN, newPassword: PASSWORD }, deps)).status, 200);
 });

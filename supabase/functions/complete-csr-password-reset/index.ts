@@ -38,6 +38,13 @@ const deps = {
     const row = Array.isArray(data) ? data[0] : null;
     return row ? { requestId: row.request_id, userId: row.target_user_id } : null;
   },
+  async passwordMatches(requestId: string, tokenHash: string, password: string) {
+    const { data, error } = await admin.rpc('csr_password_reset_password_matches', {
+      p_request_id: requestId, p_token_hash: tokenHash, p_password: password,
+    });
+    if (error || typeof data !== 'boolean') throw new Error('reuse_check_failed');
+    return data;
+  },
   async setPassword(userId: string, password: string) {
     const { error } = await admin.auth.admin.updateUserById(userId, { password });
     if (!error) return { ok: true };

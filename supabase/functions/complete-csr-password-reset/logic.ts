@@ -1,3 +1,5 @@
+// @ts-nocheck — the Supabase dashboard editor type-checks without strict mode and flags the
+// narrowing below; it is valid TypeScript and runs on Deno. Typed and tested via logic.test.cjs.
 // REQ-006 — the decision logic of the complete-csr-password-reset Edge Function.
 // Kept free of Deno/npm imports so it can be unit-tested with Node
 // (logic.test.cjs). index.ts wires it to Supabase.
@@ -16,6 +18,7 @@ export type ResetError =
   | 'password_too_short'
   | 'password_too_long'
   | 'weak_password'
+  | 'password_reused'
   | 'reset_failed';
 
 export interface ResetResult {
@@ -29,6 +32,9 @@ export type SetPasswordOutcome = { ok: true } | { ok: false; definitive: boolean
 
 export interface ResetDeps {
   claim(tokenHash: string): Promise<{ requestId: string; userId: string } | null>;
+  /** Is this the claimed account's CURRENT password? Answered by the database
+   *  (bcrypt compare) only for a request claimed with this token hash. */
+  passwordMatches(requestId: string, tokenHash: string, password: string): Promise<boolean>;
   setPassword(userId: string, password: string): Promise<SetPasswordOutcome>;
   release(requestId: string, tokenHash: string): Promise<void>;
   finish(requestId: string, tokenHash: string): Promise<void>;
@@ -63,7 +69,24 @@ export async function completeReset(body: unknown, deps: ResetDeps): Promise<Res
   const claimed = await deps.claim(tokenHash);
   if (!claimed) return { status: 400, body: { error: 'reset_link_invalid_or_expired' } };
 
-  // 2. The password change itself, through the Auth Admin API.
+  // 2. Refuse the current password. Nothing has changed yet, so the claim is
+  //    always released here: the same link works for another try until its
+  //    original expiry (not extended).
+  let reused: boolean;
+  try {
+    reused = await deps.passwordMatches(claimed.requestId, tokenHash, input.password);
+  } catch {
+    try { await deps.release(claimed.requestId, tokenHash); } catch { deps.log('release_failed'); }
+    deps.log('reuse_check_failed');
+    return { status: 500, body: { error: 'reset_failed' } };
+  }
+  if (reused) {
+    try { await deps.release(claimed.requestId, tokenHash); } catch { deps.log('release_failed'); }
+    deps.log('password_reused');
+    return { status: 400, body: { error: 'password_reused' } };
+  }
+
+  // 3. The password change itself, through the Auth Admin API.
   let outcome: SetPasswordOutcome;
   try {
     outcome = await deps.setPassword(claimed.userId, input.password);
@@ -84,7 +107,7 @@ export async function completeReset(body: unknown, deps: ResetDeps): Promise<Res
     return { status: 502, body: { error: 'reset_failed' } };
   }
 
-  // 3. Mark the request completed. The password already changed, so report
+  // 4. Mark the request completed. The password already changed, so report
   //    success even if this bookkeeping fails twice — the claimed link can't be
   //    used again either way, and the request lapses at its 45-minute expiry.
   for (let attempt = 1; attempt <= 2; attempt++) {
