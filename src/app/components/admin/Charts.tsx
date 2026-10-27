@@ -124,7 +124,10 @@ type FleetEvent = {
   timestamp: string;
 };
 
-function notifToEvent(n: AppNotification): FleetEvent {
+/* Password reset requests have no driver/truck/assignment — they never reach this function. */
+type FleetNotification = AppNotification & { type: 'doc_upload' | 'status_update' | 'delay_report' | 'issue_report' };
+
+function notifToEvent(n: FleetNotification): FleetEvent {
   const base = { id: n.id, driverName: n.driverName, truckPlate: n.truckPlate, timestamp: n.timestamp };
   switch (n.type) {
     case 'doc_upload':
@@ -146,7 +149,9 @@ function buildFleetEvents(
   notifications: AppNotification[],
   completed: CompletedTask[],
 ): FleetEvent[] {
-  const notifEvents = notifications.map(notifToEvent);
+  const notifEvents = notifications
+    .filter((n): n is FleetNotification => n.type !== 'password_reset_requested')
+    .map(notifToEvent);
 
   /* Add completion events for tasks that have no corresponding status_update notification */
   const notifAssignmentIds = new Set(notifications.map((n) => n.assignmentId));

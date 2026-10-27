@@ -507,7 +507,7 @@ export async function loadAdminData(): Promise<AdminData & ArchivedData> {
      loadDriverData — never surface them as staff cards or let the admin
      auto-save diff engine see/touch them. */
   const notifications: AppNotification[] = notifRows.filter((r) => !r.recipient_driver_id).map((r) => ({
-    id: r.id, type: r.type, message: r.message ?? '', assignmentId: r.assignment_id,
+    id: r.id, type: r.type, message: r.message ?? '', assignmentId: r.assignment_id ?? '',
     driverName: r.driver_name ?? '', truckPlate: r.truck_plate ?? '', read: !!r.read, timestamp: r.time_label ?? '',
     ...(r.created_at ? { createdAt: r.created_at } : {}),
     ...(r.doc_type ? { docType: r.doc_type } : {}),
@@ -515,6 +515,7 @@ export async function loadAdminData(): Promise<AdminData & ArchivedData> {
     ...(r.photo_url ? { photoUrl: displayUrl(r.photo_url) } : {}),
     ...(r.reason ? { reason: r.reason } : {}),
     ...(r.navigate_to ? { navigateTo: r.navigate_to } : {}),
+    ...(r.reset_request_id ? { resetRequestId: r.reset_request_id } : {}),
   }));
 
   const activityLog: AdminActivityEntry[] = actRows.map((r) => ({

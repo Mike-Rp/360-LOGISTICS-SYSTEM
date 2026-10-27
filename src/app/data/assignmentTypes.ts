@@ -214,7 +214,7 @@ export const DRIVER_STATUS_FLOW: TaskStatus[] = [
 
 export interface AppNotification {
   id: string;
-  type: 'doc_upload' | 'status_update' | 'delay_report' | 'issue_report';
+  type: 'doc_upload' | 'status_update' | 'delay_report' | 'issue_report' | 'password_reset_requested';
   message: string;
   assignmentId: string;
   driverName: string;
@@ -228,6 +228,8 @@ export interface AppNotification {
   /** Database event time; unlike the display label, this retains the year and timezone. */
   createdAt?: string;
   navigateTo?: string;
+  /** Only set for type 'password_reset_requested' — id of the csr_password_reset_requests row. */
+  resetRequestId?: string;
 }
 
 export type AdminRole = 'admin' | 'csr' | 'opm';

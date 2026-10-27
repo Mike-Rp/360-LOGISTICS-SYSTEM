@@ -1,11 +1,10 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import {
   User, ChevronDown, Bell, CalendarDays, Search, ArrowLeft, Settings, HelpCircle, LogOut,
   Truck, CheckCheck, X, Users,
   FileText, AlertTriangle, AlertCircle, KeyRound,
 } from 'lucide-react';
 import type { AdminRole, AppNotification } from '../../data/assignmentTypes';
-import type { CsrPasswordResetRequest } from '../../lib/db';
 import AccountRoleBadge from './AccountRoleBadge';
 import { Popover, PopoverTrigger, PopoverContent } from '../ui/popover';
 import { adminHref, followAdminLink } from '../../lib/adminNavigation';
@@ -14,9 +13,6 @@ import { groupNotifications } from '../../lib/notificationGrouping';
 
 interface Props {
   notifications: AppNotification[];
-  pendingResetRequests: CsrPasswordResetRequest[];
-  resetRequestLoadError: boolean;
-  onRetryResetRequests: () => void;
   onReviewResetRequest: (id: string) => void;
   setNotifications: React.Dispatch<React.SetStateAction<AppNotification[]>>;
   onOpenNotification: (notification: AppNotification) => void;
@@ -39,6 +35,7 @@ const NOTIF_ICON: Record<AppNotification['type'], React.ElementType> = {
   status_update: Truck,
   delay_report:  AlertTriangle,
   issue_report:  AlertCircle,
+  password_reset_requested: KeyRound,
 };
 
 const manilaDateFull = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
@@ -56,7 +53,7 @@ function fmtTimestamp(ts: string): string {
 }
 
 export default function Header({
-  notifications, pendingResetRequests, resetRequestLoadError, onRetryResetRequests, onReviewResetRequest,
+  notifications, onReviewResetRequest,
   setNotifications, onOpenNotification, onLogout, onOpenSettings, onOpenHelp,
   isOperationManager, adminRole, adminEmail, adminName, avatarUrl, onOpenWorkspaceSettings,
   searchPlaceholder, searchValue, onSearchChange,
@@ -65,13 +62,20 @@ export default function Header({
   const [accountOpen, setAccountOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const mobileSearchRef = useRef<HTMLInputElement>(null);
-  const knownNotificationIds = useRef(new Set(notifications.map((n) => n.id)));
+  /* Password reset requests are an OPM-only concern (same scope as the review
+     action itself, and as the dedicated section this replaced) — every other
+     staff role must never see them, even though notifs_select is shared. */
+  const visibleNotifications = useMemo(
+    () => isOperationManager ? notifications : notifications.filter((n) => n.type !== 'password_reset_requested'),
+    [notifications, isOperationManager],
+  );
+  const knownNotificationIds = useRef(new Set(visibleNotifications.map((n) => n.id)));
   const [enteringNotificationIds, setEnteringNotificationIds] = useState<Set<string>>(() => new Set());
   const entranceTimer = useRef<number | null>(null);
 
   useEffect(() => {
-    const incoming = bellOpen ? notifications.filter((n) => !knownNotificationIds.current.has(n.id)).map((n) => n.id) : [];
-    knownNotificationIds.current = new Set(notifications.map((n) => n.id));
+    const incoming = bellOpen ? visibleNotifications.filter((n) => !knownNotificationIds.current.has(n.id)).map((n) => n.id) : [];
+    knownNotificationIds.current = new Set(visibleNotifications.map((n) => n.id));
     if (!bellOpen) {
       if (entranceTimer.current !== null) window.clearTimeout(entranceTimer.current);
       entranceTimer.current = null;
@@ -85,7 +89,7 @@ export default function Header({
       setEnteringNotificationIds(new Set());
       entranceTimer.current = null;
     }, 350);
-  }, [bellOpen, notifications]);
+  }, [bellOpen, visibleNotifications]);
 
   useEffect(() => () => {
     if (entranceTimer.current !== null) window.clearTimeout(entranceTimer.current);
@@ -105,11 +109,11 @@ export default function Header({
      button first — the modal returns focus here when it closes. */
   const accountBtnRef = useRef<HTMLButtonElement>(null);
 
-  const unreadCount = notifications.filter((n) => !n.read).length;
+  const unreadCount = visibleNotifications.filter((n) => !n.read).length;
   const fullDate = manilaDateFull.format(now);
   const shortDate = manilaDateShort.format(now);
   const compactDate = manilaDateCompact.format(now);
-  const notificationGroups = groupNotifications(notifications, now);
+  const notificationGroups = groupNotifications(visibleNotifications, now);
 
   /* Bell panel's open/outside-click/positioning is handled by Popover itself
      now (see below) — only the account menu still needs a manual listener. */
@@ -122,7 +126,7 @@ export default function Header({
   }, []);
 
   const markAllRead = () =>
-    setNotifications((p) => p.map((n) => ({ ...n, read: true })));
+    setNotifications((p) => p.map((n) => (isOperationManager || n.type !== 'password_reset_requested') ? { ...n, read: true } : n));
 
   return (
     <header className="relative bg-white border-b border-border px-4 sm:px-6 py-3.5">
@@ -155,15 +159,12 @@ export default function Header({
         )}
 
         {/* ── Bell button ── */}
-        <Popover open={bellOpen} onOpenChange={(open) => {
-          setBellOpen(open);
-          if (open && isOperationManager) onRetryResetRequests();
-        }}>
+        <Popover open={bellOpen} onOpenChange={setBellOpen}>
           <PopoverTrigger asChild>
             <button
               onClick={() => setAccountOpen(false)}
-              title={isOperationManager && pendingResetRequests.length ? `Notifications · ${pendingResetRequests.length} pending password reset requests` : 'Notifications'}
-              aria-label={isOperationManager && pendingResetRequests.length ? `Notifications, ${pendingResetRequests.length} password reset requests pending review` : 'Notifications'}
+              title="Notifications"
+              aria-label="Notifications"
               className="relative w-9 h-9 shrink-0 flex items-center justify-center rounded-full hover:bg-accent transition-colors"
             >
               <Bell className="w-5 h-5 text-muted-foreground" />
@@ -171,9 +172,6 @@ export default function Header({
                 <span className="absolute -top-1 -right-1 min-w-[20px] h-[20px] bg-green-500 text-white text-[12px] font-bold rounded-full flex items-center justify-center px-1 leading-none">
                   {unreadCount > 99 ? '99+' : unreadCount}
                 </span>
-              )}
-              {isOperationManager && pendingResetRequests.length > 0 && (
-                <span aria-hidden="true" className="absolute -bottom-1 -right-1 flex h-2.5 w-2.5 rounded-full border border-white bg-amber-500" />
               )}
             </button>
           </PopoverTrigger>
@@ -195,37 +193,7 @@ export default function Header({
 
               {/* Notification list */}
               <div className="max-h-72 overflow-x-hidden overflow-y-auto overscroll-contain">
-                {isOperationManager && pendingResetRequests.length > 0 && (
-                  <section aria-label="Pending password reset requests">
-                    <h4 className="border-b border-border/60 bg-amber-50/60 px-4 pb-1.5 pt-3 text-xs font-semibold text-amber-900">
-                      Pending Password Reset Requests · {pendingResetRequests.length}
-                    </h4>
-                    <div className="divide-y divide-border/60">
-                      {pendingResetRequests.map((request) => (
-                        <div key={request.id} className="flex min-w-0 items-start gap-2 px-4 py-3">
-                          <KeyRound aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm font-semibold text-foreground">Password Reset Request</p>
-                            <p className="break-all text-sm text-foreground/90">{request.email} requested a password reset.</p>
-                            <p className="mt-1 text-xs text-muted-foreground">Pending OPM review · {fmtTimestamp(request.requestedAt)}</p>
-                            <button type="button" onClick={() => { setBellOpen(false); onReviewResetRequest(request.id); }}
-                              aria-label={`Review password reset request for ${request.email}`}
-                              className="mt-1 inline-flex min-h-9 items-center rounded-md text-sm font-medium text-primary hover:text-primary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
-                              Review Request →
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
-                )}
-                {isOperationManager && resetRequestLoadError && (
-                  <div role="alert" className="flex items-center justify-between gap-2 border-b border-border px-4 py-3 text-sm text-muted-foreground">
-                    <span>Could not refresh password reset requests.</span>
-                    <button type="button" onClick={onRetryResetRequests} className="min-h-9 shrink-0 font-medium text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary">Retry</button>
-                  </div>
-                )}
-                {notifications.length === 0 && (!isOperationManager || pendingResetRequests.length === 0) && !resetRequestLoadError ? (
+                {notifications.length === 0 ? (
                   <div className="px-4 py-8 text-center">
                     <p className="text-sm text-muted-foreground">No notifications yet</p>
                   </div>
@@ -236,38 +204,58 @@ export default function Header({
                         <h4 className="border-b border-border/60 bg-muted/20 px-4 pb-1.5 pt-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{group.label}</h4>
                         <div className="divide-y divide-border/60">
                           {group.items.map((n) => {
-                            const Icon = n.statusUpdate === 'cancelled' ? AlertCircle : NOTIF_ICON[n.type];
-                            const { page: navPage, target, actionLabel } = notificationDestination(n);
-                            const identifier = n.truckPlate || n.assignmentId;
+                            const isPasswordReset = n.type === 'password_reset_requested';
+                            const Icon = isPasswordReset ? KeyRound : (n.statusUpdate === 'cancelled' ? AlertCircle : NOTIF_ICON[n.type]);
+                            const { page: navPage, target, actionLabel: destActionLabel } = notificationDestination(n);
+                            const identifier = isPasswordReset ? 'Password Reset Request' : (n.truckPlate || n.assignmentId);
                             const prefix = `[${n.truckPlate}] `;
                             const message = n.message.startsWith(prefix) ? n.message.slice(prefix.length) : n.message;
                             const activityKey = target.activityKey;
-                            const actionAria = n.type === 'doc_upload' ? `Review ${n.docType ?? 'documents'} for ${identifier}`
+                            const actionLabel = isPasswordReset ? 'Review Request' : destActionLabel;
+                            const actionAria = isPasswordReset ? 'Review password reset request'
+                              : n.type === 'doc_upload' ? `Review ${n.docType ?? 'documents'} for ${identifier}`
                               : activityKey ? `View ${activityKey.replace(/_/g, ' ')} activity for ${identifier}` : `View shipment for ${identifier}`;
                             const openDestination = () => {
-                              onOpenNotification(n);
+                              if (isPasswordReset) {
+                                setNotifications((previous) => previous.map((item) => item.id === n.id ? { ...item, read: true } : item));
+                                onReviewResetRequest(n.resetRequestId!);
+                              } else {
+                                onOpenNotification(n);
+                              }
                               setBellOpen(false);
                             };
+                            const actionClassName = "hidden min-h-8 shrink-0 items-center whitespace-nowrap text-xs font-medium text-primary hover:text-primary/80 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:inline-flex";
+                            const actionClassNameMobile = "inline-flex min-h-8 items-center text-xs font-medium text-primary hover:text-primary/80 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:hidden";
                             return (
                               <div key={n.id} className={`flex min-w-0 items-start gap-2 px-4 py-3 transition-colors hover:bg-accent/30 ${n.read ? 'bg-white' : 'bg-primary/[0.035]'} ${enteringNotificationIds.has(n.id) ? 'motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-2 motion-safe:duration-300' : ''}`}>
                                 <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" aria-hidden="true" style={{ visibility: n.read ? 'hidden' : 'visible' }} />
                                 {!n.read && <span className="sr-only">Unread notification</span>}
-                                <Icon aria-hidden="true" className={`mt-0.5 h-4 w-4 shrink-0 ${n.statusUpdate === 'cancelled' || n.type === 'issue_report' ? 'text-red-600' : 'text-muted-foreground'}`} />
+                                <Icon aria-hidden="true" className={`mt-0.5 h-4 w-4 shrink-0 ${n.statusUpdate === 'cancelled' || n.type === 'issue_report' ? 'text-red-600' : isPasswordReset ? 'text-amber-700' : 'text-muted-foreground'}`} />
                                 <div className="min-w-0 flex-1">
                                   <div className="flex min-w-0 items-start justify-between gap-2">
                                     <span className="min-w-0 break-words text-sm font-semibold text-foreground">{identifier}</span>
-                                    <a href={adminHref(navPage, target)} onClick={(event) => { event.stopPropagation(); followAdminLink(event, openDestination); }} aria-label={actionAria}
-                                      className="hidden min-h-8 shrink-0 items-center whitespace-nowrap text-xs font-medium text-primary hover:text-primary/80 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:inline-flex">
-                                      {actionLabel} →
-                                    </a>
+                                    {isPasswordReset ? (
+                                      <button type="button" onClick={(event) => { event.stopPropagation(); openDestination(); }} aria-label={actionAria} className={actionClassName}>
+                                        {actionLabel} →
+                                      </button>
+                                    ) : (
+                                      <a href={adminHref(navPage, target)} onClick={(event) => { event.stopPropagation(); followAdminLink(event, openDestination); }} aria-label={actionAria} className={actionClassName}>
+                                        {actionLabel} →
+                                      </a>
+                                    )}
                                   </div>
                                   <p className="break-words text-sm leading-snug text-foreground/90">{message}</p>
                                   <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
                                     <span className="text-xs text-muted-foreground">{fmtTimestamp(n.timestamp)}</span>
-                                    <a href={adminHref(navPage, target)} onClick={(event) => { event.stopPropagation(); followAdminLink(event, openDestination); }} aria-label={actionAria}
-                                      className="inline-flex min-h-8 items-center text-xs font-medium text-primary hover:text-primary/80 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:hidden">
-                                      {actionLabel} →
-                                    </a>
+                                    {isPasswordReset ? (
+                                      <button type="button" onClick={(event) => { event.stopPropagation(); openDestination(); }} aria-label={actionAria} className={actionClassNameMobile}>
+                                        {actionLabel} →
+                                      </button>
+                                    ) : (
+                                      <a href={adminHref(navPage, target)} onClick={(event) => { event.stopPropagation(); followAdminLink(event, openDestination); }} aria-label={actionAria} className={actionClassNameMobile}>
+                                        {actionLabel} →
+                                      </a>
+                                    )}
                                   </div>
                                 </div>
                               </div>
