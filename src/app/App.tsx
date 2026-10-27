@@ -405,7 +405,16 @@ export default function App() {
     }
   }, [checkAppSession]);
 
-  /* Auto-save: only fires for user-driven changes, not poll-driven merges */
+  /* Auto-save: only fires for user-driven changes, not poll-driven merges.
+     Notification read-state is deliberately excluded from this effect's
+     dependencies — it already has its own, correctly role-gated persistence
+     path (persistNotificationReads → flushNotificationReads), which skips the
+     server write entirely for OPM (notifs_update's RLS requires can_write(),
+     which OPM never has). Re-triggering this generic sync on every read toggle
+     reattempted that same forbidden write via syncTable('notifications', ...)
+     and failed for OPM. notificationsRef.current is still read here (it's kept
+     current by both the read-state setter and the poll), so a save triggered
+     for another reason still carries the latest read state along with it. */
   useEffect(() => {
     if (!isMounted.current) { isMounted.current = true; return; }
     if (isPollUpdate.current) return;                              // ← skip poll updates
@@ -414,11 +423,11 @@ export default function App() {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
       saveTimerRef.current = null;   // debounce finished — the poll below is allowed to run again
-      saveToServer(drivers, trucks, assignments, completed, cancelled, notifications, activityLog);
+      saveToServer(drivers, trucks, assignments, completed, cancelled, notificationsRef.current, activityLog);
     }, 1500);
 
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
-  }, [drivers, trucks, assignments, completed, cancelled, notifications, activityLog, adminRole]);
+  }, [drivers, trucks, assignments, completed, cancelled, activityLog, adminRole]);
 
   /* ── Server-side change (edit / cancel an assignment via a database function) ──
      1. Flush a still-pending auto-save first, so it can't later write stale values over
