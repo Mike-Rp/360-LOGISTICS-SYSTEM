@@ -1774,25 +1774,66 @@ never sets any CSR password requires converting member creation to an Auth
 invitation where the CSR chooses the initial password. Keep that work in this
 entry rather than adding a duplicate requirement.
 
-**ADMIN NOTIFICATIONS CHANGES - REQ01 follow-up (native notification):** The
-existing OPM-authorized `csr_password_reset_requests` read policy and
-`listCsrPasswordResetRequests()` provide real request IDs, email, status, and
-request time. The local frontend bell now derives pending review actions from
-those records. This review queue is separate from ordinary notifications and
-their persisted read state. The anonymous request RPC remains generic and does
-not prove a record was created.
+**ADMIN NOTIFICATIONS CHANGES - REQ01 follow-up (native notification):**
 
-There is no server-generated admin notification with a stable reset-request
-reference and independently persisted read state. If cross-device read/unread
-history, sounds, or a merged chronological feed become required, the backend
-developer should emit one OPM-only event per real eligible request in the same
-transaction as creation. Return a stable event ID, request ID, server timestamp,
-and read timestamp, without reset tokens. Authorize list/read updates for OPM
-only and make retries idempotent. Approval, rejection, completion, and expiry
-should change actionability without deleting requests or audit history. Reading
-an event must never approve or reject its request. This native notification
-extension is **Pending** and has no approval to change schema, triggers, RPCs,
-or policies under the current frontend task.
+**Status: IMPLEMENTED (2026-10-27).** CSR password-reset requests now generate
+a real, server-side notification with a stable reset-request reference and the
+same persisted read state as every other notification type — merged into the
+regular chronological bell feed rather than kept as a separate, live-polled
+review queue.
+
+**Implementation:** `supabase/migrations/20261027000001_csr_reset_request_notifications.sql`
+(applied) — `notifications.assignment_id` is now nullable (this notification
+type has no assignment); added `notifications.reset_request_id uuid references
+csr_password_reset_requests(id)`; widened `notifications_type_check` to allow
+`'password_reset_requested'`. `request_csr_password_reset()` now captures the
+new request's id (`returning id into v_request_id`) and inserts one idempotent
+notification row (`'notif-resetreq-' || v_request_id`, same deterministic-id/
+`on conflict (id) do nothing` pattern as every other notification insert in
+this project) in the same transaction as the request itself. A one-time backfill
+in the same migration inserts a matching notification for every request that
+was still `pending` at migration time, so nothing already in OPM's queue
+silently disappeared.
+
+**Frontend:** `AppNotification['type']` gained `'password_reset_requested'`
+plus an optional `resetRequestId`; `db.ts`'s `loadAdminData()` maps
+`reset_request_id`. `Header.tsx` removed the dedicated "Pending Password Reset
+Requests" section, its 30-second poll trigger, and the amber dot/title variant
+on the bell — replaced by a `KeyRound`-icon row in the ordinary notification
+feed, special-cased only in its action (calls the existing `onReviewResetRequest`
+callback directly — unchanged, still opens Workspace Settings — instead of
+going through `notificationDestination()`/`adminHref()`, which are built around
+assignment navigation and don't fit a request with no assignment).
+`AdminDashboard.tsx` removed the now-redundant `pendingResetRequests`/
+`resetRequestLoadError` state and its 30-second polling `useEffect`; the
+existing 12-second `loadAdminData()` poll in `App.tsx` already refreshes all
+staff notifications more often, so nothing lost freshness. `listCsrPasswordResetRequests()`
+and `pageForPasswordResetRequest()` were kept — `WorkspaceSettingsPanel.tsx`
+still uses both independently for its own request list and pagination; only
+the now-unused `pendingPasswordResetRequests()` filter helper (and its test)
+were removed. **Verification:** `npm run typecheck` clean, all 140 existing
+unit tests pass (including the Charts.tsx fleet-activity feed, whose
+`notifToEvent` helper was narrowed to exclude this new type, since password
+resets have no driver/truck/assignment and don't belong in that widget); live
+test as OPM, applied migration, backfilled request appeared in the merged bell
+feed, "Review Request →" opened Workspace Settings on the right row.
+
+**Bug found and fixed during this live test (pre-existing, not new to this
+feature):** clicking the merged notification threw `Auto-save failed:
+notifications: new row violates row-level security policy`. Root cause:
+`notifs_update`'s RLS requires `can_write()` (admin/csr only; OPM is
+deliberately excluded), and `App.tsx` already has a correctly role-gated path
+for persisting read-state (`persistNotificationReads` → `flushNotificationReads`,
+which explicitly skips the server write for OPM, relying on local storage).
+But the generic auto-save `useEffect` also had `notifications` in its
+dependency array, so *any* read-state toggle — by any role — separately
+re-triggered `saveToServer()` → `syncAdminData()` → `syncTable('notifications', ...)`,
+which attempts the same forbidden direct-table write for OPM. This was already
+latent before today; OPM simply had no prior reason to click into a
+notification's action. Fixed in `App.tsx` by dropping `notifications` from
+that effect's dependencies (it already reads the always-current
+`notificationsRef.current` instead) — read-state changes alone no longer
+re-trigger this generic sync, since the dedicated path already covers it.
 
 ### LOGIN PAGE CHANGES - REQ03 — Prevent Reusing Current Password During CSR Reset
 
