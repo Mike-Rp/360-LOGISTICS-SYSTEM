@@ -35,7 +35,11 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
   const [pin,           setPin]           = useState(['', '', '', '']);
   const [driverError,   setDriverError]   = useState<{ type: 'mobile' | 'pin' | 'general'; msg: string } | null>(null);
   const [driverLoading, setDriverLoading] = useState(false);
-  const mobileHasError = driverError?.type === 'mobile';
+  const mobilePrefixInvalid = mobile.length > 0 && !mobile.startsWith('9');
+  const mobileError = mobilePrefixInvalid
+    ? tr('login.mobilePrefix')
+    : driverError?.type === 'mobile' ? driverError.msg : null;
+  const mobileHasError = !!mobileError;
   /* "Forgot your PIN?" dialog — purely informational, it starts no reset flow. */
   const [showPinHelp,   setShowPinHelp]   = useState(false);
 
@@ -108,6 +112,10 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
     const fullPin = pin.join('');
 
     // mobile is the 10-digit local number (e.g. "9123456789")
+    if (mobilePrefixInvalid) {
+      setDriverError({ type: 'mobile', msg: tr('login.mobilePrefix') });
+      return;
+    }
     if (!/^9\d{9}$/.test(mobile)) {
       setDriverError({ type: 'mobile', msg: tr('login.invalidMobile') });
       return;
@@ -186,13 +194,18 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
                 Replaces the old blue "Admin Login" / "← Back" footer buttons. The click
                 handlers carry over the exact same state resets those buttons did, so
                 switching tabs still clears the other form's fields and errors. */}
-            {passwordFlow === 'login' && <div className="flex p-1.5 bg-[#f3f4f6] rounded-2xl">
+            {passwordFlow === 'login' && <div role="group" aria-label="Login account type" className="relative grid grid-cols-2 p-1.5 bg-[#f3f4f6] rounded-2xl">
+              <span
+                aria-hidden="true"
+                className={`pointer-events-none absolute inset-y-1.5 left-1.5 w-[calc(50%_-_6px)] rounded-xl bg-white shadow-sm transition-transform duration-300 ease-out motion-reduce:transition-none ${view === 'admin' ? 'translate-x-full' : 'translate-x-0'}`}
+              />
               <button
                 type="button"
+                aria-pressed={view === 'driver'}
                 onClick={() => { setView('driver'); setDriverError(null); }}
-                className={`flex-1 py-3 rounded-xl text-base transition-all duration-200 ${
+                className={`relative z-10 min-w-0 py-3 rounded-xl text-base transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary motion-reduce:transition-none ${
                   view === 'driver'
-                    ? 'bg-white shadow-sm font-bold text-foreground'
+                    ? 'font-bold text-foreground'
                     : 'font-semibold text-gray-500 hover:text-foreground'
                 }`}
               >
@@ -200,10 +213,11 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
               </button>
               <button
                 type="button"
+                aria-pressed={view === 'admin'}
                 onClick={() => { setView('admin'); setAdminError(''); setAdminFieldError(null); setEmail(''); setPassword(''); }}
-                className={`flex-1 py-3 rounded-xl text-base transition-all duration-200 ${
+                className={`relative z-10 min-w-0 py-3 rounded-xl text-base transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary motion-reduce:transition-none ${
                   view === 'admin'
-                    ? 'bg-white shadow-sm font-bold text-foreground'
+                    ? 'font-bold text-foreground'
                     : 'font-semibold text-gray-500 hover:text-foreground'
                 }`}
               >
@@ -258,7 +272,7 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
                       {mobile.length}/10
                     </span>
                     </div>
-                    {mobileHasError && <p id="driver-mobile-error" role="alert" className="mt-1 text-sm leading-5 text-red-600 break-words">{driverError?.msg}</p>}
+                    {mobileHasError && <p id="driver-mobile-error" role="alert" className="mt-1 text-sm leading-5 text-red-600 break-words">{mobileError}</p>}
                   </div>
                 </div>
 
