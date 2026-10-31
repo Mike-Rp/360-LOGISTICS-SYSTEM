@@ -1,6 +1,7 @@
 /* Shared types for assignments — used by both Admin and Driver views */
 
 import { statusColors } from './statusColors';
+import type { Unavailability } from '../lib/unavailability';
 
 export const DOCUMENT_TYPES = [
   'Proof of Delivery',
@@ -157,6 +158,8 @@ export interface LocalDriver {
   shift?: string;
   /* Set only on records in the Archived tab (archive_driver() database function) */
   archivedAt?: string;
+  /* Read-only: set while the OPM has this driver marked Unavailable (current_unavailability); never saved from here. */
+  unavailable?: Unavailability;
 }
 
 export interface LocalTruck {
@@ -167,6 +170,8 @@ export interface LocalTruck {
   capacity?: string;
   /* Set only on records in the Archived tab (archive_truck() database function) */
   archivedAt?: string;
+  /* Read-only: set while the OPM has this truck under maintenance (current_unavailability); never saved from here. */
+  unavailable?: Unavailability;
 }
 
 export interface TeamMember {
@@ -206,6 +211,9 @@ export const taskStatusConfig: Record<TaskStatus, { badge: string; dot: string; 
 export const availabilityConfig = {
   available:  { label: 'Available',   badge: 'bg-green-100 text-green-700 border-green-200', dot: 'bg-green-500' },
   onDelivery: { label: 'On Delivery', badge: 'bg-blue-100 text-blue-700 border-blue-200',   dot: 'bg-blue-500' },
+  /* REQ-019: a driver marked Unavailable (sick, leave…) / a truck Under maintenance */
+  unavailable: { label: 'Unavailable', badge: 'bg-amber-100 text-amber-800 border-amber-200', dot: 'bg-amber-500' },
+  maintenance: { label: 'Maintenance', badge: 'bg-amber-100 text-amber-800 border-amber-200', dot: 'bg-amber-500' },
 } as const;
 
 export const DRIVER_STATUS_FLOW: TaskStatus[] = [
@@ -260,7 +268,12 @@ export type AdminActivityType =
   | 'password_changed'
   | 'delegation_granted'
   | 'delegation_revoked'
-  | 'driver_help_phone_changed';
+  | 'driver_help_phone_changed'
+  | 'driver_unavailable'
+  | 'driver_available_again'
+  | 'truck_maintenance_started'
+  | 'truck_maintenance_ended'
+  | 'unavailability_updated';
 
 export interface AdminActivityEntry {
   id: string;
