@@ -2,12 +2,15 @@ import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
   X, KeyRound, Bell, Eye, EyeOff, MoreHorizontal,
-  CheckCircle2, Pencil, ChevronDown, Camera, Trash2,
+  CheckCircle2, Pencil, ChevronDown, Camera, Trash2, Phone,
 } from 'lucide-react';
 import {
   changeOwnPassword, PasswordError,
-  updateOwnDisplayName, uploadOwnAvatar, removeOwnAvatar,
+  updateOwnDisplayName, uploadOwnAvatar, removeOwnAvatar, setOwnPhone,
 } from '../../lib/db';
+import { subscriberProblem } from '../../lib/philippineMobile';
+import MobileNumberField from './MobileNumberField';
+import ConfirmPasswordDialog from './ConfirmPasswordDialog';
 import { playNotificationSound } from '../../lib/notificationSound';
 import { useModalFocus } from './useModalFocus';
 import type { StaffSession } from '../../lib/db';
@@ -43,7 +46,7 @@ interface Props {
 }
 
 export default function SettingsPanel({ open, onClose, profile, avatarUrl, onProfileUpdated, notifEnabled, setNotifEnabled, soundEnabled, setSoundEnabled }: Props) {
-  const [openSection, setOpenSection] = useState<'security' | 'notifications' | null>(null);
+  const [openSection, setOpenSection] = useState<'contact' | 'security' | 'notifications' | null>(null);
   /* ── Persist notifications preference ── */
   useEffect(() => {
     localStorage.setItem('360_notif_enabled', String(notifEnabled));
@@ -80,6 +83,41 @@ export default function SettingsPanel({ open, onClose, profile, avatarUrl, onPro
   const nameChanged = !!nameInput.trim() && nameInput.trim() !== (profile?.name ?? '').trim();
 
   useEffect(() => { if (!editingName) setNameInput(profile?.name ?? ''); }, [profile?.name, editingName]);
+
+  /* ── REQ-018: the OPM's own number — what drivers are shown on "Forgot your PIN?" ──
+     Stored as 09XXXXXXXXX; the field holds the 10 digits after +63. Only the OPM gets this section. */
+  const isOpm = profile?.role === 'opm';
+  const savedPhone = profile?.phone ? profile.phone.slice(1) : '';
+  const [phoneInput,   setPhoneInput]   = useState(savedPhone);
+  const [phoneError,   setPhoneError]   = useState('');
+  const [phoneSaved,   setPhoneSaved]   = useState(false);
+  const [confirmPhone, setConfirmPhone] = useState(false);
+  const phoneChanged = phoneInput !== savedPhone;
+  useEffect(() => { setPhoneInput(savedPhone); setPhoneError(''); }, [savedPhone, open]);
+
+  /* The number can never be emptied: drivers must always have someone to call. */
+  const phoneProblem = () => !phoneInput ? 'Enter the mobile number drivers should call.' : subscriberProblem(phoneInput);
+  const requestSavePhone = () => {
+    setPhoneSaved(false);
+    const problem = phoneProblem();
+    if (problem) { setPhoneError(problem); return; }
+    setConfirmPhone(true);
+  };
+  const handleConfirmPhone = async () => {
+    const result = await setOwnPhone(`0${phoneInput}`);
+    onProfileUpdated({ phone: result.phone });
+    setConfirmPhone(false);
+    setPhoneSaved(true);
+    setTimeout(() => setPhoneSaved(false), 4000);
+  };
+  const phoneErrorText = (err: unknown): string => {
+    const m = err instanceof Error ? err.message : '';
+    if (m.includes('phone_required'))  return 'Enter the mobile number drivers should call.';
+    if (m.includes('invalid_phone'))   return 'Enter a valid Philippine mobile number.';
+    if (m.includes('reauth_required')) return 'Please enter your password again.';
+    if (m.includes('not_authorized'))  return 'Only the Operation Manager can change this number.';
+    return 'Could not save the number. Check your connection and try again.';
+  };
 
   useEffect(() => {
     if (open) {
@@ -164,10 +202,10 @@ export default function SettingsPanel({ open, onClose, profile, avatarUrl, onPro
 
   /* ── Close on Esc ── */
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented && !profileMenuOpen) onClose(); };
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented && !profileMenuOpen && !confirmPhone) onClose(); };
     if (open) document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [open, onClose, profileMenuOpen]);
+  }, [open, onClose, profileMenuOpen, confirmPhone]);
 
   /* ── Body scroll lock ── */
   useEffect(() => {
@@ -313,6 +351,35 @@ export default function SettingsPanel({ open, onClose, profile, avatarUrl, onPro
             )}
           </section>
 
+          {/* ── Contact number (OPM only) ── */}
+          {isOpm && <section className="border-t border-border">
+            <button type="button" aria-expanded={openSection === 'contact'} aria-controls="settings-contact-content" onClick={() => setOpenSection(openSection === 'contact' ? null : 'contact')}
+              className={`flex w-full items-center gap-3 rounded-lg px-2 py-4 text-left transition-colors hover:bg-green-50/40 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary motion-reduce:transition-none ${openSection === 'contact' ? 'bg-green-50/40' : ''}`}>
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-green-50 text-green-800"><Phone className="h-5 w-5" aria-hidden="true" /></span>
+              <span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-foreground">Contact number</span><span className="mt-1 block text-sm text-muted-foreground">The number drivers call when they forget their PIN.</span></span>
+              <ChevronDown className={`h-5 w-5 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${openSection === 'contact' ? 'rotate-180' : ''}`} aria-hidden="true" />
+            </button>
+            {openSection === 'contact' && <div id="settings-contact-content" className="space-y-3 px-2 pb-5 pt-2 sm:px-4">
+              <Field label="Mobile number" htmlFor="settings-contact-phone">
+                <MobileNumberField id="settings-contact-phone" value={phoneInput} error={phoneError}
+                  ariaLabel="Your mobile number, ten digits after +63"
+                  onChange={(digits) => { setPhoneInput(digits); setPhoneSaved(false); }} onError={setPhoneError}
+                  onBlur={() => { if (phoneInput ? subscriberProblem(phoneInput) : savedPhone) setPhoneError(phoneProblem()); }} />
+              </Field>
+              <p className="text-xs text-muted-foreground">
+                Drivers see this number on the login screen under &ldquo;Forgot your PIN?&rdquo;. While a CSR is covering your leave, they see the number you set for that coverage instead.
+                Drivers always need someone to call, so once saved this number can be changed but not removed.
+              </p>
+              {phoneSaved && <p role="status" className="flex items-center gap-1 text-xs text-green-600"><CheckCircle2 className="w-3.5 h-3.5" /> Contact number saved</p>}
+              <div className="flex justify-end">
+                <button type="button" onClick={requestSavePhone} disabled={!phoneChanged || !phoneInput}
+                  className="min-h-11 w-full rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-primary sm:w-auto">
+                  Save Number
+                </button>
+              </div>
+            </div>}
+          </section>}
+
           {/* ── Password ── */}
           <section className="border-t border-border">
             <button type="button" aria-expanded={openSection === 'security'} aria-controls="settings-security-content" onClick={() => setOpenSection(openSection === 'security' ? null : 'security')}
@@ -446,6 +513,19 @@ export default function SettingsPanel({ open, onClose, profile, avatarUrl, onPro
         </div>
       </div>
       </div>
+
+      {confirmPhone && (
+        <ConfirmPasswordDialog
+          tone="primary"
+          title="Change the number drivers call?"
+          message={<>Drivers who forgot their PIN will be shown <span className="font-medium text-foreground">0{phoneInput.slice(0, 3)} {phoneInput.slice(3, 6)} {phoneInput.slice(6)}</span> to call.</>}
+          confirmLabel="Save Number"
+          busyLabel="Saving…"
+          onConfirm={handleConfirmPhone}
+          onCancel={() => setConfirmPhone(false)}
+          errorText={phoneErrorText}
+        />
+      )}
     </div>,
     document.body,
   );
