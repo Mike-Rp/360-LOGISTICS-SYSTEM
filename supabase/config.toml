@@ -5,3 +5,7 @@ project_id = "veuehobbfkwppsirapdp"
 # name is what actually determines the deploy target/URL.
 [functions.make-server-ee4d169c]
 entrypoint = "./functions/server/index.tsx"
+
+# Public login screen calls this before any session exists; the function does its own checks.
+[functions.login]
+verify_jwt = false
