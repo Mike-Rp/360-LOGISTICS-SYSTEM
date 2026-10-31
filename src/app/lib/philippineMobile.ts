@@ -19,3 +19,11 @@ export function parsePhilippineMobile(raw: string): PhilippineMobile | null {
   if (value.startsWith('+') && !digits.startsWith('63')) return null;
   return { subscriber, international: `+63${subscriber}`, display: `+63 ${subscriber}` };
 }
+
+/** Why the 10 digits typed after "+63" are not a usable mobile number yet — '' when they are.
+    Shared by the forms that use the "+63 [ten digits]" field. */
+export function subscriberProblem(digits: string): string {
+  if (digits.length !== 10) return 'Enter a valid 10-digit mobile number.';
+  if (!digits.startsWith('9')) return 'Mobile number must start with 9 (e.g. 9XX XXX XXXX).';
+  return '';
+}
