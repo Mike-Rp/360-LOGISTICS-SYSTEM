@@ -26,3 +26,12 @@ test('invalid or overlong stored values cannot become shortened copy or call tar
     assert.equal(parsePhilippineMobile(stored), null, stored);
   }
 });
+
+test('subscriberProblem names what is wrong with the ten digits after +63', () => {
+  const { subscriberProblem } = loaded.exports;
+  assert.equal(subscriberProblem('9171234567'), '');
+  assert.match(subscriberProblem(''), /10-digit/);
+  assert.match(subscriberProblem('917123456'), /10-digit/);
+  assert.match(subscriberProblem('91712345678'), /10-digit/);
+  assert.match(subscriberProblem('8171234567'), /start with 9/);
+});
