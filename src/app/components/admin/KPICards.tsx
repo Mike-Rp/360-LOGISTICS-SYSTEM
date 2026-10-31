@@ -33,10 +33,10 @@ function countDelayed(assignments: Assignment[]): number {
 }
 
 export default function KPICards({ drivers, trucks, assignments, completed }: Props) {
-  const availableTrucks   = trucks.filter((t) => t.status === 'Available').length;
+  const availableTrucks   = trucks.filter((t) => t.status === 'Available' && !t.unavailable).length;
   const unavailableTrucks = trucks.filter((t) => t.status === 'Assigned').length;
   const activeAssignments = assignments.length;
-  const availableDrivers  = drivers.filter((d) => !assignments.find((a) => a.driverId === d.id)).length;
+  const availableDrivers  = drivers.filter((d) => !d.unavailable && !assignments.find((a) => a.driverId === d.id)).length;
   const completedTotal    = completed.length;
   const delayedCount      = countDelayed(assignments);
   const docsPending       = assignments.reduce(
