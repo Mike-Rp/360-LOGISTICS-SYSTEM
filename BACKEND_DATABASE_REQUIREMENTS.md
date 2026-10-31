@@ -52,6 +52,7 @@ and their SQL test files passed (each test rolls itself back).
 | REQ-013 Completion/cancellation timestamps | `20261022000001` | — | Implemented |
 | REQ-014 Driver notifications (dispatch/cancel/issue resolved) | `20261025000003` | — | Implemented |
 | REQ-015 Server-side duplicate operational photo detection | `20261025000004`, `000005` + Edge Function | `logic.test.cjs` 8/8 | Implemented |
+| REQ-016 Login lockout (5 failures → 5 min, staff + driver) | `20261031000000`, `000001`, `000002` + Edge Function `login` | `login_lockout` 10/10, `logic.test.cjs` 10/10 | Implemented — live test passed |
 | REQ-008 Recoverable delivery issues | `20261023000000`–`20261023000002` | — | Implemented |
 | REQ-007 Report ID + QR verification | `20261023000008`, `000009` | — | Implemented |
 
@@ -2776,3 +2777,40 @@ remain null; concurrent/duplicate calls cannot overwrite the original time;
 unauthorized callers cannot set or edit event timestamps directly.
 
 ---
+
+## [REQ-016] Login lockout — 5 failed attempts lock the account for 5 minutes
+
+**Status: IMPLEMENTED (2026-10-31).** Applies to Admin/CSR/OPM and Driver logins.
+
+| Setting | Behaviour |
+|---|---|
+| Failed attempts allowed | 5 |
+| Lockout starts | on the 5th failed sign-in (that response already says "locked") |
+| Duration | 5 minutes, fixed — attempts during a lock are rejected, **not counted, and do not extend it** |
+| Successful login | clears the counter |
+| During a lock | every attempt is refused, even with the right password |
+| After 5 minutes | attempts accepted again; the next failure starts a fresh count of 1 |
+| Stale failures | failures older than 15 minutes don't add up |
+| Scope | per **account** (lower-cased login email; a driver's is derived from their mobile number). Not per IP — by decision, since Supabase already rate-limits per IP and shared office/mobile IPs would lock out co-workers |
+| Unknown addresses | counted and locked like real ones (team decision; also keeps real and fake addresses indistinguishable) |
+
+**Implementation:** `20261031000000_login_lockout.sql` adds `login_attempts` (RLS on, no
+policies, all browser access revoked) and three service_role-only functions:
+`login_lock_seconds`, `record_login_failure` (atomic, row-locked), `record_login_success`.
+`000001` made it count real accounts only; `000002` reversed that by decision. Edge Function
+`supabase/functions/login` (`logic.ts` rules, `index.ts` wiring, `--no-verify-jwt` because it is
+called before any session exists; also set in `config.toml`) checks the lock, verifies the
+password with Auth, records the outcome and returns the session, which `db.ts` `authenticate()`
+installs with `auth.setSession()`. `signInStaff`/`signInDriver` both use it; the login screen
+shows "Too many failed attempts. Try again in N min." (driver text in English and Filipino).
+Fails closed: if the lock cannot be checked the login is refused. Auth rate limits (429) and
+outages are not counted as failed attempts.
+
+**Verification:** `supabase/tests/login_lockout.test.sql` 10/10; `logic.test.cjs` 10/10; Edge
+Function deployed 2026-10-31; live: 5 wrong passwords locked a staff account and a driver
+account, a different account still logged in, and a non-existent address locked too.
+
+**Known limit:** a scripted attacker can still call Supabase Auth's own API directly with the
+public anon key and skip this lockout. Closing that needs Supabase's Password Verification
+hook, which is Team/Enterprise plan only. Also uncovered: the in-app "confirm your password"
+re-checks (change password, cancel-assignment re-auth) still call Supabase directly.
