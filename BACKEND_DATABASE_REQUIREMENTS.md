@@ -53,6 +53,7 @@ and their SQL test files passed (each test rolls itself back).
 | REQ-014 Driver notifications (dispatch/cancel/issue resolved) | `20261025000003` | — | Implemented |
 | REQ-015 Server-side duplicate operational photo detection | `20261025000004`, `000005` + Edge Function | `logic.test.cjs` 8/8 | Implemented |
 | REQ-016 Login lockout (5 failures → 5 min, staff + driver) | `20261031000000`, `000001`, `000002` + Edge Function `login` | `login_lockout` 10/10, `logic.test.cjs` 10/10 | Implemented — live test passed |
+| REQ-017 Person-name validation (Add Team Member; Ñ allowed everywhere) + OPM activity-only auto-save | `20261031000004` | `personName.test.cjs` 2/2 | Implemented — live test passed |
 | REQ-008 Recoverable delivery issues | `20261023000000`–`20261023000002` | — | Implemented |
 | REQ-007 Report ID + QR verification | `20261023000008`, `000009` | — | Implemented |
 
@@ -2829,3 +2830,38 @@ account, a different account still logged in, and a non-existent address locked 
 public anon key and skip this lockout. Closing that needs Supabase's Password Verification
 hook, which is Team/Enterprise plan only. Also uncovered: the in-app "confirm your password"
 re-checks (change password, cancel-assignment re-auth) still call Supabase directly.
+
+## [REQ-017] Person-name validation (Add Team Member) and Ñ in names
+
+**Status: IMPLEMENTED (2026-10-31).**
+
+**Problem 1 — no name rule on Add Team Member.** `create_team_member()` only checked the name
+wasn't empty, and the form had no check, so `test244#`, digits, `@` or emoji were accepted.
+**Fix:** `20261031000004_team_member_name_validation.sql` re-creates `create_team_member()`
+(otherwise identical to `20261023000010`) with the rule already used by `update_own_display_name()`
+and `register_driver()`: letters, spaces, apostrophes, hyphens, periods; starts with a letter;
+at most 100 characters (`invalid_name` / `name_too_long`, mapped to plain messages in
+`createTeamMember()`). The migration first asserts the database treats Ñ as a letter and aborts
+if not. Existing members are not changed.
+
+**Problem 2 — Ñ rejected.** The database rule uses `[[:alpha:]]` (accepts Ñ/ñ/é), but the client
+patterns in `RegisterModals.tsx` (driver registration) and `SettingsPanel.tsx` (own profile)
+were `A-Za-z`, so Filipino names such as "Peña" or "Niño" were refused in the browser. All three
+forms now share `src/app/lib/personName.ts` (`/^\p{L}[\p{L}\s'.-]*$/u`, max 100) — letters of any
+language, so other scripts are also allowed, matching the server. Test:
+`src/app/lib/personName.test.cjs`.
+
+**Problem 3 (found during the live test) — "Auto-save failed: notifications: new row violates
+row-level security policy" after adding a member.** Adding a member logs `member_added`, which
+triggers the generic auto-save; that save also diffed the notifications the OPM had marked read
+*locally* against the database, tried to UPDATE them, and — because OPM has no write access to
+`notifications` (RLS `can_write()`) — the blocked update was retried as an INSERT and failed. The
+failure also aborted the save before the activity-log row was written, so `member_added` was
+silently lost. **Fix:** `syncAdminData(data, { activityOnly })` (`db.ts`); `App.tsx` passes
+`activityOnly: true` for the OPM, so its auto-save writes only `activity_log` (the one table
+`activity_insert` lets OPM write). Admin/CSR saves are unchanged. This is the second half of the
+earlier notification-read fix (the effect no longer re-fires on read toggles).
+
+**Verification:** applied; live — `test#1` refused with the plain-language message; "Niño
+Peñaflorida" and "Niño Test" added; driver "Michael Peña" registered; after the fix no banner
+appears and "Member Added — Added Niño Test to the team" shows in the Activity Log.
