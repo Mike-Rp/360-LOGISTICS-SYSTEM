@@ -377,7 +377,10 @@ export default function App() {
     setSavingToDb(true);
     setSaveError(null);
     try {
-      await syncAdminData({ drivers: d, trucks: t, assignments: a, completed: co, cancelled: ca, notifications: n, activityLog: al });
+      await syncAdminData(
+        { drivers: d, trucks: t, assignments: a, completed: co, cancelled: ca, notifications: n, activityLog: al },
+        { activityOnly: adminRoleRef.current === 'opm' },
+      );
       if (sessionEpochRef.current !== epoch) return;
       try {
         const driverIds = new Set(d.map((driver) => driver.id));
