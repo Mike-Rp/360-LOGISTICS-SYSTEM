@@ -284,6 +284,9 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
   const [resetPage, setResetPage] = useState(1);
   const [resetBusyId, setResetBusyId] = useState<string | null>(null);
   const [resetError, setResetError] = useState('');
+  /* A failed Approve / Reject / Copy shows a message but keeps the list on screen;
+     resetError is only for when the list itself could not be loaded. */
+  const [resetActionError, setResetActionError] = useState('');
   const [resetNotice, setResetNotice] = useState('');
   const [resetClock, setResetClock] = useState(Date.now());
   const [logPage, setLogPage] = useState(1);
@@ -341,6 +344,7 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
   const handleResetReview = async (request: CsrPasswordResetRequest, approve: boolean) => {
     setResetBusyId(request.id);
     setResetError('');
+    setResetActionError('');
     setResetNotice('');
     try {
       if (request.status !== 'pending') return;
@@ -355,7 +359,7 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
         setResetError('Request reviewed, but the latest list could not be loaded. Reopen Workspace Settings to refresh.');
       }
     } catch (error) {
-      setResetError(error instanceof Error ? error.message : 'Could not review this request.');
+      setResetActionError(error instanceof Error ? error.message : 'Could not review this request.');
     } finally {
       setResetBusyId(null);
     }
@@ -365,6 +369,7 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
     if (request.status !== 'approved' || !request.expiresAt || new Date(request.expiresAt).getTime() <= Date.now()) return;
     setResetBusyId(request.id);
     setResetError('');
+    setResetActionError('');
     setResetNotice('');
     try {
       const token = await createCsrPasswordResetLink(request.id);
@@ -393,7 +398,7 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
         reset_in_progress: 'A reset link is already being generated. Try again shortly.',
         not_authorized: 'Only an OPM administrator can copy reset links.',
       };
-      setResetError(messages[code] ?? 'Could not copy the reset link. Click again to generate a new link.');
+      setResetActionError(messages[code] ?? 'Could not copy the reset link. Click again to generate a new link.');
     } finally {
       setResetBusyId(null);
     }
@@ -605,6 +610,7 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
               onChange={(event) => { setResetSearch(event.target.value); setResetPage(1); }}
               className="min-h-10 w-full rounded-lg border border-border bg-white px-3 text-sm focus-visible:outline-2 focus-visible:outline-primary" />
             {resetError && <p role="alert" className="text-sm text-red-600">{resetError}</p>}
+            {resetActionError && <p role="alert" className="text-sm text-red-600">{resetActionError}</p>}
             {resetNotice && <p role="status" className="text-sm text-green-700">{resetNotice}</p>}
             {targetRequestId && resetLoaded && !resetError && !resetRequests.some((request) => request.id === targetRequestId) &&
               <p role="status" className="text-sm text-muted-foreground">This request is no longer available. The list below shows the latest requests.</p>}
