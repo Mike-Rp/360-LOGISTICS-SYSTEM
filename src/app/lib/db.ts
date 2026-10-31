@@ -23,6 +23,7 @@ import { storagePathOf, storedFileRef, sameStoredFile } from './storageRefs';
 import { cancelledHistoryForDriver, type CancelledHistoryItem } from './driverHistory';
 import { normalizeCsrPasswordResetError } from './resetPasswordFeedback';
 import type { FleetDelegation, MyFleetDelegation } from './fleetDelegation';
+import type { DriverUnavailableReason, Unavailability, UnavailableReason } from './unavailability';
 import type {
   Assignment, AssignmentDoc, CompletedTask, LocalDriver, LocalTruck, AppNotification,
   AdminActivityEntry, AdminRole, StatusPhoto, DelayReport, TeamMember,
@@ -473,7 +474,7 @@ export async function readRecordCreationTimes(table: 'assignments' | 'drivers', 
 }
 
 export async function loadAdminData(): Promise<AdminData & ArchivedData> {
-  const [driverRows, pinRows, truckRows, asnRows, docRows, photoRows, delayRows, issueRows, notifRows, actRows] = await Promise.all([
+  const [driverRows, pinRows, truckRows, asnRows, docRows, photoRows, delayRows, issueRows, notifRows, actRows, unavailRows] = await Promise.all([
     fetchAll('drivers',              [['created_at', true], ['id', true]]),
     fetchAll('driver_pins',          [['driver_id', true]]),
     fetchAll('trucks',               [['id', true]]),
@@ -484,10 +485,21 @@ export async function loadAdminData(): Promise<AdminData & ArchivedData> {
     fetchAll('assignment_issues',    [['reported_at', false]]),
     fetchAll('notifications',        [['created_at', false], ['id', false]]),
     fetchAll('activity_log',         [['ts', false], ['id', false]]),
+    /* REQ-019: who is unavailable right now. If the migration has not been applied yet the view does not
+       exist — the page must still load, so a failure here just means "nobody is marked". */
+    fetchAll('current_unavailability', [['since', true], ['id', true]]).catch((): Row[] => []),
   ]);
   await signStoredFiles([...docRows.map((r) => r.file_url), ...photoRows.map((r) => r.url), ...notifRows.map((r) => r.photo_url)]);
 
   const pins = new Map(pinRows.map((p) => [p.driver_id as string, p.pin as string]));
+  const unavailableOf = (idCol: 'driver_id' | 'truck_id') => new Map<string, Unavailability>(unavailRows
+    .filter((u) => u[idCol])
+    .map((u) => [u[idCol] as string, {
+      id: u.id, reason: u.reason as UnavailableReason, note: u.note ?? '',
+      expectedReturnAt: u.expected_return_at ?? null, since: u.since,
+    }]));
+  const driverUnavailable = unavailableOf('driver_id');
+  const truckUnavailable  = unavailableOf('truck_id');
   const allDrivers: LocalDriver[] = driverRows.map((r) => ({
     id: r.id, name: r.name, phone: r.phone, truckNumber: r.truck_number ?? '', status: r.status,
     currentLocation: r.current_location ?? '—', deliveriesToday: r.deliveries_today ?? 0,
@@ -496,12 +508,14 @@ export async function loadAdminData(): Promise<AdminData & ArchivedData> {
     ...(r.shift ? { shift: r.shift } : {}),
     ...(r.archived_at ? { archivedAt: r.archived_at } : {}),
     ...(r.created_at ? { createdAt: r.created_at } : {}),
+    ...(driverUnavailable.has(r.id) ? { unavailable: driverUnavailable.get(r.id) } : {}),
   }));
   const allTrucks: LocalTruck[] = truckRows.map((r) => ({
     id: r.id, plateNumber: r.plate_number, status: r.status,
     ...(r.classification ? { classification: r.classification } : {}),
     ...(r.capacity ? { capacity: r.capacity } : {}),
     ...(r.archived_at ? { archivedAt: r.archived_at } : {}),
+    ...(truckUnavailable.has(r.id) ? { unavailable: truckUnavailable.get(r.id) } : {}),
   }));
   const drivers         = allDrivers.filter((d) => !d.archivedAt);
   const trucks          = allTrucks.filter((t)  => !t.archivedAt);
@@ -857,7 +871,9 @@ export type AssignmentActionErrorCode =
   | 'already_archived' | 'truck_busy'
   | 'already_completed' | 'not_completable' | 'documents_not_approved' | 'driver_archived' | 'truck_archived'
   | 'already_resolved' | 'assignment_not_active' | 'already_reviewed' | 'not_uploaded' | 'duplicate_plate'
-  | 'duplicate_phone' | 'duplicate_name' | 'invalid_name';
+  | 'duplicate_phone' | 'duplicate_name' | 'invalid_name'
+  | 'driver_unavailable' | 'truck_under_maintenance' | 'already_unavailable' | 'not_unavailable'
+  | 'invalid_reason' | 'note_required' | 'note_too_long' | 'invalid_return';
 export class AssignmentActionError extends Error {
   code: AssignmentActionErrorCode;
   constructor(code: AssignmentActionErrorCode, detail?: string) { super(detail ?? code); this.code = code; }
@@ -908,6 +924,8 @@ function actionFailure(error: { message?: string; code?: string }): AssignmentAc
     'already_completed', 'not_completable', 'documents_not_approved', 'driver_archived', 'truck_archived',
     'already_resolved', 'assignment_not_active', 'already_reviewed', 'not_uploaded',
     'duplicate_plate', 'duplicate_phone', 'duplicate_name', 'invalid_name',
+    'driver_unavailable', 'truck_under_maintenance', 'already_unavailable', 'not_unavailable',
+    'invalid_reason', 'note_required', 'note_too_long', 'invalid_return',
   ];
   for (const c of known) if (m.includes(c)) return new AssignmentActionError(c, m);
   if (error.code === 'PGRST202') return new AssignmentActionError('not_deployed', m);   // function missing: migration not applied
@@ -1066,6 +1084,54 @@ export async function getDriverHelpPhone(): Promise<string | null> {
   const { data, error } = await supabase.rpc('driver_help_phone');
   if (error) throw new Error(error.message);
   return typeof data === 'string' && /^09\d{9}$/.test(data) ? data : null;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   UNAVAILABLE / MAINTENANCE (REQ-019) — OPM only; the database refuses to dispatch them.
+   Who is unavailable right now arrives with loadAdminData() as `driver.unavailable` / `truck.unavailable`.
+   Each of these writes its own change (and the activity-log row); the caller reloads afterwards.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+export interface UnavailabilityInput {
+  /** Optional (the database requires it for the driver reason "other"). */
+  note: string;
+  /** null = until the OPM marks them back. A no-show with no date ends at the end of that day. */
+  expectedReturn: Date | null;
+}
+
+export async function markDriverUnavailable(driverId: string, input: UnavailabilityInput & { reason: DriverUnavailableReason }): Promise<void> {
+  const { error } = await supabase.rpc('mark_driver_unavailable', {
+    p_driver_id: driverId, p_reason: input.reason, p_note: input.note.trim() || null,
+    p_expected_return: input.expectedReturn ? input.expectedReturn.toISOString() : null,
+  });
+  if (error) throw actionFailure(error);
+}
+
+export async function markDriverAvailable(driverId: string): Promise<void> {
+  const { error } = await supabase.rpc('mark_driver_available', { p_driver_id: driverId });
+  if (error) throw actionFailure(error);
+}
+
+export async function markTruckMaintenance(truckId: string, input: UnavailabilityInput): Promise<void> {
+  const { error } = await supabase.rpc('mark_truck_maintenance', {
+    p_truck_id: truckId, p_note: input.note.trim() || null,
+    p_expected_return: input.expectedReturn ? input.expectedReturn.toISOString() : null,
+  });
+  if (error) throw actionFailure(error);
+}
+
+export async function markTruckAvailable(truckId: string): Promise<void> {
+  const { error } = await supabase.rpc('mark_truck_available', { p_truck_id: truckId });
+  if (error) throw actionFailure(error);
+}
+
+/** Replaces BOTH the note and the expected return of an active period (null return = open-ended). */
+export async function updateUnavailability(id: string, input: UnavailabilityInput): Promise<void> {
+  const { error } = await supabase.rpc('update_unavailability', {
+    p_id: id, p_note: input.note.trim() || null,
+    p_expected_return: input.expectedReturn ? input.expectedReturn.toISOString() : null,
+  });
+  if (error) throw actionFailure(error);
 }
 
 export async function revokeFleetDelegation(id: string): Promise<void> {
