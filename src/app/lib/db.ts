@@ -22,6 +22,7 @@ import { locationFieldsFromRow, locationColumnsForRow, invalidLocationEdit } fro
 import { storagePathOf, storedFileRef, sameStoredFile } from './storageRefs';
 import { cancelledHistoryForDriver, type CancelledHistoryItem } from './driverHistory';
 import { normalizeCsrPasswordResetError } from './resetPasswordFeedback';
+import type { FleetDelegation, MyFleetDelegation } from './fleetDelegation';
 import type {
   Assignment, AssignmentDoc, CompletedTask, LocalDriver, LocalTruck, AppNotification,
   AdminActivityEntry, AdminRole, StatusPhoto, DelayReport, TeamMember,
@@ -111,6 +112,8 @@ async function fetchAll(table: string, order: Array<[string, boolean]>): Promise
 export interface StaffSession {
   id: string; email: string; name: string; role: AdminRole; isOm: boolean; isDemo: boolean;
   avatarPath: string | null;
+  /** The OPM's own number (local form 09XXXXXXXXX) shown to drivers on "Forgot your PIN?"; only ever set for the OPM. */
+  phone: string | null;
 }
 /** What update_own_display_name / set_own_avatar_path return — merge into the
     existing StaffSession (isOm/isDemo don't change from these calls). */
@@ -132,6 +135,7 @@ export type AppSession =
 const toStaff = (p: Row): StaffSession => ({
   id: p.id, email: p.email, name: p.name ?? '', role: p.role as AdminRole, isOm: p.role === 'opm', isDemo: !!p.is_demo,
   avatarPath: p.avatar_path ?? null,
+  phone: p.phone ?? null,
 });
 
 async function fetchProfile(uid: string): Promise<Row | null> {
@@ -261,6 +265,17 @@ export async function updateOwnDisplayName(name: string): Promise<OwnProfileUpda
   const { data, error } = await supabase.rpc('update_own_display_name', { p_name: name });
   if (error) throw new Error(error.message);
   return data as OwnProfileUpdate;
+}
+
+/** OPM only, and needs the password entered a moment ago (ConfirmPasswordDialog). The number cannot be
+ * emptied. Throws Error('phone_required' | 'invalid_phone' | 'reauth_required' | 'not_authorized' | …). */
+export async function setOwnPhone(phone: string): Promise<Pick<StaffSession, 'id' | 'phone'>> {
+  const { data, error } = await supabase.rpc('set_own_phone', { p_phone: phone });
+  if (error) {
+    const code = ['phone_required', 'invalid_phone', 'reauth_required', 'not_authorized'].find((c) => error.message.includes(c));
+    throw new Error(code ?? error.message);
+  }
+  return data as Pick<StaffSession, 'id' | 'phone'>;
 }
 
 async function setOwnAvatarPathRpc(path: string | null): Promise<OwnProfileUpdate> {
@@ -995,6 +1010,75 @@ export async function registerDriver(firstName: string, surname: string, phone: 
 export async function resetDriverPin(id: string, pin: string): Promise<void> {
   const { error } = await supabase.rpc('reset_driver_pin', { p_driver_id: id, p_pin: pin });
   if (error) throw actionFailure(error);
+}
+
+/** REQ-018: a CSR covering for the OPM. The server picks the new PIN and returns it once — a
+ * delegated CSR can set a PIN but can never read an existing one. Needs the password re-entry
+ * (verifyOwnPassword) just before, like resetDriverPin. */
+export async function delegatedResetDriverPin(id: string): Promise<string> {
+  const { data, error } = await supabase.rpc('delegated_reset_driver_pin', { p_driver_id: id });
+  if (error) throw actionFailure(error);
+  if (typeof data !== 'string' || !/^\d{4}$/.test(data)) throw new AssignmentActionError('network');
+  return data;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   LEAVE COVERAGE (REQ-018) — the OPM lets a CSR reset PINs / register drivers and trucks
+   for a window. The database re-checks the window on every delegated call.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+const coverageFailure = (error: { message?: string }): Error => {
+  const m = error.message ?? '';
+  const code = ['reauth_required', 'not_authorized', 'member_not_found', 'invalid_window', 'no_scope', 'invalid_phone',
+    'delegation_not_active', 'delegation_not_found'].find((candidate) => m.includes(candidate));
+  return new Error(code ?? m ?? 'coverage_failed');
+};
+
+/** OPM only (row-level security): every grant, newest first. */
+export async function listFleetDelegations(): Promise<FleetDelegation[]> {
+  const { data, error } = await supabase.from('fleet_delegations')
+    .select('id,csr_id,starts_at,ends_at,can_reset_pin,can_register,revoked_at,contact_phone')
+    .order('starts_at', { ascending: false }).order('id').limit(200);
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((r: Row) => ({
+    id: r.id, csrId: r.csr_id, startsAt: r.starts_at, endsAt: r.ends_at,
+    canResetPin: !!r.can_reset_pin, canRegister: !!r.can_register, revokedAt: r.revoked_at ?? null,
+    contactPhone: r.contact_phone ?? null,
+  }));
+}
+
+/** `contactPhone` (local form 09XXXXXXXXX) is the number drivers see on "Forgot your PIN?" while this
+ * coverage is active; the database requires it whenever `canResetPin` is true. */
+export async function grantFleetDelegation(input: {
+  csrId: string; startsAt: Date; endsAt: Date; canResetPin: boolean; canRegister: boolean; contactPhone: string | null;
+}): Promise<void> {
+  const { error } = await supabase.rpc('grant_fleet_delegation', {
+    p_csr_id: input.csrId, p_starts_at: input.startsAt.toISOString(), p_ends_at: input.endsAt.toISOString(),
+    p_can_reset_pin: input.canResetPin, p_can_register: input.canRegister, p_contact_phone: input.contactPhone,
+  });
+  if (error) throw coverageFailure(error);
+}
+
+/** Callable before login (the login screen is public). The number drivers should call right now: the one
+ * the OPM set for an active PIN-reset coverage, else the OPM's own profile number. null = there is none
+ * (the screen then shows wording without a number). Throws if the lookup itself failed. */
+export async function getDriverHelpPhone(): Promise<string | null> {
+  const { data, error } = await supabase.rpc('driver_help_phone');
+  if (error) throw new Error(error.message);
+  return typeof data === 'string' && /^09\d{9}$/.test(data) ? data : null;
+}
+
+export async function revokeFleetDelegation(id: string): Promise<void> {
+  const { error } = await supabase.rpc('revoke_fleet_delegation', { p_id: id });
+  if (error) throw coverageFailure(error);
+}
+
+/** The signed-in CSR's current coverage (both null = none right now). */
+export async function getMyFleetDelegation(): Promise<MyFleetDelegation> {
+  const { data, error } = await supabase.rpc('my_fleet_delegation');
+  if (error) throw new Error(error.message);
+  const row = (Array.isArray(data) ? data[0] : data) as Row | null | undefined;
+  return { pinUntil: row?.pin_until ?? null, registerUntil: row?.register_until ?? null };
 }
 
 /* Wipe everything except accounts + the audit log (the "reset all data" button). */
