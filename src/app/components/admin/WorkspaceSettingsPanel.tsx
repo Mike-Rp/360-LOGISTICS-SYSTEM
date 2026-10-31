@@ -2,15 +2,20 @@ import { useState, useEffect, useRef } from 'react';
 import {
   X, Users, UserPlus, Clock, ClipboardList, Search, ChevronRight,
   LogIn, CheckCircle, XCircle, FileCheck, FileX, UserX, UserMinus,
-  RefreshCw, Shield, Mail, Pencil, Archive, KeyRound, Truck,
+  RefreshCw, Shield, Mail, Pencil, Archive, KeyRound, Truck, CalendarClock, Phone,
 } from 'lucide-react';
-import { listTeamMembers, createTeamMember, archiveTeamMember, restoreTeamMember, listCsrPasswordResetRequests, reviewCsrPasswordReset, createCsrPasswordResetLink, resolveAvatarUrls } from '../../lib/db';
+import { listTeamMembers, createTeamMember, archiveTeamMember, restoreTeamMember, listCsrPasswordResetRequests, reviewCsrPasswordReset, createCsrPasswordResetLink, resolveAvatarUrls,
+  listFleetDelegations, grantFleetDelegation, revokeFleetDelegation } from '../../lib/db';
 import type { CsrPasswordResetRequest } from '../../lib/db';
+import { checkCoverageWindow, delegationScopeLabel, delegationStatus, formatContactPhone, formatWindowLength, normalizeContactPhone, toLocalInputValue,
+  type DelegationStatus, type FleetDelegation } from '../../lib/fleetDelegation';
 import ConfirmPasswordDialog from './ConfirmPasswordDialog';
 import type { AdminActivityEntry, AdminActivityType, AdminActivityInput, TeamMember } from '../../data/assignmentTypes';
 import { PaginationFooter } from './Pagination';
 import { pushAdminNavigation } from '../../lib/adminNavigation';
 import { pageForPasswordResetRequest } from '../../lib/pendingPasswordResetRequests';
+import { subscriberProblem } from '../../lib/philippineMobile';
+import MobileNumberField from './MobileNumberField';
 import { isValidPersonName, PERSON_NAME_MAX_LENGTH } from '../../lib/personName';
 
 /* ── Activity log helpers — moved here from SettingsPanel.tsx, extended for member events ── */
@@ -38,6 +43,9 @@ const ACT_CONFIG: Record<AdminActivityType, { label: string; icon: React.Element
   password_reset_link_generated: { label: 'Password Reset Link Generated', icon: ClipboardList, color: 'text-blue-600' },
   password_reset_rejected:  { label: 'Password Reset Rejected', icon: XCircle, color: 'text-red-600' },
   password_changed:         { label: 'Password Changed', icon: Shield, color: 'text-blue-600' },
+  delegation_granted:       { label: 'Leave Coverage Granted', icon: CalendarClock, color: 'text-blue-600' },
+  delegation_revoked:       { label: 'Leave Coverage Ended', icon: CalendarClock, color: 'text-orange-500' },
+  driver_help_phone_changed: { label: 'Driver Help Number Changed', icon: Phone, color: 'text-blue-600' },
 };
 
 function fmtTs(ts: string): string {
@@ -73,9 +81,9 @@ function getDesc(e: AdminActivityEntry): string {
     case 'doc_rejected':         return `Rejected "${e.docType ?? 'document'}" for ${e.driverName ?? '—'}`;
     case 'driver_deleted':       return `Removed driver "${e.driverName ?? '—'}"`;
     case 'driver_archived':      return `Moved driver "${e.driverName ?? '—'}" to archive`;
-    case 'driver_pin_reset':     return `New PIN set for "${e.driverName ?? '—'}"`;
-    case 'driver_added':         return `Registered driver ${e.driverName ?? '—'}`;
-    case 'truck_added':          return `Registered truck ${e.truckPlate ?? '—'}`;
+    case 'driver_pin_reset':     return `New PIN set for "${e.driverName ?? '—'}"${underDelegation(e)}`;
+    case 'driver_added':         return `Registered driver ${e.driverName ?? '—'}${underDelegation(e)}`;
+    case 'truck_added':          return `Registered truck ${e.truckPlate ?? '—'}${underDelegation(e)}`;
     case 'truck_archived':       return `Moved truck ${e.truckPlate ?? '—'} to archive`;
     case 'member_added':         return `Added ${e.memberName ?? e.memberEmail ?? 'a member'} to the team`;
     case 'member_archived':      return `Archived ${e.memberName ?? e.memberEmail ?? 'a member'}`;
@@ -85,7 +93,15 @@ function getDesc(e: AdminActivityEntry): string {
     case 'password_reset_link_generated': return `Generated reset link for ${e.memberName ?? e.memberEmail ?? 'a CSR member'}`;
     case 'password_reset_rejected': return `Rejected reset request for ${e.memberName ?? e.memberEmail ?? 'a CSR member'}`;
     case 'password_changed': return `Password changed by ${e.memberName ?? e.memberEmail ?? 'a CSR member'}`;
+    case 'delegation_granted': return `Leave coverage for ${e.memberName ?? e.memberEmail ?? 'a CSR member'}${e.reason ? ` — ${e.reason}` : ''}`;
+    case 'delegation_revoked': return `Ended leave coverage for ${e.memberName ?? e.memberEmail ?? 'a CSR member'}`;
+    case 'driver_help_phone_changed': return `Driver Forgot-PIN number: ${e.reason ?? 'changed'}`;
   }
+}
+
+/* Rows a CSR wrote while covering for the OPM are marked by the database function. */
+function underDelegation(e: AdminActivityEntry): string {
+  return e.reason === 'Under OPM delegation' ? ' · under OPM delegation' : '';
 }
 
 /* ── Modal shell (mirrors RegisterModals.tsx's local ModalShell) ── */
@@ -244,6 +260,125 @@ function AddMemberModal({ onClose, onAdded }: {
   );
 }
 
+/* ── Leave coverage (REQ-018): the OPM lets one CSR reset PINs / register drivers and trucks for a window ── */
+interface CoverageDraft {
+  csr: TeamMember;
+  startsAt: Date;
+  endsAt: Date;
+  length: string;
+  canResetPin: boolean;
+  canRegister: boolean;
+  /** Local form 09XXXXXXXXX — what drivers are shown on "Forgot your PIN?"; only set with PIN-reset coverage. */
+  contactPhone: string | null;
+}
+
+const COVERAGE_BADGE: Record<DelegationStatus, { label: string; className: string }> = {
+  active:    { label: 'Active',    className: 'border-green-200 bg-green-50 text-green-700' },
+  scheduled: { label: 'Scheduled', className: 'border-blue-200 bg-blue-50 text-blue-700' },
+  ended:     { label: 'Ended',     className: 'border-border bg-muted/50 text-muted-foreground' },
+  revoked:   { label: 'Ended early', className: 'border-orange-200 bg-orange-50 text-orange-700' },
+};
+
+function CoverageModal({ members, onClose, onContinue }: {
+  members: TeamMember[];
+  onClose: () => void;
+  onContinue: (draft: CoverageDraft) => void;
+}) {
+  const csrs = members.filter((member) => member.status === 'active');
+  const [csrId,       setCsrId]       = useState('');
+  const [start,       setStart]       = useState(() => toLocalInputValue(new Date()));
+  const [end,         setEnd]         = useState('');
+  const [canResetPin, setCanResetPin] = useState(true);
+  const [canRegister, setCanRegister] = useState(true);
+  /* The 10 digits after +63 (same field behaviour as Register Driver: digits only, stops at 10). */
+  const [phone,       setPhone]       = useState('');
+  const [phoneError,  setPhoneError]  = useState('');
+  const [error,       setError]       = useState('');
+  const windowCheck = checkCoverageWindow(start, end, Date.now());
+
+  const handleContinue = () => {
+    const csr = csrs.find((member) => member.id === csrId);
+    if (!csr) { setError('Choose which CSR will cover for you.'); return; }
+    if (!canResetPin && !canRegister) { setError('Choose at least one thing the CSR may do.'); return; }
+    if (canResetPin && subscriberProblem(phone)) { setPhoneError(subscriberProblem(phone)); return; }
+    const contactPhone = canResetPin ? normalizeContactPhone(`+63${phone}`) : null;
+    if (canResetPin && !contactPhone) { setPhoneError('Enter a valid 10-digit mobile number.'); return; }
+    if (!windowCheck.ok) { setError(windowCheck.error); return; }
+    onContinue({ csr, startsAt: windowCheck.startsAt, endsAt: windowCheck.endsAt, length: windowCheck.length, canResetPin, canRegister, contactPhone });
+  };
+
+  const inputClass = 'w-full px-4 py-3 rounded-xl border border-border bg-white text-sm focus:outline-none focus:ring-2 focus:ring-primary/30';
+  return (
+    <ModalShell title="Add Leave Coverage" onClose={onClose}>
+      <div className="space-y-5">
+        <p className="text-xs text-muted-foreground">
+          The CSR gets only what you tick, only between these times. They can never view existing PINs, archive anyone, or manage the team.
+        </p>
+
+        <div>
+          <label htmlFor="coverage-csr" className="block text-sm font-medium text-foreground mb-1.5">CSR covering for you <span className="text-red-500">*</span></label>
+          <select id="coverage-csr" value={csrId} onChange={(e) => { setCsrId(e.target.value); setError(''); }} className={inputClass}>
+            <option value="">{csrs.length === 0 ? 'No active CSR members' : 'Choose a CSR…'}</option>
+            {csrs.map((member) => <option key={member.id} value={member.id}>{member.name} — {member.email}</option>)}
+          </select>
+        </div>
+
+        <fieldset>
+          <legend className="block text-sm font-medium text-foreground mb-2">They may</legend>
+          <div className="space-y-2">
+            <label className="flex items-start gap-3 rounded-xl border border-border px-3 py-2.5 text-sm">
+              <input type="checkbox" checked={canResetPin} onChange={(e) => { setCanResetPin(e.target.checked); setError(''); }} className="mt-0.5 h-4 w-4" />
+              <span><span className="font-medium text-foreground">Set new driver PINs</span>
+                <span className="block text-xs text-muted-foreground">They see only the PIN they just set, once.</span></span>
+            </label>
+            <label className="flex items-start gap-3 rounded-xl border border-border px-3 py-2.5 text-sm">
+              <input type="checkbox" checked={canRegister} onChange={(e) => { setCanRegister(e.target.checked); setError(''); }} className="mt-0.5 h-4 w-4" />
+              <span><span className="font-medium text-foreground">Register new drivers and trucks</span>
+                <span className="block text-xs text-muted-foreground">For when someone new joins while you are away.</span></span>
+            </label>
+          </div>
+        </fieldset>
+
+        {canResetPin && (
+          <div>
+            <label htmlFor="coverage-phone" className="block text-sm font-medium text-foreground mb-1.5">Number drivers should call <span className="text-red-500">*</span></label>
+            <MobileNumberField id="coverage-phone" value={phone} error={phoneError} ariaLabel="Mobile number drivers should call, ten digits after +63"
+              onChange={(digits) => { setPhone(digits); setError(''); }} onError={setPhoneError}
+              onBlur={() => { if (phone && subscriberProblem(phone)) setPhoneError(subscriberProblem(phone)); }} />
+            <p className="mt-1 text-xs text-muted-foreground">
+              A driver who forgot their PIN sees this number on the login screen while this coverage is active (usually the covering CSR&apos;s mobile). Afterwards the screen goes back to the usual number.
+            </p>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <label htmlFor="coverage-start" className="block text-sm font-medium text-foreground mb-1.5">Starts <span className="text-red-500">*</span></label>
+            <input id="coverage-start" type="datetime-local" value={start} onChange={(e) => { setStart(e.target.value); setError(''); }} className={inputClass} />
+          </div>
+          <div>
+            <label htmlFor="coverage-end" className="block text-sm font-medium text-foreground mb-1.5">Ends <span className="text-red-500">*</span></label>
+            <input id="coverage-end" type="datetime-local" value={end} min={start || undefined} onChange={(e) => { setEnd(e.target.value); setError(''); }} className={inputClass} />
+          </div>
+        </div>
+        {start && end && (windowCheck.ok
+          ? <p role="status" className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">That is <strong>{windowCheck.length}</strong> of coverage. Check the dates are right.</p>
+          : <p role="alert" className="text-xs text-red-500">{windowCheck.error}</p>)}
+
+        {error && <p role="alert" className="text-xs text-red-500">{error}</p>}
+
+        <div className="flex gap-3 pt-1">
+          <button type="button" onClick={onClose} className="flex-1 px-4 py-2.5 border border-border rounded-xl hover:bg-accent transition-colors text-sm">Cancel</button>
+          <button type="button" onClick={handleContinue}
+            className="flex-1 px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors text-sm font-medium">
+            Continue
+          </button>
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
 /* ── Main panel ── */
 interface Props {
   open: boolean;
@@ -257,7 +392,7 @@ interface Props {
 }
 
 export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId, onRequestsChanged, activityLog, onLogActivity, adminEmail, adminName }: Props) {
-  const [tab, setTab] = useState<'members' | 'resets' | 'activity'>('members');
+  const [tab, setTab] = useState<'members' | 'resets' | 'coverage' | 'activity'>('members');
   const contentScrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (contentScrollRef.current) contentScrollRef.current.scrollTop = 0;
@@ -292,7 +427,41 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
   const [logPage, setLogPage] = useState(1);
   const logPageSize = 10;
 
+  /* Leave coverage (REQ-018) */
+  const [coverage, setCoverage] = useState<FleetDelegation[]>([]);
+  const [coverageLoaded, setCoverageLoaded] = useState(false);
+  const [coverageError, setCoverageError] = useState('');
+  const [coverageNotice, setCoverageNotice] = useState('');
+  const [coverageClock, setCoverageClock] = useState(Date.now());
+  const [coverageView, setCoverageView] = useState<'current' | 'past'>('current');
+  const [showCoverageModal, setShowCoverageModal] = useState(false);
+  const [coverageDraft, setCoverageDraft] = useState<CoverageDraft | null>(null);
+  const [revokeTarget, setRevokeTarget] = useState<FleetDelegation | null>(null);
+
   useEffect(() => { if (open) setResetLoaded(false); }, [open]);
+
+  const fetchCoverage = async () => {
+    try {
+      setCoverage(await listFleetDelegations());
+      setCoverageError('');
+    } catch (e) {
+      console.error('[listFleetDelegations] error:', e);
+      setCoverageError('Could not load leave coverage. Something went wrong, please try again.');
+    } finally {
+      setCoverageLoaded(true);
+      setCoverageClock(Date.now());
+    }
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    setCoverageLoaded(false);
+    void fetchCoverage();
+    const refresh = () => { void fetchCoverage(); };
+    window.addEventListener('focus', refresh);
+    const interval = window.setInterval(refresh, 30_000);
+    return () => { window.removeEventListener('focus', refresh); window.clearInterval(interval); };
+  }, [open]);
 
   useEffect(() => {
     if (!open || !targetRequestId) return;
@@ -406,10 +575,10 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
 
   /* ── Close on Esc ── */
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape' && !showAddMember) onClose(); };
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape' && !showAddMember && !showCoverageModal && !coverageDraft && !revokeTarget) onClose(); };
     if (open) document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [open, onClose, showAddMember]);
+  }, [open, onClose, showAddMember, showCoverageModal, coverageDraft, revokeTarget]);
 
   /* ── Body scroll lock ── */
   useEffect(() => {
@@ -434,6 +603,42 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
     await restoreTeamMember(restoreTarget.id);
     await fetchMembers();
     setRestoreTarget(null);
+  };
+
+  /* The database writes the activity-log row for a grant or revoke itself. */
+  const handleGrantCoverage = async () => {
+    if (!coverageDraft) return;
+    await grantFleetDelegation({
+      csrId: coverageDraft.csr.id, startsAt: coverageDraft.startsAt, endsAt: coverageDraft.endsAt,
+      canResetPin: coverageDraft.canResetPin, canRegister: coverageDraft.canRegister, contactPhone: coverageDraft.contactPhone,
+    });
+    setCoverageNotice(`Leave coverage set for ${coverageDraft.csr.name}.`);
+    setCoverageView('current');
+    setCoverageDraft(null);
+    setShowCoverageModal(false);
+    await fetchCoverage();
+  };
+
+  const handleRevokeCoverage = async () => {
+    if (!revokeTarget) return;
+    const who = members.find((member) => member.id === revokeTarget.csrId)?.name ?? 'the CSR';
+    await revokeFleetDelegation(revokeTarget.id);
+    setCoverageNotice(`Leave coverage for ${who} has ended.`);
+    setRevokeTarget(null);
+    await fetchCoverage();
+  };
+
+  const coverageErrorText = (err: unknown): string => {
+    const m = err instanceof Error ? err.message : '';
+    if (m.includes('reauth_required'))       return 'Please enter your password again.';
+    if (m.includes('invalid_window'))        return 'The end must be after the start and still in the future.';
+    if (m.includes('no_scope'))              return 'Choose at least one thing the CSR may do.';
+    if (m.includes('invalid_phone'))         return 'Enter a valid Philippine mobile number for drivers to call.';
+    if (m.includes('member_not_found'))      return 'That CSR is no longer active. Close this and refresh the page.';
+    if (m.includes('not_authorized'))        return 'Only the Operation Manager can do this.';
+    if (m.includes('delegation_not_active')) return 'This coverage has already ended. Refresh the page.';
+    if (m.includes('delegation_not_found'))  return 'This coverage could not be found. Refresh the page.';
+    return 'Something went wrong. Please try again.';
   };
 
   /* Plain-language text for the errors archive/restore can return */
@@ -533,17 +738,19 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
         <div role="tablist" aria-label="Workspace sections" onKeyDown={(event) => {
           if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
           event.preventDefault();
-          const sections = ['members', 'resets', 'activity'] as const;
+          const sections = ['members', 'resets', 'coverage', 'activity'] as const;
           const next = sections[(sections.indexOf(tab) + (event.key === 'ArrowRight' ? 1 : 2)) % sections.length];
           setTab(next);
           document.getElementById(`workspace-tab-${next}`)?.focus();
         }} className="flex shrink-0 gap-1 overflow-x-auto border-b border-border px-3 py-2 sm:px-6">
-          {([['members', 'Team Members'], ['resets', 'Password Reset Requests'], ['activity', 'Activity Log']] as const).map(([key, label]) => (
+          {([['members', 'Team Members'], ['resets', 'Password Reset Requests'], ['coverage', 'Leave Coverage'], ['activity', 'Activity Log']] as const).map(([key, label]) => (
             <button key={key} id={`workspace-tab-${key}`} type="button" role="tab" aria-selected={tab === key}
               aria-controls={`workspace-panel-${key}`} tabIndex={tab === key ? 0 : -1} onClick={() => setTab(key)}
               className={`min-h-10 shrink-0 rounded-lg px-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-primary ${tab === key ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'}`}>
               {label}{key === 'resets' && resetRequests.some((request) => request.status === 'pending') &&
                 <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800">{resetRequests.filter((request) => request.status === 'pending').length}</span>}
+              {key === 'coverage' && coverage.some((item) => delegationStatus(item, coverageClock) === 'active') &&
+                <span className="ml-1.5 rounded-full bg-green-100 px-1.5 py-0.5 text-xs text-green-800">{coverage.filter((item) => delegationStatus(item, coverageClock) === 'active').length} active</span>}
             </button>
           ))}
         </div>
@@ -632,8 +839,65 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
                 </div>; })}</div>)}
           </section>}
 
+          {/* ── Leave Coverage ── */}
+          {tab === 'coverage' && <section id="workspace-panel-coverage" role="tabpanel" aria-labelledby="workspace-tab-coverage" className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Leave Coverage</h3>
+              <button type="button" onClick={() => { setCoverageNotice(''); setShowCoverageModal(true); }}
+                className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-medium text-white hover:bg-primary/90">
+                <CalendarClock className="h-4 w-4" /> Add Coverage
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Going on leave? Let one CSR set new driver PINs and/or register drivers and trucks while you are away. Access starts and ends on the dates you choose and can be ended early.
+              Archiving and team management are never included, and the CSR can never view existing PINs. Every action is recorded in the Activity Log.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {(['current', 'past'] as const).map((view) => <button key={view} type="button" onClick={() => setCoverageView(view)}
+                className={`min-h-9 rounded-lg border px-3 text-sm font-medium ${coverageView === view ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-white text-foreground hover:bg-muted/40'}`}>
+                {view === 'current' ? 'Current & upcoming' : 'Past'}
+              </button>)}
+            </div>
+            {coverageNotice && <p role="status" className="text-sm text-green-700">{coverageNotice}</p>}
+            {coverageError && <p role="alert" className="text-sm text-red-600">{coverageError}</p>}
+            {!coverageLoaded ? <p className="py-8 text-center text-sm text-muted-foreground">Loading…</p> : (() => {
+              const shown = coverage.filter((item) => {
+                const status = delegationStatus(item, coverageClock);
+                return coverageView === 'current' ? status === 'active' || status === 'scheduled' : status === 'ended' || status === 'revoked';
+              });
+              if (shown.length === 0) {
+                return <p className="py-8 text-center text-sm text-muted-foreground">{coverageView === 'current' ? 'No leave coverage is set. If you are going away, add one before you leave.' : 'No past coverage.'}</p>;
+              }
+              return <div className="space-y-2">{shown.map((item) => {
+                const status = delegationStatus(item, coverageClock);
+                const badge = COVERAGE_BADGE[status];
+                const member = members.find((m) => m.id === item.csrId);
+                return <div key={item.id} className="flex flex-col gap-3 rounded-xl border border-border p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="break-words text-sm font-semibold">{member?.name ?? 'Unknown CSR'}</p>
+                      <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${badge.className}`}>{badge.label}</span>
+                    </div>
+                    {member && <p className="break-all text-xs text-muted-foreground">{member.email}</p>}
+                    <p className="mt-1 text-xs text-foreground">{delegationScopeLabel(item)}</p>
+                    {item.contactPhone && <p className="text-xs text-muted-foreground">Drivers call {formatContactPhone(item.contactPhone)}</p>}
+                    <p className="text-xs text-muted-foreground">
+                      {fmtTs(item.startsAt)} → {fmtTs(item.endsAt)} · {formatWindowLength(new Date(item.endsAt).getTime() - new Date(item.startsAt).getTime())}
+                      {item.revokedAt ? ` · ended early ${fmtTs(item.revokedAt)}` : ''}
+                    </p>
+                  </div>
+                  {(status === 'active' || status === 'scheduled') &&
+                    <button type="button" onClick={() => { setCoverageNotice(''); setRevokeTarget(item); }}
+                      className="min-h-10 shrink-0 rounded-lg border border-red-200 bg-white px-3 text-sm font-medium text-red-600 hover:bg-red-50">
+                      {status === 'scheduled' ? 'Cancel' : 'End now'}
+                    </button>}
+                </div>;
+              })}</div>;
+            })()}
+          </section>}
+
           {/* ── Activity Log ── */}
-          {tab === 'activity' && <section id="workspace-panel-activity" role="tabpanel" aria-labelledby="workspace-tab-activity" className="space-y-4">
+          {tab === 'activity' &&<section id="workspace-panel-activity" role="tabpanel" aria-labelledby="workspace-tab-activity" className="space-y-4">
             <div className="flex items-center gap-3 mb-4">
               <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Activity Log</span>
               <div className="flex-1 h-px bg-border" />
@@ -752,6 +1016,50 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
           onConfirm={handleRestoreMember}
           onCancel={() => setRestoreTarget(null)}
           errorText={memberActionErrorText}
+        />
+      )}
+
+      {/* ── Leave coverage: pick, then confirm with the password ── */}
+      {showCoverageModal && (
+        <CoverageModal
+          members={members}
+          onClose={() => { setShowCoverageModal(false); setCoverageDraft(null); }}
+          onContinue={setCoverageDraft}
+        />
+      )}
+
+      {coverageDraft && (
+        <ConfirmPasswordDialog
+          tone="primary"
+          title="Give this CSR leave coverage?"
+          message={<>
+            <span className="font-medium text-foreground">{coverageDraft.csr.name}</span> will be allowed to:{' '}
+            <span className="font-medium text-foreground">{delegationScopeLabel({ canResetPin: coverageDraft.canResetPin, canRegister: coverageDraft.canRegister })}</span>
+            {' '}from <span className="font-medium text-foreground">{fmtTs(coverageDraft.startsAt.toISOString())}</span> to{' '}
+            <span className="font-medium text-foreground">{fmtTs(coverageDraft.endsAt.toISOString())}</span> ({coverageDraft.length}).
+            {coverageDraft.contactPhone && <> Drivers who forgot their PIN will be shown <span className="font-medium text-foreground">{formatContactPhone(coverageDraft.contactPhone)}</span> to call.</>}
+          </>}
+          confirmLabel="Give Coverage"
+          busyLabel="Saving…"
+          onConfirm={handleGrantCoverage}
+          onCancel={() => setCoverageDraft(null)}
+          errorText={coverageErrorText}
+        />
+      )}
+
+      {revokeTarget && (
+        <ConfirmPasswordDialog
+          requirePassword={false}
+          title={delegationStatus(revokeTarget, Date.now()) === 'scheduled' ? 'Cancel this coverage?' : 'End coverage now?'}
+          message={<>
+            <span className="font-medium text-foreground">{members.find((member) => member.id === revokeTarget.csrId)?.name ?? 'The CSR'}</span>{' '}
+            will lose this access immediately.
+          </>}
+          confirmLabel={delegationStatus(revokeTarget, Date.now()) === 'scheduled' ? 'Cancel Coverage' : 'End Coverage'}
+          busyLabel="Saving…"
+          onConfirm={handleRevokeCoverage}
+          onCancel={() => setRevokeTarget(null)}
+          errorText={coverageErrorText}
         />
       )}
     </>
