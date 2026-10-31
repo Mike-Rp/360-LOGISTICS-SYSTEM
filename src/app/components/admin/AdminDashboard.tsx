@@ -19,6 +19,7 @@ import { ADMIN_NAVIGATION_EVENT, adminPageFromUrl, pushAdminNavigation } from '.
 import { canDispatchAssignments, canManageFleetAccounts as mayManageFleetAccounts } from '../../lib/staffPermissions';
 import { isActivityKey, notificationDestination, type ActionFeedbackToast, type ActivityKey } from '../../lib/notificationEvents';
 import { notificationSoundEnabled, setNotificationSoundEnabled } from '../../lib/notificationSound';
+import { useMyFleetDelegation } from '../../lib/useMyFleetDelegation';
 import type { StaffSession } from '../../lib/db';
 import type { Assignment, CompletedTask, LocalDriver, LocalTruck, AppNotification, AdminRole, AdminActivityEntry, AdminActivityInput } from '../../data/assignmentTypes';
 
@@ -120,6 +121,9 @@ export default function AdminDashboard({
   const canManageFleetAccounts = mayManageFleetAccounts(adminRole);
   // OPM can inspect operational pages, while assignment and document writes remain CSR-only.
   const operationalReadOnly = isViewOnly || !canDispatchAssignments(adminRole);
+  /* REQ-018: a CSR the OPM has asked to cover for their leave may reset PINs / register drivers and
+     trucks for a window. The OPM themselves never uses this. */
+  const fleetCoverage = useMyFleetDelegation(adminRole === 'csr' || adminRole === 'admin');
 
   useEffect(() => {
     setSearchInput({ page: activeNav, value: '' });
@@ -310,6 +314,7 @@ export default function AdminDashboard({
             archivedDrivers={archivedDrivers}
             archivedTrucks={archivedTrucks}
             search={currentSearchQuery}
+            coverage={fleetCoverage}
           />
         );
       default:
