@@ -2865,3 +2865,16 @@ earlier notification-read fix (the effect no longer re-fires on read toggles).
 **Verification:** applied; live — `test#1` refused with the plain-language message; "Niño
 Peñaflorida" and "Niño Test" added; driver "Michael Peña" registered; after the fix no banner
 appears and "Member Added — Added Niño Test to the team" shows in the Activity Log.
+
+**REQ-006 follow-up — archived members' reset requests (IMPLEMENTED 2026-10-31).** Found live:
+an archived member's approved reset/setup request stayed "Approved" with a "Copy Reset Link"
+button; clicking it failed with `member_not_eligible`, and the failure also blanked the whole
+request list. **Fixes:** `20261031000005_archive_member_closes_reset_requests.sql` re-creates
+`archive_team_member()` (otherwise identical to `20261023000006`) so archiving marks the member's
+`pending`/`approved` requests `expired` and wipes the link, plus a one-time cleanup of requests
+already left open by archived members. Restoring a member does not revive old requests (a new one
+is made via Forgot Password). In `WorkspaceSettingsPanel.tsx`, failed Approve/Reject/Copy actions
+now use a separate `resetActionError` shown above the list instead of `resetError`, which hides
+the list and is now reserved for the list failing to load. **Verification:** applied; live — junk
+accounts "/…" and "';';';" show Expired with no button; archiving "123456" and "test244#" expired
+their links and removed the Copy buttons.
