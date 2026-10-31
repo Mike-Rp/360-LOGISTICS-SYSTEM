@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
 import imgLogo from 'figma:asset/5e73e3c08e898d68c86717993c6e7442d03e9ac4.png';
 import { Eye, EyeOff, AlertCircle, CheckCircle2, Phone, Loader2, X } from 'lucide-react';
-import { signInStaff, signInDriver, LoginError, requestCsrPasswordReset } from '../../lib/db';
+import { signInStaff, signInDriver, LoginError, requestCsrPasswordReset, getDriverHelpPhone } from '../../lib/db';
 import type { StaffSession } from '../../lib/db';
+import { formatContactPhone } from '../../lib/fleetDelegation';
 import { getLastDriverLanguage, translateDriver } from '../driver/driverI18n';
 
 interface Props {
@@ -12,12 +13,11 @@ interface Props {
   onDismissSessionNotice: () => void;
 }
 
-/* Dispatch hotline shown in the "Forgot your PIN?" dialog. Drivers cannot reset their own
-   PIN — only an admin can regenerate it from the Accounts page — so this number is the
-   whole recovery path. CHANGE IT HERE if dispatch ever moves to a different line.
-   `DISPATCH_TEL` is what the phone dials; `DISPATCH_DISPLAY` is what the driver reads. */
-const DISPATCH_TEL     = '09384033610';
-const DISPATCH_DISPLAY = '0938 403 3610';
+/* The number in the "Forgot your PIN?" dialog is not written here any more (REQ-018). Drivers cannot
+   reset their own PIN — a staff member regenerates it from the Accounts page — so the dialog shows,
+   from the database (getDriverHelpPhone): the number the OPM entered for the current PIN-reset leave
+   coverage, else the OPM's own profile number (Settings → Contact number). If neither exists, or the
+   lookup fails, it shows wording without a number instead. */
 
 export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice, onDismissSessionNotice }: Props) {
   const [view, setView] = useState<'driver' | 'admin'>(() =>
@@ -43,6 +43,18 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
   const mobileHasError = !!mobileError;
   /* "Forgot your PIN?" dialog — purely informational, it starts no reset flow. */
   const [showPinHelp,   setShowPinHelp]   = useState(false);
+  /* Number set by the OPM for the current PIN-reset coverage, if any (null = none, so the dialog shows wording without a number).
+     Loaded when the screen opens, so it is ready before a driver taps "Forgot your PIN?", and
+     again each time the dialog opens in case the coverage changed meanwhile. */
+  const [helpPhone,     setHelpPhone]     = useState<string | null | undefined>(undefined);   // undefined = still loading, null = no number to show
+  useEffect(() => {
+    let alive = true;
+    getDriverHelpPhone()
+      .then((phone) => { if (alive) setHelpPhone(phone); })
+      /* A failed lookup keeps whatever number we already had; only a first-ever failure shows "no number". */
+      .catch(() => { if (alive) setHelpPhone((current) => current === undefined ? null : current); });
+    return () => { alive = false; };
+  }, [showPinHelp]);
 
   const pinRefs = [
     useRef<HTMLInputElement>(null),
@@ -468,17 +480,21 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
               {tr('login.forgotPin')}
             </h3>
             <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
-              {tr('login.pinHelp')}
+              {helpPhone === null ? tr('login.pinHelpNoNumber') : tr('login.pinHelp')}
             </p>
 
-            {/* tel: link — taps to dial on a phone, reads as plain text on a laptop */}
-            <a
-              href={`tel:${DISPATCH_TEL}`}
-              className="mt-5 flex items-center justify-center gap-2 w-full py-4 bg-[#f3f4f6] rounded-2xl text-xl font-bold text-foreground tracking-wide hover:bg-gray-200 transition-colors"
-            >
-              <Phone className="w-5 h-5 text-[#10b981] flex-shrink-0" />
-              {DISPATCH_DISPLAY}
-            </a>
+            {/* tel: link — taps to dial on a phone, reads as plain text on a laptop.
+                No number at all (none set, or the lookup failed) → just the wording above. */}
+            {helpPhone && (
+              <a
+                href={`tel:${helpPhone}`}
+                className="mt-5 flex items-center justify-center gap-2 w-full py-4 bg-[#f3f4f6] rounded-2xl text-xl font-bold text-foreground tracking-wide hover:bg-gray-200 transition-colors"
+              >
+                <Phone className="w-5 h-5 text-[#10b981] flex-shrink-0" />
+                {formatContactPhone(helpPhone)}
+              </a>
+            )}
+            {helpPhone === undefined && <p className="mt-5 text-sm text-muted-foreground" aria-live="polite">…</p>}
 
             <button
               type="button"
