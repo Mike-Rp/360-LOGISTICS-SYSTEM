@@ -28,10 +28,11 @@ function ViewAll({ onClick }: { onClick: () => void }) {
 export default function DriversFleetCards({ drivers, trucks, assignments, onViewAll }: Props) {
   /* Same rules as the old KPI cards: a driver is available when not on an active
      delivery; a truck is available when its status is 'Available'. */
-  const availableDrivers = drivers.filter((d) => !assignments.find((a) => a.driverId === d.id));
-  const availableTrucks  = trucks.filter((t) => t.status === 'Available').length;
+  const availableDrivers = drivers.filter((d) => !d.unavailable && !assignments.find((a) => a.driverId === d.id));
+  const availableTrucks  = trucks.filter((t) => t.status === 'Available' && !t.unavailable).length;
   /* Available trucks first, then the rest, keeping the loaded order within each group */
-  const fleet = [...trucks].sort((a, b) => Number(b.status === 'Available') - Number(a.status === 'Available'));
+  const isTruckAvailable = (t: (typeof trucks)[number]) => t.status === 'Available' && !t.unavailable;
+  const fleet = [...trucks].sort((a, b) => Number(isTruckAvailable(b)) - Number(isTruckAvailable(a)));
 
   return (
     /* `contents`: no box of its own — the two cards sit directly in DashboardHome's
@@ -91,11 +92,12 @@ export default function DriversFleetCards({ drivers, trucks, assignments, onView
         ) : (
           <>
             {/* Tiles: 1 column while the card is narrower than 28rem (448px), 2 above.
-                Trucks only track Available / Assigned (= On Delivery) — no maintenance status. */}
+                A truck is Available, On Delivery (Assigned) or, since REQ-019, Under maintenance. */}
             <ul className="mt-4 grid grid-cols-1 @md:grid-cols-2 gap-3">
               {fleet.slice(0, TRUCK_ROWS).map((t) => {
                 /* Same badge as the Accounts truck list (shared availabilityConfig) */
-                const cfg = t.status !== 'Assigned' ? availabilityConfig.available : availabilityConfig.onDelivery;
+                const cfg = t.unavailable ? availabilityConfig.maintenance
+                  : t.status !== 'Assigned' ? availabilityConfig.available : availabilityConfig.onDelivery;
                 return (
                   <li key={t.id} className="flex items-center gap-3 rounded-xl bg-gray-50 border border-border/60 px-3 py-2.5 min-w-0">
                     {/* Same icon style as the Monitor cards, a size smaller */}
