@@ -2878,3 +2878,16 @@ now use a separate `resetActionError` shown above the list instead of `resetErro
 the list and is now reserved for the list failing to load. **Verification:** applied; live — junk
 accounts "/…" and "';';';" show Expired with no button; archiving "123456" and "test244#" expired
 their links and removed the Copy buttons.
+
+**ADMIN NOTIFICATIONS follow-up — reset-request notifications leaked into Recent Activity and to
+non-OPM roles (FIXED 2026-10-31).** Found live: three blank rows (empty delivery/driver, generic
+"Status update" badge) appeared in the dashboard's Recent Activity, and a signed-in CSR could see
+them. They were the `password_reset_requested` notifications added in `20261027000001`:
+`RecentActivityTable` lists every notification, these have no driver/truck/assignment, and
+`notifs_select` let every staff role read them. **Fixes:** `AdminDashboard.tsx` now passes the
+dashboard, charts and Monitor a list without this type (`operationalNotifications`); only the bell
+receives it, and `Header.tsx` still shows it to OPM only. `20261031000006_reset_notifications_opm_only.sql`
+re-creates `notifs_select` (otherwise identical to `20261025000003`) so only OPM can SELECT rows of
+this type — a CSR can no longer read other members' reset requests straight from the API.
+**Verification:** applied; live — as CSR, Recent Activity has only real deliveries and the bell has
+no reset items; as OPM, the bell still lists the requests and Recent Activity does not.
