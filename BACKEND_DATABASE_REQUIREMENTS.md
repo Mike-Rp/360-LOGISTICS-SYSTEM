@@ -1836,6 +1836,21 @@ that effect's dependencies (it already reads the always-current
 `notificationsRef.current` instead) — read-state changes alone no longer
 re-trigger this generic sync, since the dedicated path already covers it.
 
+**LOGIN PAGE CHANGES - forgot-password feedback for unknown emails — IMPLEMENTED
+(2026-10-31).** The Forgot Password screen used to show "Request Submitted" for any
+email, including ones with no account. `20261031000003_reset_request_reports_unknown_email.sql`
+re-creates `request_csr_password_reset()` (dropped and recreated — the return type changed)
+to return a boolean: `true` = the email belongs to an active CSR (a request was created, or one
+is already pending/approved/within the 15-minute window), `false` = no eligible CSR account
+(no such email, not a CSR, or not active). All request and notification logic is unchanged and
+the grant stays `anon`-only. `requestCsrPasswordReset()` (`db.ts`) now returns that boolean and
+`LoginScreen.tsx` shows "No active CSR account was found for that email." on `false`; the success
+text now reads "Your request is now available for OPM review…". **Trade-off (deliberate):** the
+anonymous screen can reveal whether an email is an active CSR account; no reset link or other
+data is exposed and OPM approval is still required. **Verification:** applied; live — a
+non-existent address gets the error, `kevin@360logistics.ph` (real CSR) is accepted. The existing
+SQL tests call the RPC with `perform`, so the new return value does not affect them.
+
 ### LOGIN PAGE CHANGES - REQ03 — Prevent Reusing Current Password During CSR Reset
 
 **Status: IMPLEMENTED (2026-10-26).** The backend now refuses the account's
