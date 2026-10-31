@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Sidebar from './Sidebar';
 import Header from './Header';
 import NotificationToastContainer from './NotificationToastContainer';
@@ -131,6 +131,13 @@ export default function AdminDashboard({
     return () => window.clearTimeout(timer);
   }, [activeNav, currentSearchInput]);
 
+  /* Password-reset requests have no driver, truck or delivery, so only the bell shows them;
+     every operational view (Recent Activity, charts, Monitor) gets this list without them. */
+  const operationalNotifications = useMemo(
+    () => notifications.filter((n) => n.type !== 'password_reset_requested'),
+    [notifications],
+  );
+
   const changeSearch = (value: string) => {
     setSearchInput({ page: activeNav, value });
     if (!value) setSearchQuery({ page: activeNav, value: '' });
@@ -230,7 +237,7 @@ export default function AdminDashboard({
             <DashboardHome
               drivers={drivers} trucks={trucks}
               assignments={assignments} completed={completed} cancelled={cancelled}
-              notifications={notifications} activityLog={activityLog}
+              notifications={operationalNotifications} activityLog={activityLog}
               adminName={adminName}
               isViewOnly={operationalReadOnly}
               onNavigate={navigateToModule}
@@ -251,7 +258,7 @@ export default function AdminDashboard({
               assignments={assignments}
               completed={completed}
               cancelled={cancelled}
-              notifications={notifications}
+              notifications={operationalNotifications}
             />
           </>
         );
@@ -261,7 +268,7 @@ export default function AdminDashboard({
             drivers={drivers}         setDrivers={setDrivers}
             trucks={trucks}           setTrucks={setTrucks}
             assignments={assignments} setAssignments={setAssignments}
-            notifications={notifications}
+            notifications={operationalNotifications}
             activityLog={activityLog}
             completed={completed}     setCompleted={setCompleted}
             cancelled={cancelled}     setCancelled={setCancelled}
