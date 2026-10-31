@@ -9,7 +9,8 @@ import { availabilityConfig } from '../../data/assignmentTypes';
 import { RegisterDriverModal, RegisterTruckModal } from './RegisterModals';
 import TruckImage from '../TruckImage';
 import ConfirmPasswordDialog from './ConfirmPasswordDialog';
-import { archiveDriver, archiveTruck, resetDriverPin, AssignmentActionError } from '../../lib/db';
+import { archiveDriver, archiveTruck, resetDriverPin, delegatedResetDriverPin, AssignmentActionError } from '../../lib/db';
+import type { FleetCoverage } from '../../lib/useMyFleetDelegation';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
 import { sortNewestFirst, markLocalRecordAdded, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
 import { capacityKgOnly } from '../../data/truckTypes';
@@ -169,7 +170,11 @@ interface Props {
   archivedDrivers?: LocalDriver[];
   archivedTrucks?: LocalTruck[];
   search: string;
+  /* REQ-018: what a CSR covering for the OPM may do right now (nothing for everyone else). */
+  coverage?: FleetCoverage;
 }
+
+const NO_COVERAGE: FleetCoverage = { canResetPin: false, canRegister: false, pinUntil: null, registerUntil: null };
 
 const ROLE_LABEL: Record<string, string> = {
   admin:  'Admin',
@@ -179,7 +184,12 @@ const ROLE_LABEL: Record<string, string> = {
 
 type TabView = 'Drivers' | 'Trucks';
 
-export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, assignments = [], canManageFleetAccounts, onResetAll, savingToDb, onLogActivity, onServerChange, onActionFeedback, archivedDrivers = [], archivedTrucks = [], search }: Props) {
+export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, assignments = [], canManageFleetAccounts, onResetAll, savingToDb, onLogActivity, onServerChange, onActionFeedback, archivedDrivers = [], archivedTrucks = [], search, coverage = NO_COVERAGE }: Props) {
+  /* The OPM does everything. A covering CSR gets only the pieces the OPM granted — never the PIN
+     column, never archive. The database re-checks the window on every call. */
+  const canResetPins = canManageFleetAccounts || coverage.canResetPin;
+  const canRegisterFleet = canManageFleetAccounts || coverage.canRegister;
+  const covering = !canManageFleetAccounts && (coverage.canResetPin || coverage.canRegister);
   const [tab, setTab] = useState<TabView>('Drivers');
   const [driverView, setDriverView] = useState<'active' | 'archived'>('active');
   const [availabilityFilter, setAvailabilityFilter] = useState<AvailabilityFilter>('all');
@@ -229,9 +239,11 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
     activeTrucksPage.setPage(1);
     archivedTrucksPage.setPage(1);
   };
-  const driverTableLayout = !canManageFleetAccounts
-    ? { gridTemplateColumns: 'minmax(160px, 1.5fr) minmax(220px, 1.6fr) minmax(120px, 1fr) minmax(130px, 1fr)', minWidth: '710px' }
-    : { gridTemplateColumns: 'minmax(160px, 1.6fr) minmax(220px, 1.6fr) 120px 115px 190px', minWidth: '895px' };
+  const driverTableLayout = canManageFleetAccounts
+    ? { gridTemplateColumns: 'minmax(160px, 1.6fr) minmax(220px, 1.6fr) 120px 115px 190px', minWidth: '895px' }
+    : canResetPins
+      ? { gridTemplateColumns: 'minmax(160px, 1.5fr) minmax(220px, 1.6fr) 120px minmax(130px, 1fr) 130px', minWidth: '850px' }
+      : { gridTemplateColumns: 'minmax(160px, 1.5fr) minmax(220px, 1.6fr) minmax(120px, 1fr) minmax(130px, 1fr)', minWidth: '710px' };
 
   /* The "Reset All Data" button was removed from this page. The backend is untouched:
      resetAllData() in lib/db.ts and the reset_all_data() database function both still
@@ -245,6 +257,8 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
   /* ── Archive driver / new PIN / archive truck — each opens a confirmation dialog ── */
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [pinTarget,    setPinTarget]    = useState<{ id: string; name: string } | null>(null);
+  /* A covering CSR is shown the PIN the server just chose — once, then it is gone. */
+  const [issuedPin,    setIssuedPin]    = useState<{ name: string; pin: string } | null>(null);
   const [truckTarget,  setTruckTarget]  = useState<{ id: string; plate: string } | null>(null);
 
   /* A driver counts as "on a task" while they hold any assignment the admin has not yet
@@ -280,7 +294,13 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
     onActionFeedback(`${target.name} moved to archive.`, 'success', 'solid');
   };
   const handleNewPin = async (target: { id: string; name: string }) => {
-    await onServerChange(() => resetDriverPin(target.id, generatePin()));
+    if (canManageFleetAccounts) {
+      await onServerChange(() => resetDriverPin(target.id, generatePin()));
+    } else {
+      let pin = '';
+      await onServerChange(async () => { pin = await delegatedResetDriverPin(target.id); });
+      setIssuedPin({ name: target.name, pin });
+    }
     setPinTarget(null);
     onActionFeedback(`PIN successfully changed for ${target.name}.`, 'success', 'solid');
   };
@@ -323,6 +343,21 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
         </div>
       </div>
 
+      {/* ── Leave coverage notice (a CSR covering for the OPM) ── */}
+      {covering && (
+        <div role="status" className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <Shield aria-hidden="true" className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600" />
+          <div className="min-w-0 text-sm text-amber-900">
+            <p className="font-semibold">Covering for the Operation Manager</p>
+            <p className="mt-0.5">
+              {coverage.canResetPin && <>You can set new driver PINs until {fmtArchived(coverage.pinUntil ?? undefined)}. </>}
+              {coverage.canRegister && <>You can register drivers and trucks until {fmtArchived(coverage.registerUntil ?? undefined)}. </>}
+              Everything you do here is recorded in the activity log.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* ════ DRIVERS TAB ════ */}
       {tab === 'Drivers' && (
         <div className="space-y-4">
@@ -334,7 +369,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
               <AvailabilityFilters value={availabilityFilter} label="Driver availability"
                 allCount={drivers.length} availableCount={availableCount} onDeliveryCount={onDeliveryCount}
                 onChange={(value) => { setAvailabilityFilter(value); activeDriversPage.setPage(1); }} />
-              {canManageFleetAccounts && <button onClick={() => setShowAddDriver(true)}
+              {canRegisterFleet && <button onClick={() => setShowAddDriver(true)}
                 className="ml-auto flex min-h-10 w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors text-sm">
                 <Plus className="w-4 h-4" /> Register Driver
               </button>}
@@ -385,8 +420,8 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                 <Users className="w-8 h-8 text-muted-foreground/40" />
               </div>
               <p className="font-medium text-foreground mb-1">{availabilityFilter === 'available' ? (query ? 'No available drivers match your search.' : 'No available drivers found.') : availabilityFilter === 'onDelivery' ? (query ? 'No drivers on delivery match your search.' : 'No drivers are currently on delivery.') : query ? 'No accounts found' : 'No Drivers Registered Yet'}</p>
-              <p className="text-sm text-muted-foreground mb-5">{query ? 'Try a different search term.' : availabilityFilter === 'all' ? canManageFleetAccounts ? 'Register a driver to generate their login PIN.' : 'Drivers will appear here when registered by OPM.' : 'Choose All to see every active driver.'}</p>
-              {!query && availabilityFilter === 'all' && canManageFleetAccounts && (
+              <p className="text-sm text-muted-foreground mb-5">{query ? 'Try a different search term.' : availabilityFilter === 'all' ? canRegisterFleet ? 'Register a driver to generate their login PIN.' : 'Drivers will appear here when registered by OPM.' : 'Choose All to see every active driver.'}</p>
+              {!query && availabilityFilter === 'all' && canRegisterFleet && (
                 <button onClick={() => setShowAddDriver(true)}
                   className="px-5 py-2.5 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 transition-colors">
                   + Register Driver
@@ -406,7 +441,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                 {canManageFleetAccounts
                   ? <span className="flex items-center gap-1"><KeyRound className="w-3.5 h-3.5" /> PIN</span>
                   : <span>Current Truck</span>}
-                {canManageFleetAccounts && <span className="text-right">Action</span>}
+                {canResetPins && <span className="text-right">Action</span>}
               </div>
               {/* Table rows */}
               <div className="divide-y divide-border">
@@ -445,8 +480,8 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                       {canManageFleetAccounts ? <PinCell pin={d.pin} />
                         : <span className="text-sm text-foreground break-words">{currentTruckFor(d.id)}</span>}
 
-                      {/* Actions — hidden for view-only */}
-                      {canManageFleetAccounts && (
+                      {/* Actions — hidden for view-only; a covering CSR gets New PIN only */}
+                      {canResetPins && (
                         <div className="flex items-center justify-end gap-1.5">
                           <button
                             onClick={() => setPinTarget({ id: d.id, name: d.name })}
@@ -455,13 +490,13 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                           >
                             <RefreshCw className="w-3.5 h-3.5" /> New PIN
                           </button>
-                          <button
+                          {canManageFleetAccounts && <button
                             onClick={() => setDeleteTarget({ id: d.id, name: d.name })}
                             title="Move driver to archive"
                             className="flex min-h-10 items-center gap-1.5 whitespace-nowrap rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 transition-colors hover:border-red-300 hover:bg-red-50"
                           >
                             <Archive className="w-3.5 h-3.5" /> Archive
-                          </button>
+                          </button>}
                         </div>
                       )}
                     </div>
@@ -506,7 +541,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                         </div>
                       </div>
 
-                      {canManageFleetAccounts && (
+                      {canResetPins && (
                         <div className="flex gap-2 mt-2.5">
                           <button
                             onClick={() => setPinTarget({ id: d.id, name: d.name })}
@@ -514,12 +549,12 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                           >
                             <RefreshCw className="w-3.5 h-3.5" /> New PIN
                           </button>
-                          <button
+                          {canManageFleetAccounts && <button
                             onClick={() => setDeleteTarget({ id: d.id, name: d.name })}
                             className="flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:border-red-300 hover:bg-red-50"
                           >
                             <Archive className="w-3.5 h-3.5" /> Archive
-                          </button>
+                          </button>}
                         </div>
                       )}
                     </div>
@@ -563,7 +598,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
               <ChevronDown aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             </div>
             {truckView === 'active' && <>
-              {canManageFleetAccounts && <button onClick={() => setShowAddTruck(true)}
+              {canRegisterFleet && <button onClick={() => setShowAddTruck(true)}
                 className="ml-auto flex min-h-10 w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 bg-secondary text-white rounded-lg hover:bg-secondary/90 transition-colors text-sm">
                 <Plus className="w-4 h-4" /> Register Truck
               </button>}
@@ -613,8 +648,8 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                 <Truck className="w-8 h-8 text-muted-foreground/40" />
               </div>
               <p className="font-medium text-foreground mb-1">{truckClassificationFilter ? 'No trucks match this classification.' : truckStatusFilter === 'available' ? (query ? 'No available trucks match your search.' : 'No available trucks found.') : truckStatusFilter === 'onDelivery' ? (query ? 'No trucks on delivery match your search.' : 'No trucks are currently on delivery.') : query ? 'No accounts found' : 'No Trucks Registered Yet'}</p>
-              <p className="text-sm text-muted-foreground mb-5">{query || truckClassificationFilter ? 'Try a different search term or filter.' : truckStatusFilter === 'all' ? canManageFleetAccounts ? 'Register trucks so they can be assigned to deliveries.' : 'Trucks will appear here when registered by OPM.' : 'Choose All to see every active truck.'}</p>
-              {!query && !truckClassificationFilter && truckStatusFilter === 'all' && canManageFleetAccounts && (
+              <p className="text-sm text-muted-foreground mb-5">{query || truckClassificationFilter ? 'Try a different search term or filter.' : truckStatusFilter === 'all' ? canRegisterFleet ? 'Register trucks so they can be assigned to deliveries.' : 'Trucks will appear here when registered by OPM.' : 'Choose All to see every active truck.'}</p>
+              {!query && !truckClassificationFilter && truckStatusFilter === 'all' && canRegisterFleet && (
                 <button onClick={() => setShowAddTruck(true)}
                   className="px-5 py-2.5 bg-secondary text-white rounded-lg text-sm hover:bg-secondary/90 transition-colors">
                   + Register Truck
@@ -759,20 +794,45 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
       )}
 
       {/* ════ DIALOG: New PIN (password required) ════ */}
-      {pinTarget && canManageFleetAccounts && (
+      {pinTarget && canResetPins && (
         <ConfirmPasswordDialog
           tone="primary"
           title="Set a new PIN?"
           message={<>
             A new 4-digit PIN will be generated for <span className="font-medium text-foreground">{pinTarget.name}</span>.
-            Their current PIN will stop working.
+            Their current PIN will stop working.{!canManageFleetAccounts && ' You will see the new PIN once, to give to the driver.'}
           </>}
           confirmLabel="Set New PIN"
           busyLabel="Saving…"
           onConfirm={() => handleNewPin(pinTarget)}
           onCancel={() => setPinTarget(null)}
-          errorText={accountActionError}
+          errorText={(err) => !canManageFleetAccounts && err instanceof AssignmentActionError && err.code === 'not_authorized'
+            ? 'Your leave coverage has ended or was revoked.'
+            : accountActionError(err)}
         />
+      )}
+
+      {/* ════ DIALOG: the new PIN a covering CSR just set (shown once) ════ */}
+      {issuedPin && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+          <div role="dialog" aria-modal="true" aria-labelledby="issued-pin-title"
+            className="relative w-full max-w-[360px] rounded-2xl border border-border bg-white p-5 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+            <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full border border-[#1DBF73]/25 bg-[#1DBF73]/10">
+              <KeyRound className="h-5 w-5 text-[#1DBF73]" />
+            </div>
+            <p id="issued-pin-title" className="text-center text-base font-semibold text-foreground">New PIN for {issuedPin.name}</p>
+            <p className="mt-3 rounded-xl border border-primary/30 bg-muted/20 py-3 text-center font-mono text-3xl font-semibold tracking-[0.35em] text-primary">{issuedPin.pin}</p>
+            <p className="mt-3 flex items-start gap-1.5 text-xs text-muted-foreground">
+              <Shield className="mt-0.5 h-3 w-3 flex-shrink-0" />
+              Give this PIN to the driver privately. It is shown only now and cannot be viewed again.
+            </p>
+            <button type="button" autoFocus onClick={() => setIssuedPin(null)}
+              className="mt-4 w-full rounded-xl bg-[#1DBF73] py-2.5 text-sm font-medium text-white transition-colors hover:bg-[#19a865]">
+              Done
+            </button>
+          </div>
+        </div>
       )}
 
       {/* ════ DIALOG: Archive truck (no password) ════ */}
@@ -794,7 +854,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
       )}
 
       {/* ════ MODAL: Register Driver ════ */}
-      {showAddDriver && canManageFleetAccounts && (
+      {showAddDriver && canRegisterFleet && (
         <RegisterDriverModal
           drivers={drivers}
           onServerChange={onServerChange}
@@ -804,7 +864,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
       )}
 
       {/* ════ MODAL: Register Truck ════ */}
-      {showAddTruck && canManageFleetAccounts && (
+      {showAddTruck && canRegisterFleet && (
         <RegisterTruckModal
           trucks={trucks}
           onServerChange={onServerChange}
