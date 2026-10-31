@@ -54,6 +54,7 @@ and their SQL test files passed (each test rolls itself back).
 | REQ-015 Server-side duplicate operational photo detection | `20261025000004`, `000005` + Edge Function | `logic.test.cjs` 8/8 | Implemented |
 | REQ-016 Login lockout (5 failures → 5 min, staff + driver) | `20261031000000`, `000001`, `000002` + Edge Function `login` | `login_lockout` 10/10, `logic.test.cjs` 10/10 | Implemented — live test passed |
 | REQ-017 Person-name validation (Add Team Member; Ñ allowed everywhere) + OPM activity-only auto-save | `20261031000004` | `personName.test.cjs` 2/2 | Implemented — live test passed |
+| REQ-018 OPM leave coverage (time-boxed CSR delegation: reset PINs, register drivers/trucks) | `20261101000000`–`000004` | `fleet_delegation` (SQL) 14/14, `fleetDelegation.test.cjs` 9/9 | Implemented — live test passed |
 | REQ-008 Recoverable delivery issues | `20261023000000`–`20261023000002` | — | Implemented |
 | REQ-007 Report ID + QR verification | `20261023000008`, `000009` | — | Implemented |
 
@@ -2891,3 +2892,70 @@ re-creates `notifs_select` (otherwise identical to `20261025000003`) so only OPM
 this type — a CSR can no longer read other members' reset requests straight from the API.
 **Verification:** applied; live — as CSR, Recent Activity has only real deliveries and the bell has
 no reset items; as OPM, the bell still lists the requests and Recent Activity does not.
+
+## [REQ-018] OPM leave coverage — a CSR can cover driver/truck work while the OPM is away
+
+**Status: IMPLEMENTED (2026-11-01) — all four migrations applied, `fleet_delegation.test.sql` 14/14, live test passed: OPM grants coverage; covering CSR sees no PIN column/Archive, sets a PIN (shown once), registers a truck and a driver (logged "under OPM delegation"); End now removes the access; the driver Forgot-PIN screen shows the coverage number, then the OPM's profile number, then (cleared) the built-in one.**
+
+**Problem.** Only the OPM can reset a driver PIN or register drivers and trucks (REQ-004). If the
+OPM is on leave and cannot be reached, a driver who forgets their PIN (or a new driver/truck) has
+nobody who can help. Approval-style fixes do not work because the OPM cannot be disturbed.
+
+**Decision.** Before leaving, the OPM gives one named CSR a window — start and end set by hand to
+match the leave, **no maximum length** — for either or both of: *set new driver PINs*, *register
+drivers and trucks*. Nothing else is delegated: no archiving, no team management, and the CSR can
+**never read** an existing PIN (`driver_pins` stays OPM-only); they see only the PIN they just set,
+once. Rejected alternatives: giving CSRs the PIN column (leaks every driver's PIN), forced
+change-PIN-at-first-login (extra driver screen), an emergency fallback with no prior grant,
+approval requests (nobody can approve).
+
+**Database — `20261101000000_fleet_delegation.sql`.**
+- `fleet_delegations(csr_id, granted_by, starts_at, ends_at, can_reset_pin, can_register,
+  revoked_at)`; RLS on, OPM-only SELECT, no browser writes. Check constraints: end after start, at
+  least one scope.
+- `has_fleet_delegation(scope)` — active CSR, now inside the window, not revoked. Every delegated
+  call re-checks it, so expiry needs no scheduled job and an archived CSR's grant does nothing.
+- `my_fleet_delegation()` — the CSR's own `pin_until` / `register_until` (null = none now).
+- `grant_fleet_delegation(...)` — OPM only, needs a password entered in the last 5 minutes; target
+  must be an active CSR; end must be after the start and in the future; at least one scope. Logs
+  `delegation_granted` (scope + PHT window in `reason`).
+- `revoke_fleet_delegation(id)` — OPM only; works on scheduled or active grants; logs
+  `delegation_revoked`. No password prompt (it only removes access).
+- `delegated_reset_driver_pin(driver_id)` — requires a PIN-reset grant and a recent password entry;
+  the **server** picks the 4-digit PIN, applies it, logs `driver_pin_reset` with reason
+  "Under OPM delegation" (never the PIN) and returns the PIN once.
+- `sync_driver_login()` stays OPM-only. Its body moved unchanged into the internal
+  `_set_driver_login()` (no browser role may execute it); `sync_driver_login()` = OPM check + that.
+- `register_driver()` / `register_truck()` now allow the OPM **or** a CSR with an active
+  registration grant (and call `_set_driver_login()` for the login); their log rows carry reason
+  "Under OPM delegation" when a CSR did it.
+
+**Fix found by the SQL test — `20261101000001_fleet_delegation_driver_login_guard.sql`.** Registering a driver as a covering CSR failed: linking the new login to the driver row (`UPDATE drivers SET auth_user_id`) hit the status-only guard from `20261019000000`, which refuses any non-OPM change except `status`. `_set_driver_login()` now raises a transaction-local flag around that one UPDATE and `guard_driver_update()` accepts it only when the flag is on, the login was previously unset, and `auth_user_id` is the only column (besides status) that changed. A CSR still cannot edit any driver column directly (test checks phone and unlinking).
+
+**Follow-up — the driver's Forgot-PIN screen follows the coverage (`20261101000002_fleet_delegation_contact_phone.sql`).** The login screen showed one built-in hotline (the OPM's), useless while the OPM is away. Now the OPM enters the **number drivers should call** when granting PIN-reset coverage (required then; normally the covering CSR's mobile or a shared dispatch line; any common Philippine format, stored as `09XXXXXXXXX`). While that coverage is active `LoginScreen.tsx` shows it (and the `tel:` link dials it); when it ends or is revoked the built-in number returns by itself. `fleet_delegations.contact_phone` is new; the old 5-argument `grant_fleet_delegation` is dropped and replaced by a 6-argument one so a PIN-reset grant cannot skip the number. `driver_help_phone()` is callable before login and returns **only** a phone number — the newest active PIN-reset coverage that has one and whose CSR is still active, else null (no names or account details; the number is already public on that screen). Grants made before this migration have no number and keep the built-in one. Tests added: 13th SQL check (public number follows grant/newest-wins/revoke/archived-CSR/ended) and 3 unit tests for number parsing.
+
+**Follow-up — the usual number is the OPM's own profile number (`20261101000003_opm_profile_phone.sql`).** The built-in number in `LoginScreen.tsx` was fixed in code, so an OPM who changed phone left drivers dialling the old one until a redeploy. Now `profiles.phone` (local form, optional) is edited by the OPM in **Settings → Contact number** (OPM-only section; same `+63` ten-digit field as Register Driver, shared as `MobileNumberField.tsx`; password re-entry required because it decides what every driver is told to dial; empty clears it). `set_own_phone()` enforces OPM-only, fresh password and the `09XXXXXXXXX` format, and logs `driver_help_phone_changed` ("Now 0917…" / cleared). `driver_help_phone()` now answers: 1) the newest active PIN-reset coverage number, else 2) the active OPM's profile number, else null — and the login screen keeps its built-in number only as a last resort. An archived OPM's number is ignored. SQL test check 14 covers this; `subscriberProblem()` has a unit test.
+
+**Follow-up — no built-in number, and the OPM number cannot be emptied (`20261101000004_opm_phone_required.sql`).** The number that was written into `LoginScreen.tsx` is gone. The Forgot-PIN dialog shows the covering coverage number, else the OPM's profile number; if neither exists (or the lookup fails on first load) it shows wording with **no number** (`login.pinHelpNoNumber`, English and Filipino) and asks the driver to speak to their dispatcher or the office. A failed refresh keeps the number already on screen. Because drivers must always have someone to call, `set_own_phone()` now refuses a blank value (`phone_required`) — the Settings → Contact number field can be changed but not emptied once saved, the **Save Number** button is disabled while it is empty, and the "remove number" path and its log wording are gone. SQL test check 14 now proves an empty/blank/null value is refused and the saved number and public number stay unchanged.
+
+**Frontend.** `lib/fleetDelegation.ts` (status, labels, window validation — `fleetDelegation.test.cjs`
+6/6), `lib/useMyFleetDelegation.ts` (the CSR's coverage; reloads on focus and every minute, expiry
+re-checked every 15 s), `db.ts` (`listFleetDelegations`, `grantFleetDelegation`,
+`revokeFleetDelegation`, `getMyFleetDelegation`, `delegatedResetDriverPin`). OPM: new **Leave
+Coverage** tab in Workspace Settings (pick CSR, tick scopes, start/end pickers with a "That is N
+days" check, password confirmation, current/past lists, End now / Cancel). CSR: Accounts page shows a
+"Covering for the Operation Manager … until <date>" notice, **New PIN** on each driver (no PIN column,
+no Archive), a one-time dialog showing the new PIN, and Register Driver / Register Truck when granted.
+Activity Log gains "Leave Coverage Granted/Ended" and marks delegated rows "· under OPM delegation".
+
+**Tests.** `supabase/tests/fleet_delegation.test.sql` (rolls itself back) covers: execute/table
+rights; an ungranted CSR is refused everything; only the OPM can grant, with a fresh password, a sane
+window, a scope, an active-CSR target, and no length cap (400 days accepted); a granted CSR can reset
+(PIN stored, login changed, logged, PIN not in the log) and register; what stays blocked (reading
+PINs, `reset_driver_pin`, `sync_driver_login`, `archive_driver`, `_set_driver_login`, direct truck
+insert, self-granting, revoking); scopes are separate; before-start / after-end / revoked / archived
+CSR all refused; OPM's own flows unchanged and not marked as delegated.
+
+**Known limits.** The PIN generator is `random()` (same strength as the browser one it replaces for
+this path); PINs remain readable to the OPM in `driver_pins` as before. A CSR sees the end of
+coverage within ~1 minute on screen, but the database refuses at the exact end time.
