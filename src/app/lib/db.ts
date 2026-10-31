@@ -115,10 +115,14 @@ export interface StaffSession {
 /** What update_own_display_name / set_own_avatar_path return — merge into the
     existing StaffSession (isOm/isDemo don't change from these calls). */
 type OwnProfileUpdate = Pick<StaffSession, 'id' | 'email' | 'name' | 'role' | 'avatarPath'>;
-export type LoginErrorCode = 'invalid_credentials' | 'no_access' | 'network' | 'server' | 'rate_limited';
+export type LoginErrorCode = 'invalid_credentials' | 'no_access' | 'network' | 'server' | 'rate_limited' | 'locked';
 export class LoginError extends Error {
   code: LoginErrorCode;
-  constructor(code: LoginErrorCode) { super(code); this.code = code; }
+  /** Only for 'locked': how long until another attempt is accepted. */
+  retryAfterSeconds?: number;
+  constructor(code: LoginErrorCode, retryAfterSeconds?: number) {
+    super(code); this.code = code; this.retryAfterSeconds = retryAfterSeconds;
+  }
 }
 export type AppSession =
   | { kind: 'staff';  staff: StaffSession }
@@ -171,10 +175,33 @@ function loginFailure(error: { status?: number; code?: string }): LoginError {
   return new LoginError('network');
 }
 
+/* Both logins go through the `login` Edge Function, which counts failed attempts per
+   account and locks it for 5 minutes after the 5th (supabase/functions/login). On success
+   it hands back the Auth session and this installs it, exactly as signInWithPassword would. */
+async function authenticate(email: string, password: string): Promise<{ id: string }> {
+  const { data, error } = await supabase.functions.invoke('login', { body: { email, password } });
+  if (error || !data?.session) {
+    let body: { error?: string; retryAfterSeconds?: number } = {};
+    if (error && 'context' in error && error.context instanceof Response) {
+      try { body = await error.context.json(); } catch { /* keep the generic result */ }
+    }
+    switch (body.error) {
+      case 'locked': throw new LoginError('locked', typeof body.retryAfterSeconds === 'number' ? body.retryAfterSeconds : 300);
+      case 'invalid_credentials': throw new LoginError('invalid_credentials');
+      case 'rate_limited': throw new LoginError('rate_limited');
+      case 'server': throw new LoginError('server');
+      default: throw new LoginError('network');
+    }
+  }
+  const { data: installed, error: sessionError } = await supabase.auth.setSession(data.session);
+  if (sessionError || !installed.user) throw loginFailure(sessionError ?? {});
+  return installed.user;
+}
+
 /* Admin / Operation Manager / CSR / Viewer — one path for all of them now. */
 export async function signInStaff(email: string, password: string): Promise<StaffSession> {
-  const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim().toLowerCase(), password });
-  if (error || !data.user) throw loginFailure(error ?? {});
+  const user = await authenticate(email.trim().toLowerCase(), password);
+  const data = { user };
   let profile: Row | null;
   try { profile = await fetchProfile(data.user.id); }
   catch { await signOutThisDevice(); throw new LoginError('network'); }
@@ -198,10 +225,8 @@ export async function signInStaff(email: string, password: string): Promise<Staf
 
 /* mobile10 = the 10 digits after +63, e.g. "9171234567" */
 export async function signInDriver(mobile10: string, pin: string): Promise<{ id: string; name: string }> {
-  const { data, error } = await supabase.auth.signInWithPassword({
-    email: driverLoginEmail('+63' + mobile10), password: driverLoginPassword(pin),
-  });
-  if (error || !data.user) throw loginFailure(error ?? {});
+  const user = await authenticate(driverLoginEmail('+63' + mobile10), driverLoginPassword(pin));
+  const data = { user };
   let driver: { id: string; name: string } | null;
   try { driver = await fetchOwnDriver(data.user.id); }
   catch { await signOutThisDevice(); throw new LoginError('network'); }

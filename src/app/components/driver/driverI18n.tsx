@@ -324,6 +324,7 @@ const en = {
   'login.network': 'Unable to connect to the server. Please try again.',
   'login.server': 'Unable to log in right now. Please try again.',
   'login.rateLimited': 'Too many login requests. Please try again shortly.',
+  'login.locked': 'Too many failed attempts. Try again in {minutes} min.',
   'login.sessionReplaced': 'This account was signed in on another device. Please sign in again.',
   'login.sessionEnded': 'Your session has ended. Please sign in again.',
 } as const;
@@ -651,6 +652,7 @@ const fil: Partial<Record<TranslationKey, string>> = {
   'login.network': 'Hindi makakonekta sa server. Subukan muli.',
   'login.server': 'Hindi makapag-log in ngayon. Subukan muli.',
   'login.rateLimited': 'Masyadong maraming pagtatangkang mag-log in. Subukan muli mamaya.',
+  'login.locked': 'Masyadong maraming maling pagtatangka. Subukan muli pagkalipas ng {minutes} min.',
   'login.sessionReplaced': 'Na-sign in ang account na ito sa ibang device. Mag-sign in muli.',
   'login.sessionEnded': 'Natapos na ang iyong session. Mag-sign in muli.',
 };

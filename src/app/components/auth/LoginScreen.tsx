@@ -28,7 +28,8 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
   const [resetSubmitted, setResetSubmitted] = useState(false);
   const [resetBusy, setResetBusy] = useState(false);
   const driverLanguage = getLastDriverLanguage();
-  const tr = (key: Parameters<typeof translateDriver>[1]) => translateDriver(driverLanguage, key);
+  const tr = (key: Parameters<typeof translateDriver>[1], params?: Record<string, string | number>) => translateDriver(driverLanguage, key, params);
+  const lockMinutes = (e: unknown) => Math.max(1, Math.ceil(((e instanceof LoginError && e.retryAfterSeconds) || 300) / 60));
 
   /* ── Driver form ── */
   const [mobile,        setMobile]        = useState('');
@@ -138,6 +139,7 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
       else if (code === 'no_access')      setDriverError({ type: 'general', msg: tr('login.notDriver') });
       else if (code === 'server')         setDriverError({ type: 'general', msg: tr('login.server') });
       else if (code === 'rate_limited')   setDriverError({ type: 'general', msg: tr('login.rateLimited') });
+      else if (code === 'locked')         setDriverError({ type: 'general', msg: tr('login.locked', { minutes: lockMinutes(e) }) });
       else                                setDriverError({ type: 'general', msg: tr('login.network') });
     } finally {
       setDriverLoading(false);
@@ -167,6 +169,7 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
       else if (code === 'no_access')      setAdminError('This account does not have access to the admin portal. Contact the Operation Manager.');
       else if (code === 'server')         setAdminError('Unable to log in right now. Please try again.');
       else if (code === 'rate_limited')   setAdminError('Too many login requests. Please try again shortly.');
+      else if (code === 'locked')         setAdminError(`Too many failed attempts. Try again in ${lockMinutes(e)} min.`);
       else                                setAdminError('Unable to connect to the server. Please try again.');
     } finally {
       setAdminLoading(false);
