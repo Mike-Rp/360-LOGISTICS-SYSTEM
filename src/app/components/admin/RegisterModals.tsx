@@ -6,6 +6,7 @@ import {
 import type { LocalDriver, LocalTruck } from '../../data/assignmentTypes';
 import { normaliseMobile, registerTruck, registerDriver, AssignmentActionError, type AssignmentActionErrorCode } from '../../lib/db';
 import { parsePhilippineMobile } from '../../lib/philippineMobile';
+import { PERSON_NAME_PATTERN } from '../../lib/personName';
 import { TRUCK_CLASSIFICATIONS, formatCapacity, capacityKgOnly } from '../../data/truckTypes';
 import TruckImage from '../TruckImage';
 
@@ -14,7 +15,7 @@ const generatePin = () => String(Math.floor(1000 + Math.random() * 9000));
 
 /* Matches register_driver()'s server-side rule — letters, spaces, apostrophes,
    hyphens, periods only. */
-const NAME_PATTERN = /^[A-Za-z][A-Za-z\s'.-]*$/;
+const NAME_PATTERN = PERSON_NAME_PATTERN;
 
 /* Plain-language text for register_truck()'s error codes. */
 const truckErrorMessage = (code: AssignmentActionErrorCode): string => ({

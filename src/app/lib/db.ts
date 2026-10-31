@@ -758,7 +758,7 @@ export function markNotificationsRead(ids: string[]): Promise<void> {
 }
 
 /* Save the admin screens' state. Calls are queued so two saves never overlap. */
-export function syncAdminData(data: AdminData): Promise<void> {
+export function syncAdminData(data: AdminData, opts: { activityOnly?: boolean } = {}): Promise<void> {
   const run = async () => {
     if (!snapshot) return;                       // nothing loaded yet — never write from an empty state
     const prev = snapshot;
@@ -767,6 +767,15 @@ export function syncAdminData(data: AdminData): Promise<void> {
     next.notifications.forEach((row, id) => {
       if (prev.notifications.get(id)?.read) row.read = true;
     });
+
+    /* The Operation Manager may add activity-log rows (activity_insert) but has no write
+       access to any other table. Everything else it holds locally differs from the database
+       only by per-browser state (e.g. notifications it marked read on this device), and a
+       blocked write there would fail the save — and the activity row with it. */
+    if (opts.activityOnly) {
+      await syncTable('activity_log', ['id'], prev.activity, next.activity, { insertOnly: true, noDelete: true });
+      return;
+    }
 
     await syncTable('trucks',  ['id'], prev.trucks,  next.trucks,  { noDelete: true });
     await syncTable('drivers', ['id'], prev.drivers, next.drivers, { noDelete: true });
@@ -1030,6 +1039,8 @@ export async function createTeamMember(input: { name: string; email: string; rol
   if (error) {
     if (error.message.includes('email_exists')) throw new Error('A member with that email already exists');
     if (error.message.includes('not_authorized')) throw new Error('Only the Operation Manager can add team members.');
+    if (error.message.includes('invalid_name')) throw new Error('Names can only contain letters, spaces, apostrophes, hyphens and periods.');
+    if (error.message.includes('name_too_long')) throw new Error('Name must be 100 characters or fewer.');
     throw new Error(error.message);
   }
   const row = data as Row;

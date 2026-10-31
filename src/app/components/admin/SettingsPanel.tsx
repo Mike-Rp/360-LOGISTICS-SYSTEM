@@ -11,12 +11,13 @@ import {
 import { playNotificationSound } from '../../lib/notificationSound';
 import { useModalFocus } from './useModalFocus';
 import type { StaffSession } from '../../lib/db';
+import { PERSON_NAME_PATTERN } from '../../lib/personName';
 import AccountRoleBadge from './AccountRoleBadge';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
 import { passwordUpdateError, validatePasswordForm, type PasswordFormError } from '../../lib/passwordFormError';
 
 /* Mirrors update_own_display_name()'s server-side rule exactly. */
-const NAME_PATTERN = /^[A-Za-z][A-Za-z\s'.-]*$/;
+const NAME_PATTERN = PERSON_NAME_PATTERN;
 
 /* ── Field row ── */
 const Field = ({ label, htmlFor, children }: { label: string; htmlFor?: string; children: React.ReactNode }) => (

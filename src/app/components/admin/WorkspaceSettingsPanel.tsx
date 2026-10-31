@@ -11,6 +11,7 @@ import type { AdminActivityEntry, AdminActivityType, AdminActivityInput, TeamMem
 import { PaginationFooter } from './Pagination';
 import { pushAdminNavigation } from '../../lib/adminNavigation';
 import { pageForPasswordResetRequest } from '../../lib/pendingPasswordResetRequests';
+import { isValidPersonName, PERSON_NAME_MAX_LENGTH } from '../../lib/personName';
 
 /* ── Activity log helpers — moved here from SettingsPanel.tsx, extended for member events ── */
 const ACT_CONFIG: Record<AdminActivityType, { label: string; icon: React.ElementType; color: string }> = {
@@ -124,6 +125,8 @@ function AddMemberModal({ onClose, onAdded }: {
   const handleAdd = async () => {
     setError('');
     if (!name.trim()) { setError('Name is required.'); return; }
+    if (name.trim().length > PERSON_NAME_MAX_LENGTH) { setError(`Name must be ${PERSON_NAME_MAX_LENGTH} characters or fewer.`); return; }
+    if (!isValidPersonName(name)) { setError('Names can only contain letters, spaces, apostrophes, hyphens and periods.'); return; }
     if (!/^\S+@\S+\.\S+$/.test(email.trim())) { setError('Enter a valid email address.'); return; }
 
     setSubmitting(true);
