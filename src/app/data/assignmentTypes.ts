@@ -257,7 +257,10 @@ export type AdminActivityType =
   | 'password_reset_approved'
   | 'password_reset_link_generated'
   | 'password_reset_rejected'
-  | 'password_changed';
+  | 'password_changed'
+  | 'delegation_granted'
+  | 'delegation_revoked'
+  | 'driver_help_phone_changed';
 
 export interface AdminActivityEntry {
   id: string;
