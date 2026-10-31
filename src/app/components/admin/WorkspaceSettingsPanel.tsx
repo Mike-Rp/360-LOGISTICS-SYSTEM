@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   X, Users, UserPlus, Clock, ClipboardList, Search, ChevronRight,
   LogIn, CheckCircle, XCircle, FileCheck, FileX, UserX, UserMinus,
-  RefreshCw, Shield, Mail, Pencil, Archive, KeyRound, Truck, CalendarClock, Phone,
+  RefreshCw, Shield, Mail, Pencil, Archive, KeyRound, Truck, CalendarClock, Phone, Wrench, UserCheck,
 } from 'lucide-react';
 import { listTeamMembers, createTeamMember, archiveTeamMember, restoreTeamMember, listCsrPasswordResetRequests, reviewCsrPasswordReset, createCsrPasswordResetLink, resolveAvatarUrls,
   listFleetDelegations, grantFleetDelegation, revokeFleetDelegation } from '../../lib/db';
@@ -46,6 +46,11 @@ const ACT_CONFIG: Record<AdminActivityType, { label: string; icon: React.Element
   delegation_granted:       { label: 'Leave Coverage Granted', icon: CalendarClock, color: 'text-blue-600' },
   delegation_revoked:       { label: 'Leave Coverage Ended', icon: CalendarClock, color: 'text-orange-500' },
   driver_help_phone_changed: { label: 'Driver Help Number Changed', icon: Phone, color: 'text-blue-600' },
+  driver_unavailable:        { label: 'Driver Unavailable', icon: UserX, color: 'text-amber-600' },
+  driver_available_again:    { label: 'Driver Available Again', icon: UserCheck, color: 'text-green-600' },
+  truck_maintenance_started: { label: 'Truck Under Maintenance', icon: Wrench, color: 'text-amber-600' },
+  truck_maintenance_ended:   { label: 'Truck Back In Service', icon: Truck, color: 'text-green-600' },
+  unavailability_updated:    { label: 'Unavailability Updated', icon: Pencil, color: 'text-blue-600' },
 };
 
 function fmtTs(ts: string): string {
@@ -96,6 +101,11 @@ function getDesc(e: AdminActivityEntry): string {
     case 'delegation_granted': return `Leave coverage for ${e.memberName ?? e.memberEmail ?? 'a CSR member'}${e.reason ? ` — ${e.reason}` : ''}`;
     case 'delegation_revoked': return `Ended leave coverage for ${e.memberName ?? e.memberEmail ?? 'a CSR member'}`;
     case 'driver_help_phone_changed': return `Driver Forgot-PIN number: ${e.reason ?? 'changed'}`;
+    case 'driver_unavailable':        return `${e.driverName ?? 'A driver'} marked unavailable — ${e.reason ?? 'no reason given'}`;
+    case 'driver_available_again':    return `${e.driverName ?? 'A driver'} is available again`;
+    case 'truck_maintenance_started': return `Truck ${e.truckPlate ?? '—'} put under maintenance${e.reason ? ` — ${e.reason.replace(/^Maintenance — /, '')}` : ''}`;
+    case 'truck_maintenance_ended':   return `Truck ${e.truckPlate ?? '—'} is back in service`;
+    case 'unavailability_updated':    return `Unavailability updated for ${e.driverName ?? (e.truckPlate ? 'truck ' + e.truckPlate : 'a driver or truck')}${e.reason ? ` — ${e.reason.replace(/^Updated — ?/, '') || 'details changed'}` : ''}`;
   }
 }
 
