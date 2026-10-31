@@ -237,6 +237,14 @@ const actionMessage = (code: AssignmentActionErrorCode): string => ({
   duplicate_phone:   'This mobile number is already registered.',
   duplicate_name:    'A driver with this name already exists.',
   invalid_name:      'Names can only contain letters, spaces, apostrophes, hyphens and periods.',
+  driver_unavailable: 'That driver is marked unavailable and can\'t be assigned. Pick a different driver.',
+  truck_under_maintenance: 'That truck is under maintenance and can\'t be assigned. Pick a different truck.',
+  already_unavailable: 'That is already marked unavailable. Refresh the page.',
+  not_unavailable:   'That is no longer marked unavailable. Refresh the page.',
+  invalid_reason:    'Choose a reason.',
+  note_required:     'Add a short note for "Other".',
+  note_too_long:     'The note is too long (200 characters at most).',
+  invalid_return:    'The return time must be in the future.',
   invalid:          'The server rejected one of the values. Check the form and try again.',
   network:           'Couldn\'t reach the server. Check your connection and try again.',
 }[code]);
@@ -1609,9 +1617,11 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose
   };
 
   /* Drivers not on another active delivery (plus this one's driver); Available trucks (plus this one's truck) */
+  /* A driver marked Unavailable / a truck under maintenance is not offered (the one already on this delivery stays) */
   const busyDrivers   = new Set(assignments.filter((a) => a.id !== original.id).map((a) => a.driverId));
-  const driverOptions = drivers.filter((d) => !busyDrivers.has(d.id)).map((d) => ({ id: d.id, label: d.name }));
-  const truckOptions  = trucks.filter((t) => t.status === 'Available' || t.id === original.truckId)
+  const driverOptions = drivers.filter((d) => !busyDrivers.has(d.id) && (!d.unavailable || d.id === original.driverId))
+    .map((d) => ({ id: d.id, label: d.name }));
+  const truckOptions  = trucks.filter((t) => (t.status === 'Available' && !t.unavailable) || t.id === original.truckId)
     .map((t) => ({ id: t.id, label: t.plateNumber }));
   const selectedTruck = trucks.find((t) => t.id === f.truckId) ?? null;
 
@@ -2069,8 +2079,9 @@ export default function DriversManagement({
   });
 
   const assignedDriverIds = new Set(assignments.map((a) => a.driverId));
-  const availableDrivers  = drivers.filter((d) => !assignedDriverIds.has(d.id));
-  const availableTrucks   = trucks.filter((t)  => t.status === 'Available');
+  /* Not dispatchable: on another delivery, marked Unavailable (sick, leave…), or a truck Under maintenance */
+  const availableDrivers  = drivers.filter((d) => !assignedDriverIds.has(d.id) && !d.unavailable);
+  const availableTrucks   = trucks.filter((t)  => t.status === 'Available' && !t.unavailable);
   const driverAvailable = availableDrivers.some((d) => d.id === taskDriverId);
   const truckAvailable = availableTrucks.some((t) => t.id === taskTruckId);
   const resourcesMissing = availableDrivers.length === 0 || availableTrucks.length === 0;
@@ -2085,13 +2096,17 @@ export default function DriversManagement({
           ? 'No active drivers registered. Contact your Operations Manager.'
           : drivers.every((d) => assignedDriverIds.has(d.id))
             ? 'All active drivers are currently assigned to deliveries.'
-            : 'There are currently no available drivers for dispatch.' }
+            : drivers.every((d) => assignedDriverIds.has(d.id) || d.unavailable)
+              ? 'Every active driver is either on a delivery or marked unavailable.'
+              : 'There are currently no available drivers for dispatch.' }
         : availableTrucks.length === 0
           ? { title: 'No available trucks', detail: trucks.length === 0
             ? 'No active trucks registered. Contact your Operations Manager.'
             : trucks.every((t) => t.status === 'Assigned')
               ? 'All active trucks are currently assigned to deliveries.'
-              : 'There are currently no available trucks for dispatch.' }
+              : trucks.every((t) => t.status === 'Assigned' || t.unavailable)
+                ? 'Every active truck is either on a delivery or under maintenance.'
+                : 'There are currently no available trucks for dispatch.' }
           : null;
 
   const resetAssignTask = () => {
@@ -2183,8 +2198,9 @@ export default function DriversManagement({
     } catch (err) {
       const code = errorCode(err);
       setTaskErrors({ submit: actionMessage(code) });
-      if (code === 'driver_busy' || code === 'driver_archived' || code === 'truck_unavailable' || code === 'truck_archived') {
-        if (code === 'driver_busy' || code === 'driver_archived') setTaskDriverId('');
+      if (code === 'driver_busy' || code === 'driver_archived' || code === 'driver_unavailable'
+          || code === 'truck_unavailable' || code === 'truck_archived' || code === 'truck_under_maintenance') {
+        if (code === 'driver_busy' || code === 'driver_archived' || code === 'driver_unavailable') setTaskDriverId('');
         else setTaskTruckId('');
         setTaskStep(1);
       }
