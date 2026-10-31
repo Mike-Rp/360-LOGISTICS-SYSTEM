@@ -1055,9 +1055,11 @@ export interface CsrPasswordResetRequest {
   status: 'pending' | 'approved' | 'rejected' | 'completed' | 'expired';
 }
 
-export async function requestCsrPasswordReset(email: string): Promise<void> {
-  const { error } = await supabase.rpc('request_csr_password_reset', { p_email: email.trim().toLowerCase() });
-  if (error) throw new Error('Could not submit the request. Please try again later.');
+/** true = the email belongs to an active CSR account (request is with OPM); false = no such account. */
+export async function requestCsrPasswordReset(email: string): Promise<boolean> {
+  const { data, error } = await supabase.rpc('request_csr_password_reset', { p_email: email.trim().toLowerCase() });
+  if (error || typeof data !== 'boolean') throw new Error('Could not submit the request. Please try again later.');
+  return data;
 }
 
 export async function listCsrPasswordResetRequests(): Promise<CsrPasswordResetRequest[]> {

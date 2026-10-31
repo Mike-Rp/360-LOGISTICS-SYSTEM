@@ -65,8 +65,8 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
     setResetBusy(true);
     setResetError('');
     try {
-      await requestCsrPasswordReset(resetEmail);
-      setResetSubmitted(true);
+      if (await requestCsrPasswordReset(resetEmail)) setResetSubmitted(true);
+      else setResetError('No active CSR account was found for that email.');
     } catch { setResetError('Could not submit the request. Please try again.'); }
     finally { setResetBusy(false); }
   };
@@ -397,7 +397,7 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
                     <h2 className="text-base font-semibold">Request Submitted</h2>
                   </div>
                   <p className="mt-2">Your request has been processed.</p>
-                  <p className="mt-2">If your email belongs to an eligible CSR account, the request will be available for OPM review. After approval, OPM can provide your password reset link.</p>
+                  <p className="mt-2">Your request is now available for OPM review. After approval, OPM can provide your password reset link.</p>
                 </div>
               ) : (
                 <form noValidate onSubmit={(event) => { event.preventDefault(); void submitResetRequest(); }} className="space-y-4">
