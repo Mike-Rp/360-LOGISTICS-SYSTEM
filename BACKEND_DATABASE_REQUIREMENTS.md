@@ -55,6 +55,7 @@ and their SQL test files passed (each test rolls itself back).
 | REQ-016 Login lockout (5 failures → 5 min, staff + driver) | `20261031000000`, `000001`, `000002` + Edge Function `login` | `login_lockout` 10/10, `logic.test.cjs` 10/10 | Implemented — live test passed |
 | REQ-017 Person-name validation (Add Team Member; Ñ allowed everywhere) + OPM activity-only auto-save | `20261031000004` | `personName.test.cjs` 2/2 | Implemented — live test passed |
 | REQ-018 OPM leave coverage (time-boxed CSR delegation: reset PINs, register drivers/trucks) | `20261101000000`–`000004` | `fleet_delegation` (SQL) 14/14, `fleetDelegation.test.cjs` 9/9 | Implemented — live test passed |
+| REQ-019 Driver Unavailable / truck Under maintenance (OPM marks them; dispatch refuses them) | `20261101000005` | `fleet_unavailability` (SQL) 12/12, `unavailability.test.cjs` 8/8 | Implemented — live test passed |
 | REQ-008 Recoverable delivery issues | `20261023000000`–`20261023000002` | — | Implemented |
 | REQ-007 Report ID + QR verification | `20261023000008`, `000009` | — | Implemented |
 
@@ -2959,3 +2960,57 @@ CSR all refused; OPM's own flows unchanged and not marked as delegated.
 **Known limits.** The PIN generator is `random()` (same strength as the browser one it replaces for
 this path); PINs remain readable to the OPM in `driver_pins` as before. A CSR sees the end of
 coverage within ~1 minute on screen, but the database refuses at the exact end time.
+
+## [REQ-019] Driver Unavailable / truck Under maintenance
+
+**Status: IMPLEMENTED (2026-11-01) — migration `20261101000005` applied and `fleet_unavailability.test.sql` passed 12/12; live test passed: a driver marked unavailable (Vacation / Leave) disappeared from the Dispatch Truck list and was logged; a truck put under maintenance showed the Maintenance badge and chip; both were marked back and the counts, empty states and toasts updated.**
+
+**Problem.** A driver who is sick, on leave, in an emergency or a no-show — or a truck in the shop — must not be
+handed a delivery, but nothing in the system could say so. Dispatch only looked at "is this driver on another
+delivery" and "is this truck Available".
+
+**Decision.** One status, **Unavailable**, with a reason, instead of separate Absent / Leave statuses (reasons keep
+the distinctions: no-show vs excused). Trucks get the same idea with the single reason **Maintenance**. **OPM only**
+can mark or end it (CSRs can see it). Driver reasons: Sick, Vacation / Leave, Emergency, No-show, Other ("Other"
+requires a note). Expected return is optional; left empty it lasts until the OPM marks them back. A no-show with
+no return ends at the end of that day (Asia/Manila). Not future-dated in this version.
+
+**Database — `20261101000005_fleet_unavailability.sql`.**
+- `fleet_unavailability` — one row per period for a driver **or** a truck (check: exactly one), reason, note
+  (≤ 200), expected return, who marked it / ended it, timestamps. History is kept. At most one open period per
+  driver / truck (partial unique indexes). RLS: staff read, no browser writes.
+- Active = `ended_at is null` **and** (no expected return **or** it has not passed). A period with a return date
+  therefore expires by itself — no scheduled job. `current_unavailability` (security-invoker view) lists the active
+  ones for all staff. An expired period still holds the "one open period" slot, so marking again closes it first.
+- OPM-only functions, no password (reversible): `mark_driver_unavailable`, `mark_driver_available`,
+  `mark_truck_maintenance`, `mark_truck_available`, `update_unavailability` (replaces note + return).
+  Refusals: `driver_busy` (active delivery), `truck_busy`, `already_unavailable`, `not_unavailable`,
+  `invalid_reason`, `note_required`, `note_too_long`, `invalid_return`, archived / not found. Every action is
+  logged (`driver_unavailable`, `driver_available_again`, `truck_maintenance_started`,
+  `truck_maintenance_ended`, `unavailability_updated`) with the reason and note, never anything sensitive.
+- **Enforcement is a guard on `assignments`** (`assignments_availability_guard`): a NEW delivery, or a CHANGED
+  `driver_id` / `truck_id`, for an unavailable driver / truck in maintenance raises `driver_unavailable` /
+  `truck_under_maintenance`. Chosen over re-creating `dispatch_assignment()` and `edit_assignment()` (two large,
+  heavily revised functions) so dispatch, a driver swap and a truck swap are all covered in one small place;
+  unrelated edits to a delivery are untouched.
+- Archiving a driver / truck ends its open period (triggers on `archived_at`).
+
+**Frontend.** `lib/unavailability.ts` (reasons, state, wording, form checks — `unavailability.test.cjs` 8/8),
+`db.ts` (`markDriverUnavailable`, `markDriverAvailable`, `markTruckMaintenance`, `markTruckAvailable`,
+`updateUnavailability`; `loadAdminData()` attaches `driver.unavailable` / `truck.unavailable`, and tolerates the
+view not existing yet so the page still loads before the migration is applied), `UnavailabilityDialog.tsx` (reason,
+note, expected return), `AccountsPanel.tsx`: chips **All | Available | On Delivery | Unavailable** (trucks:
+**Maintenance**), an amber badge with the reason / return / note under it, "Unavailable for N days" for open-ended
+periods, and an OPM-only **Status ▾** menu (Mark unavailable / Put under maintenance, Edit details, Mark available
+again) — greyed out while on a delivery. Dispatch and the Edit-delivery pickers (`DriversManagement.tsx`) no longer
+offer unavailable drivers or trucks in maintenance and explain it; the dashboard cards count only genuinely available
+drivers / trucks. Activity Log labels added. Active / Archived tabs are unchanged: an unavailable driver is still an
+active employee.
+
+**Tests.** `supabase/tests/fleet_unavailability.test.sql` (rolls itself back): rights; CSR can read but not change;
+input validation and busy refusals write nothing; marking is logged and once at a time; no-show defaults to end of
+today; dispatch refuses an unavailable driver / truck in maintenance while normal dispatch still works; a driver / truck
+swap on an existing delivery is refused; update replaces note + return; marking back unblocks dispatch; an expired
+period is over by itself; archiving ends the period; the table's own constraints hold for direct writes.
+
+**Not in this version.** Future-dated leave, a driver-app banner, an attendance report by reason.
