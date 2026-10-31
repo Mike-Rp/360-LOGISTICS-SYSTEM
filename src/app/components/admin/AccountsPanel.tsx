@@ -3,14 +3,24 @@ import {
   Users, Truck, Plus, Eye, EyeOff, RefreshCw,
   Shield, KeyRound, Phone,
   Package, Weight, Trash2, AlertTriangle, Archive, ChevronDown,
+  UserX, UserCheck, Wrench, Pencil,
 } from 'lucide-react';
 import type { LocalDriver, LocalTruck, AdminActivityInput, Assignment } from '../../data/assignmentTypes';
 import { availabilityConfig } from '../../data/assignmentTypes';
 import { RegisterDriverModal, RegisterTruckModal } from './RegisterModals';
 import TruckImage from '../TruckImage';
 import ConfirmPasswordDialog from './ConfirmPasswordDialog';
-import { archiveDriver, archiveTruck, resetDriverPin, delegatedResetDriverPin, AssignmentActionError } from '../../lib/db';
+import {
+  archiveDriver, archiveTruck, resetDriverPin, delegatedResetDriverPin, AssignmentActionError,
+  markDriverUnavailable, markDriverAvailable, markTruckMaintenance, markTruckAvailable, updateUnavailability,
+} from '../../lib/db';
 import type { FleetCoverage } from '../../lib/useMyFleetDelegation';
+import UnavailabilityDialog, { type UnavailabilityDraft } from './UnavailabilityDialog';
+import {
+  driverState, truckState, describeReturn, describeUnavailability, openEndedFor,
+  type DriverUnavailableReason, type FleetState, type Unavailability, type UnavailabilityKind,
+} from '../../lib/unavailability';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
 import { sortNewestFirst, markLocalRecordAdded, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
 import { capacityKgOnly } from '../../data/truckTypes';
@@ -59,27 +69,33 @@ function StatusTabs({ value, onChange, activeCount, archivedCount }: {
   );
 }
 
-type AvailabilityFilter = 'all' | 'available' | 'onDelivery';
+type AvailabilityFilter = 'all' | 'available' | 'onDelivery' | 'unavailable';
 
-function AvailabilityFilters({ value, onChange, allCount, availableCount, onDeliveryCount, label }: {
+function AvailabilityFilters({ value, onChange, allCount, availableCount, onDeliveryCount, unavailableCount, unavailableLabel = 'Unavailable', label }: {
   value: AvailabilityFilter;
   onChange: (value: AvailabilityFilter) => void;
   allCount: number;
   availableCount: number;
   onDeliveryCount: number;
+  /* REQ-019: shown when given — Unavailable (drivers) / Maintenance (trucks) */
+  unavailableCount?: number;
+  unavailableLabel?: string;
   label: string;
 }) {
+  const chips: Array<[AvailabilityFilter, string, number]> = [
+    ['all', 'All', allCount],
+    ['available', 'Available', availableCount],
+    ['onDelivery', 'On Delivery', onDeliveryCount],
+    ...(unavailableCount === undefined ? [] : [['unavailable', unavailableLabel, unavailableCount] as [AvailabilityFilter, string, number]]),
+  ];
+  const dot = (filter: AvailabilityFilter) => filter === 'available' ? 'bg-green-500' : filter === 'onDelivery' ? 'bg-blue-500' : 'bg-amber-500';
   return (
     <div role="group" aria-label={label} className="flex max-w-full flex-wrap items-center gap-1.5 lg:border-l lg:border-border lg:pl-3">
-      {([
-        ['all', 'All', allCount],
-        ['available', 'Available', availableCount],
-        ['onDelivery', 'On Delivery', onDeliveryCount],
-      ] as const).map(([filter, text, count]) => (
+      {chips.map(([filter, text, count]) => (
         <button key={filter} type="button" aria-pressed={value === filter}
           onClick={() => onChange(filter)}
           className={`inline-flex min-h-10 items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-sm font-medium shadow-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${value === filter ? 'border-primary bg-primary text-white' : 'border-border bg-white text-foreground hover:bg-muted/50'}`}>
-          {filter !== 'all' && <span aria-hidden="true" className={`h-2.5 w-2.5 shrink-0 rounded-full ${filter === 'available' ? 'bg-green-500' : 'bg-blue-500'} ${value === filter ? 'ring-2 ring-white' : ''}`} />}
+          {filter !== 'all' && <span aria-hidden="true" className={`h-2.5 w-2.5 shrink-0 rounded-full ${dot(filter)} ${value === filter ? 'ring-2 ring-white' : ''}`} />}
           {text} <span className="ml-1 tabular-nums">{count}</span>
         </button>
       ))}
@@ -120,8 +136,83 @@ function PhoneContact({ driver }: { driver: LocalDriver }) {
 /* ── Helpers ── */
 const generatePin = () => String(Math.floor(1000 + Math.random() * 9000));
 
-/* "Assigned" = driver has an active task → On Delivery; everything else → Available */
-const isAvailable = (status: string) => status !== 'Assigned';
+/* A driver / truck is Available, On Delivery (has an active task) or — REQ-019 — Unavailable / Under maintenance. */
+
+/* Badge for a driver or truck; an unavailable one also shows why and until when, right under it. */
+function AvailabilityBadge({ kind, state, unavailable }: { kind: UnavailabilityKind; state: FleetState; unavailable?: Unavailability }) {
+  const cfg = state === 'unavailable' ? (kind === 'truck' ? availabilityConfig.maintenance : availabilityConfig.unavailable)
+    : availabilityConfig[state];
+  const open = state === 'unavailable' && unavailable ? openEndedFor(unavailable, Date.now()) : null;
+  return (
+    <div className="min-w-0">
+      <span className={`inline-flex w-fit max-w-full items-center rounded-full border px-2.5 py-1 text-sm font-medium ${cfg.badge}`}>
+        <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${cfg.dot}`} />
+        {cfg.label}
+      </span>
+      {state === 'unavailable' && unavailable && (
+        <p className="mt-1 break-words text-xs leading-snug text-muted-foreground" title={unavailable.note || undefined}>
+          {/* The badge already says "Maintenance" for a truck, so only the return is added there */}
+          {kind === 'truck'
+            ? describeReturn(unavailable.expectedReturnAt).replace(/^./, (c) => c.toUpperCase())
+            : describeUnavailability(unavailable)}
+          {open && <span className="block font-medium text-amber-700">Unavailable for {open}</span>}
+          {unavailable.note && <span className="block italic">{unavailable.note}</span>}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/* OPM only: "Status ▾" — mark unavailable / under maintenance, or edit / mark back. Not offered on a delivery. */
+function StatusMenu({ kind, state, onMark, onEdit, onBack, block = false }: {
+  kind: UnavailabilityKind; state: FleetState; onMark: () => void; onEdit: () => void; onBack: () => void; block?: boolean;
+}) {
+  const driver = kind === 'driver';
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button type="button" aria-label={`Change ${driver ? 'driver' : 'truck'} status`}
+          className={`flex min-h-10 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary ${block ? 'flex-1' : ''}`}>
+          Status <ChevronDown className="w-3.5 h-3.5" aria-hidden="true" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="z-[70] min-w-52">
+        {state === 'unavailable' ? (<>
+          <DropdownMenuItem onSelect={onBack}>
+            <UserCheck aria-hidden="true" />{driver ? 'Mark available again' : 'Back in service'}
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={onEdit}><Pencil aria-hidden="true" />Edit details</DropdownMenuItem>
+        </>) : (
+          <DropdownMenuItem onSelect={onMark} disabled={state === 'onDelivery'}>
+            {driver ? <UserX aria-hidden="true" /> : <Wrench aria-hidden="true" />}
+            {driver ? 'Mark unavailable' : 'Put under maintenance'}{state === 'onDelivery' ? ' (on a delivery)' : ''}
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/* Plain-language text for the errors the unavailable / maintenance database functions can return */
+const unavailabilityErrorText = (err: unknown): string => {
+  const code = err instanceof AssignmentActionError ? err.code : 'network';
+  switch (code) {
+    case 'driver_busy':          return 'This driver has an active delivery. Complete or cancel it first.';
+    case 'truck_busy':           return 'This truck is on an active delivery. Complete or cancel it first.';
+    case 'already_unavailable':  return 'This is already marked. Refresh the page.';
+    case 'not_unavailable':      return 'This is no longer marked unavailable. Refresh the page.';
+    case 'invalid_return':       return 'The return time must be in the future.';
+    case 'note_required':        return 'Add a short note for "Other".';
+    case 'note_too_long':        return 'The note is too long (200 characters at most).';
+    case 'invalid_reason':       return 'Choose a reason.';
+    case 'driver_archived':
+    case 'truck_archived':
+    case 'already_archived':     return 'This record has been archived. Refresh the page.';
+    case 'not_authorized':       return 'Only the Operation Manager can do this.';
+    case 'not_deployed':         return 'This feature isn\'t set up on the database yet (the migration hasn\'t been applied).';
+    default:                     return 'Couldn\'t reach the server. Check your connection and try again.';
+  }
+};
 
 /* ── PIN Cell — hold eye to reveal, auto-hides on release/mouse-leave ── */
 function PinCell({ pin }: { pin?: string }) {
@@ -201,19 +292,21 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
     .sort((a, b) => a.localeCompare(b));
   const query = search.trim().toLowerCase();
   const matches = (fields: (string | undefined)[]) => !query || fields.some((field) => field?.toLowerCase().includes(query));
-  const availableCount = drivers.filter((driver) => isAvailable(driver.status)).length;
-  const onDeliveryCount = drivers.length - availableCount;
-  const availableTruckCount = trucks.filter((truck) => truck.status === 'Available').length;
-  const onDeliveryTruckCount = trucks.filter((truck) => truck.status === 'Assigned').length;
+  const availableCount = drivers.filter((driver) => driverState(driver) === 'available').length;
+  const onDeliveryCount = drivers.filter((driver) => driverState(driver) === 'onDelivery').length;
+  const unavailableDriverCount = drivers.filter((driver) => driverState(driver) === 'unavailable').length;
+  const availableTruckCount = trucks.filter((truck) => truckState(truck) === 'available').length;
+  const onDeliveryTruckCount = trucks.filter((truck) => truckState(truck) === 'onDelivery').length;
+  const maintenanceTruckCount = trucks.filter((truck) => truckState(truck) === 'unavailable').length;
   const visibleDrivers = sortNewestFirst(tab === 'Drivers' && driverView === 'active' ? drivers.filter((driver) =>
     matches([driver.name, driver.id, driver.phone]) &&
-    (availabilityFilter === 'all' || isAvailable(driver.status) === (availabilityFilter === 'available'))
+    (availabilityFilter === 'all' || driverState(driver) === availabilityFilter)
   ) : drivers, (driver) => driver.id, 'driver');
   const visibleArchivedDrivers = sortNewestFirst(tab === 'Drivers' && driverView === 'archived' ? archivedDrivers.filter((driver) => matches([driver.name, driver.id, driver.phone])) : archivedDrivers, (driver) => driver.id, 'driver');
   const visibleTrucks = tab === 'Trucks' && truckView === 'active' ? trucks.filter((truck) =>
     matches([truck.plateNumber, truck.id, truck.classification, truck.capacity]) &&
     (!truckClassificationFilter || truck.classification?.trim() === truckClassificationFilter) &&
-    (truckStatusFilter === 'all' || truck.status === (truckStatusFilter === 'available' ? 'Available' : 'Assigned'))
+    (truckStatusFilter === 'all' || truckState(truck) === truckStatusFilter)
   ) : trucks;
   const visibleArchivedTrucks = tab === 'Trucks' && truckView === 'archived' ? archivedTrucks.filter((truck) =>
     matches([truck.plateNumber, truck.id, truck.classification, truck.capacity]) &&
@@ -240,9 +333,9 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
     archivedTrucksPage.setPage(1);
   };
   const driverTableLayout = canManageFleetAccounts
-    ? { gridTemplateColumns: 'minmax(160px, 1.6fr) minmax(220px, 1.6fr) 120px 115px 190px', minWidth: '895px' }
+    ? { gridTemplateColumns: 'minmax(160px, 1.6fr) minmax(220px, 1.6fr) 170px 115px 310px', minWidth: '1030px' }
     : canResetPins
-      ? { gridTemplateColumns: 'minmax(160px, 1.5fr) minmax(220px, 1.6fr) 120px minmax(130px, 1fr) 130px', minWidth: '850px' }
+      ? { gridTemplateColumns: 'minmax(160px, 1.5fr) minmax(220px, 1.6fr) 170px minmax(130px, 1fr) 130px', minWidth: '900px' }
       : { gridTemplateColumns: 'minmax(160px, 1.5fr) minmax(220px, 1.6fr) minmax(120px, 1fr) minmax(130px, 1fr)', minWidth: '710px' };
 
   /* The "Reset All Data" button was removed from this page. The backend is untouched:
@@ -260,6 +353,9 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
   /* A covering CSR is shown the PIN the server just chose — once, then it is gone. */
   const [issuedPin,    setIssuedPin]    = useState<{ name: string; pin: string } | null>(null);
   const [truckTarget,  setTruckTarget]  = useState<{ id: string; plate: string } | null>(null);
+  /* REQ-019: mark unavailable / under maintenance (or edit the open period), and mark back */
+  const [unavailTarget, setUnavailTarget] = useState<{ kind: UnavailabilityKind; id: string; name: string; period?: Unavailability } | null>(null);
+  const [backTarget,    setBackTarget]    = useState<{ kind: UnavailabilityKind; id: string; name: string } | null>(null);
 
   /* A driver counts as "on a task" while they hold any assignment the admin has not yet
      closed out. `assignments` holds only state='active' rows — completed and cancelled
@@ -303,6 +399,24 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
     }
     setPinTarget(null);
     onActionFeedback(`PIN successfully changed for ${target.name}.`, 'success', 'solid');
+  };
+  const handleUnavailableSubmit = async (draft: UnavailabilityDraft) => {
+    const target = unavailTarget;
+    if (!target) return;
+    const input = { note: draft.note, expectedReturn: draft.expectedReturn };
+    await onServerChange(async () => {
+      if (target.period) await updateUnavailability(target.period.id, input);
+      else if (target.kind === 'driver') await markDriverUnavailable(target.id, { ...input, reason: draft.reason as DriverUnavailableReason });
+      else await markTruckMaintenance(target.id, input);
+    });
+    setUnavailTarget(null);
+    onActionFeedback(target.period ? `Details updated for ${target.name}.`
+      : target.kind === 'driver' ? `${target.name} marked unavailable.` : `${target.name} put under maintenance.`, 'success', 'solid');
+  };
+  const handleMarkBack = async (target: { kind: UnavailabilityKind; id: string; name: string }) => {
+    await onServerChange(() => target.kind === 'driver' ? markDriverAvailable(target.id) : markTruckAvailable(target.id));
+    setBackTarget(null);
+    onActionFeedback(target.kind === 'driver' ? `${target.name} is available again.` : `${target.name} is back in service.`, 'success', 'solid');
   };
   const handleArchiveTruck = async (target: { id: string; plate: string }) => {
     await onServerChange(() => archiveTruck(target.id));
@@ -368,6 +482,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
             {driverView === 'active' && <>
               <AvailabilityFilters value={availabilityFilter} label="Driver availability"
                 allCount={drivers.length} availableCount={availableCount} onDeliveryCount={onDeliveryCount}
+                unavailableCount={unavailableDriverCount} unavailableLabel="Unavailable"
                 onChange={(value) => { setAvailabilityFilter(value); activeDriversPage.setPage(1); }} />
               {canRegisterFleet && <button onClick={() => setShowAddDriver(true)}
                 className="ml-auto flex min-h-10 w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors text-sm">
@@ -419,7 +534,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
               <div className="w-16 h-16 bg-muted/50 rounded-full flex items-center justify-center mx-auto mb-4">
                 <Users className="w-8 h-8 text-muted-foreground/40" />
               </div>
-              <p className="font-medium text-foreground mb-1">{availabilityFilter === 'available' ? (query ? 'No available drivers match your search.' : 'No available drivers found.') : availabilityFilter === 'onDelivery' ? (query ? 'No drivers on delivery match your search.' : 'No drivers are currently on delivery.') : query ? 'No accounts found' : 'No Drivers Registered Yet'}</p>
+              <p className="font-medium text-foreground mb-1">{availabilityFilter === 'available' ? (query ? 'No available drivers match your search.' : 'No available drivers found.') : availabilityFilter === 'onDelivery' ? (query ? 'No drivers on delivery match your search.' : 'No drivers are currently on delivery.') : availabilityFilter === 'unavailable' ? (query ? 'No unavailable drivers match your search.' : 'No drivers are marked unavailable.') : query ? 'No accounts found' : 'No Drivers Registered Yet'}</p>
               <p className="text-sm text-muted-foreground mb-5">{query ? 'Try a different search term.' : availabilityFilter === 'all' ? canRegisterFleet ? 'Register a driver to generate their login PIN.' : 'Drivers will appear here when registered by OPM.' : 'Choose All to see every active driver.'}</p>
               {!query && availabilityFilter === 'all' && canRegisterFleet && (
                 <button onClick={() => setShowAddDriver(true)}
@@ -446,7 +561,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
               {/* Table rows */}
               <div className="divide-y divide-border">
                 {activeDriversPage.pageItems.map((d) => {
-                  const avail = isAvailable(d.status);
+                  const state = driverState(d);
                   return (
                     <div key={d.id}
                       style={{ ...driverTableLayout, ...newRecordHighlight(d.id, newDriverId) }}
@@ -468,14 +583,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                       </div>
 
                       {/* Available / On Delivery badge */}
-                      <span className={`inline-flex w-fit items-center rounded-full border px-2.5 py-1 text-sm font-medium ${
-                        avail
-                          ? availabilityConfig.available.badge
-                          : availabilityConfig.onDelivery.badge
-                      }`}>
-                        <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${avail ? availabilityConfig.available.dot : availabilityConfig.onDelivery.dot}`} />
-                        {avail ? availabilityConfig.available.label : availabilityConfig.onDelivery.label}
-                      </span>
+                      <AvailabilityBadge kind="driver" state={state} unavailable={d.unavailable} />
 
                       {canManageFleetAccounts ? <PinCell pin={d.pin} />
                         : <span className="text-sm text-foreground break-words">{currentTruckFor(d.id)}</span>}
@@ -490,6 +598,10 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                           >
                             <RefreshCw className="w-3.5 h-3.5" /> New PIN
                           </button>
+                          {canManageFleetAccounts && <StatusMenu kind="driver" state={state}
+                            onMark={() => setUnavailTarget({ kind: 'driver', id: d.id, name: d.name })}
+                            onEdit={() => d.unavailable && setUnavailTarget({ kind: 'driver', id: d.id, name: d.name, period: d.unavailable })}
+                            onBack={() => setBackTarget({ kind: 'driver', id: d.id, name: d.name })} />}
                           {canManageFleetAccounts && <button
                             onClick={() => setDeleteTarget({ id: d.id, name: d.name })}
                             title="Move driver to archive"
@@ -508,7 +620,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
               {/* Mobile and tablet card list */}
               <div className="divide-y divide-border xl:hidden">
                 {activeDriversPage.pageItems.map((d) => {
-                  const avail = isAvailable(d.status);
+                  const state = driverState(d);
                   return (
                     <div key={d.id} style={newRecordHighlight(d.id, newDriverId)} className="p-4">
                       <div className="flex flex-wrap items-start gap-3">
@@ -519,14 +631,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                           <p className="break-words text-base font-bold text-foreground">{d.name}</p>
                           <p className="mt-0.5 whitespace-nowrap text-sm font-medium text-muted-foreground">{d.id}</p>
                         </div>
-                        <span className={`inline-flex max-w-full items-center rounded-full border px-2.5 py-1 text-sm font-medium ${
-                          avail
-                            ? availabilityConfig.available.badge
-                            : availabilityConfig.onDelivery.badge
-                        }`}>
-                          <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${avail ? availabilityConfig.available.dot : availabilityConfig.onDelivery.dot}`} />
-                          {avail ? availabilityConfig.available.label : availabilityConfig.onDelivery.label}
-                        </span>
+                        <AvailabilityBadge kind="driver" state={state} unavailable={d.unavailable} />
                       </div>
 
                       <div className="mt-3 grid grid-cols-1 gap-3 border-t border-border/60 pt-3 text-sm sm:grid-cols-2">
@@ -549,6 +654,10 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                           >
                             <RefreshCw className="w-3.5 h-3.5" /> New PIN
                           </button>
+                          {canManageFleetAccounts && <StatusMenu block kind="driver" state={state}
+                            onMark={() => setUnavailTarget({ kind: 'driver', id: d.id, name: d.name })}
+                            onEdit={() => d.unavailable && setUnavailTarget({ kind: 'driver', id: d.id, name: d.name, period: d.unavailable })}
+                            onBack={() => setBackTarget({ kind: 'driver', id: d.id, name: d.name })} />}
                           {canManageFleetAccounts && <button
                             onClick={() => setDeleteTarget({ id: d.id, name: d.name })}
                             className="flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:border-red-300 hover:bg-red-50"
@@ -586,6 +695,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
             {truckView === 'active' && <>
               <AvailabilityFilters value={truckStatusFilter} label="Truck availability"
                 allCount={trucks.length} availableCount={availableTruckCount} onDeliveryCount={onDeliveryTruckCount}
+                unavailableCount={maintenanceTruckCount} unavailableLabel="Maintenance"
                 onChange={(value) => { setTruckStatusFilter(value); activeTrucksPage.setPage(1); }} />
             </>}
             <div className="relative w-full min-w-0 sm:w-52">
@@ -647,7 +757,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
               <div className="w-16 h-16 bg-muted/50 rounded-full flex items-center justify-center mx-auto mb-4">
                 <Truck className="w-8 h-8 text-muted-foreground/40" />
               </div>
-              <p className="font-medium text-foreground mb-1">{truckClassificationFilter ? 'No trucks match this classification.' : truckStatusFilter === 'available' ? (query ? 'No available trucks match your search.' : 'No available trucks found.') : truckStatusFilter === 'onDelivery' ? (query ? 'No trucks on delivery match your search.' : 'No trucks are currently on delivery.') : query ? 'No accounts found' : 'No Trucks Registered Yet'}</p>
+              <p className="font-medium text-foreground mb-1">{truckClassificationFilter ? 'No trucks match this classification.' : truckStatusFilter === 'available' ? (query ? 'No available trucks match your search.' : 'No available trucks found.') : truckStatusFilter === 'onDelivery' ? (query ? 'No trucks on delivery match your search.' : 'No trucks are currently on delivery.') : truckStatusFilter === 'unavailable' ? (query ? 'No trucks under maintenance match your search.' : 'No trucks are under maintenance.') : query ? 'No accounts found' : 'No Trucks Registered Yet'}</p>
               <p className="text-sm text-muted-foreground mb-5">{query || truckClassificationFilter ? 'Try a different search term or filter.' : truckStatusFilter === 'all' ? canRegisterFleet ? 'Register trucks so they can be assigned to deliveries.' : 'Trucks will appear here when registered by OPM.' : 'Choose All to see every active truck.'}</p>
               {!query && !truckClassificationFilter && truckStatusFilter === 'all' && canRegisterFleet && (
                 <button onClick={() => setShowAddTruck(true)}
@@ -661,7 +771,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
               <div ref={activeTrucksArea}>
               {/* Wide-screen table */}
               <div className="hidden overflow-x-auto xl:block">
-              <div className={`grid ${!canManageFleetAccounts ? 'grid-cols-[minmax(180px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px] min-w-[640px]' : 'grid-cols-[minmax(180px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px_auto] min-w-[720px]'} gap-4 border-b border-border bg-muted/30 px-5 py-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground`}>
+              <div className={`grid ${!canManageFleetAccounts ? 'grid-cols-[minmax(180px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_170px] min-w-[680px]' : 'grid-cols-[minmax(180px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_170px_auto] min-w-[780px]'} gap-4 border-b border-border bg-muted/30 px-5 py-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground`}>
                 <span>Plate Number</span>
                 <span className="flex items-center gap-1"><Package className="w-3.5 h-3.5" /> Classification</span>
                 <span className="flex items-center gap-1"><Weight className="w-3.5 h-3.5" /> Payload Capacity</span>
@@ -671,7 +781,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
               <div className="divide-y divide-border">
                 {activeTrucksPage.pageItems.map((t) => (
                   <div key={t.id}
-                    className={`grid ${!canManageFleetAccounts ? 'grid-cols-[minmax(180px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px] min-w-[640px]' : 'grid-cols-[minmax(180px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_130px_auto] min-w-[720px]'} gap-4 items-center px-5 py-3.5 hover:bg-muted/10 transition-colors`}>
+                    className={`grid ${!canManageFleetAccounts ? 'grid-cols-[minmax(180px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_170px] min-w-[680px]' : 'grid-cols-[minmax(180px,1.2fr)_minmax(160px,1.5fr)_minmax(170px,1.5fr)_170px_auto] min-w-[780px]'} gap-4 items-center px-5 py-3.5 hover:bg-muted/10 transition-colors`}>
                     {/* Plate */}
                     <div className="flex min-w-0 items-center gap-3">
                       <div className="h-13 w-13 flex-shrink-0 overflow-hidden rounded-lg border border-[#0d9488]/20 bg-[#0d9488]/15 p-0.5">
@@ -701,18 +811,21 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                       )}
                     </div>
                     {/* Status */}
-                    <span className={`inline-flex w-fit items-center rounded-full border px-2.5 py-1 text-sm font-medium ${t.status === 'Available' ? availabilityConfig.available.badge : availabilityConfig.onDelivery.badge}`}>
-                      <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${t.status === 'Available' ? availabilityConfig.available.dot : availabilityConfig.onDelivery.dot}`} />
-                      {t.status === 'Available' ? availabilityConfig.available.label : availabilityConfig.onDelivery.label}
-                    </span>
+                    <AvailabilityBadge kind="truck" state={truckState(t)} unavailable={t.unavailable} />
                     {canManageFleetAccounts && (
-                      <button
-                        onClick={() => setTruckTarget({ id: t.id, plate: t.plateNumber })}
-                        title="Move truck to archive"
-                        className="flex min-h-10 w-fit items-center gap-1.5 whitespace-nowrap rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 transition-colors hover:border-red-300 hover:bg-red-50"
-                      >
-                        <Archive className="w-3.5 h-3.5" /> Archive
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <StatusMenu kind="truck" state={truckState(t)}
+                          onMark={() => setUnavailTarget({ kind: 'truck', id: t.id, name: t.plateNumber })}
+                          onEdit={() => t.unavailable && setUnavailTarget({ kind: 'truck', id: t.id, name: t.plateNumber, period: t.unavailable })}
+                          onBack={() => setBackTarget({ kind: 'truck', id: t.id, name: t.plateNumber })} />
+                        <button
+                          onClick={() => setTruckTarget({ id: t.id, plate: t.plateNumber })}
+                          title="Move truck to archive"
+                          className="flex min-h-10 w-fit items-center gap-1.5 whitespace-nowrap rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 transition-colors hover:border-red-300 hover:bg-red-50"
+                        >
+                          <Archive className="w-3.5 h-3.5" /> Archive
+                        </button>
+                      </div>
                     )}
                   </div>
                 ))}
@@ -731,10 +844,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                         <IdentifierCopy value={t.plateNumber} description="truck plate number" className={truckPlateTextClass} />
                         <p className={truckIdTextClass}>{t.id}</p>
                       </div>
-                      <span className={`inline-flex max-w-full items-center rounded-full border px-2.5 py-1 text-sm font-medium ${t.status === 'Available' ? availabilityConfig.available.badge : availabilityConfig.onDelivery.badge}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${t.status === 'Available' ? availabilityConfig.available.dot : availabilityConfig.onDelivery.dot}`} />
-                        {t.status === 'Available' ? availabilityConfig.available.label : availabilityConfig.onDelivery.label}
-                      </span>
+                      <AvailabilityBadge kind="truck" state={truckState(t)} unavailable={t.unavailable} />
                     </div>
                     <div className="mt-3 grid grid-cols-1 gap-3 border-t border-border/60 pt-3 text-sm sm:grid-cols-2">
                       <div>
@@ -757,12 +867,18 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
                       </div>
                     </div>
                     {canManageFleetAccounts && (
-                      <button
-                        onClick={() => setTruckTarget({ id: t.id, plate: t.plateNumber })}
-                        className="mt-3 flex min-h-10 w-full items-center justify-center gap-1.5 rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:border-red-300 hover:bg-red-50"
-                      >
-                        <Archive className="w-3.5 h-3.5" /> Archive
-                      </button>
+                      <div className="mt-3 flex gap-2">
+                        <StatusMenu block kind="truck" state={truckState(t)}
+                          onMark={() => setUnavailTarget({ kind: 'truck', id: t.id, name: t.plateNumber })}
+                          onEdit={() => t.unavailable && setUnavailTarget({ kind: 'truck', id: t.id, name: t.plateNumber, period: t.unavailable })}
+                          onBack={() => setBackTarget({ kind: 'truck', id: t.id, name: t.plateNumber })} />
+                        <button
+                          onClick={() => setTruckTarget({ id: t.id, plate: t.plateNumber })}
+                          className="flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:border-red-300 hover:bg-red-50"
+                        >
+                          <Archive className="w-3.5 h-3.5" /> Archive
+                        </button>
+                      </div>
                     )}
                   </div>
                 ))}
@@ -850,6 +966,38 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
           onConfirm={() => handleArchiveTruck(truckTarget)}
           onCancel={() => setTruckTarget(null)}
           errorText={accountActionError}
+        />
+      )}
+
+      {/* ════ DIALOG: mark unavailable / under maintenance, or edit the open period (OPM only) ════ */}
+      {unavailTarget && canManageFleetAccounts && (
+        <UnavailabilityDialog
+          key={`${unavailTarget.kind}-${unavailTarget.id}-${unavailTarget.period?.id ?? 'new'}`}
+          kind={unavailTarget.kind}
+          name={unavailTarget.name}
+          mode={unavailTarget.period ? 'edit' : 'mark'}
+          initial={unavailTarget.period}
+          onSubmit={handleUnavailableSubmit}
+          onCancel={() => setUnavailTarget(null)}
+          errorText={unavailabilityErrorText}
+        />
+      )}
+
+      {/* ════ DIALOG: mark back (no password — it only restores access) ════ */}
+      {backTarget && canManageFleetAccounts && (
+        <ConfirmPasswordDialog
+          requirePassword={false}
+          tone="primary"
+          title={backTarget.kind === 'driver' ? 'Mark driver available again?' : 'Put truck back in service?'}
+          message={<>
+            <span className="font-medium text-foreground">{backTarget.name}</span>{' '}
+            {backTarget.kind === 'driver' ? 'can be given deliveries again straight away.' : 'can be assigned to deliveries again straight away.'}
+          </>}
+          confirmLabel={backTarget.kind === 'driver' ? 'Mark Available' : 'Back in Service'}
+          busyLabel="Saving…"
+          onConfirm={() => handleMarkBack(backTarget)}
+          onCancel={() => setBackTarget(null)}
+          errorText={unavailabilityErrorText}
         />
       )}
 
