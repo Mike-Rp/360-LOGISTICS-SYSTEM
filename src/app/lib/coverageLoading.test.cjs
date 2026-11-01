@@ -94,6 +94,7 @@ function setup(t, mode = 'opm') {
       '../../lib/philippineMobile': {},
       './MobileNumberField': { default: 'mobile-input' },
       '../../lib/personName': {},
+      '../../lib/teamMemberValidation': load('teamMemberValidation.ts', { './personName': load('personName.ts') }),
     };
     const { default: Workspace } = load('../components/admin/WorkspaceSettingsPanel.tsx', imports);
     component = () => Workspace({ open: enabled, adminEmail: owner, adminName: 'OPM', activityLog: [], onClose: () => { enabled = false; } });

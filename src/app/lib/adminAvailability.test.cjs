@@ -58,6 +58,7 @@ function fixture() {
     './storageRefs': { storagePathOf: () => null },
     './driverHistory': {},
     './resetPasswordFeedback': {},
+    './teamMemberValidation': {},
   });
   return { db, rows, failures, read };
 }

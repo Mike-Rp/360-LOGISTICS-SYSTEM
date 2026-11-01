@@ -22,6 +22,7 @@ import { locationFieldsFromRow, locationColumnsForRow, invalidLocationEdit } fro
 import { storagePathOf, storedFileRef, sameStoredFile } from './storageRefs';
 import { cancelledHistoryForDriver, type CancelledHistoryItem } from './driverHistory';
 import { normalizeCsrPasswordResetError } from './resetPasswordFeedback';
+import { teamMemberCreationFailure } from './teamMemberValidation';
 import type { FleetDelegation, MyFleetDelegation } from './fleetDelegation';
 import type { DriverUnavailableReason, Unavailability, UnavailableReason } from './unavailability';
 import type {
@@ -1195,11 +1196,7 @@ export async function createTeamMember(input: { name: string; email: string; rol
     p_name: input.name, p_email: input.email, p_role: input.role,
   });
   if (error) {
-    if (error.message.includes('email_exists')) throw new Error('A member with that email already exists');
-    if (error.message.includes('not_authorized')) throw new Error('Only the Operation Manager can add team members.');
-    if (error.message.includes('invalid_name')) throw new Error('Names can only contain letters, spaces, apostrophes, hyphens and periods.');
-    if (error.message.includes('name_too_long')) throw new Error('Name must be 100 characters or fewer.');
-    throw new Error(error.message);
+    throw teamMemberCreationFailure(error.message);
   }
   const row = data as Row;
   return { ...memberFromRow({ ...row, invited_at: row.invitedAt }), setupToken: row.setupToken as string };

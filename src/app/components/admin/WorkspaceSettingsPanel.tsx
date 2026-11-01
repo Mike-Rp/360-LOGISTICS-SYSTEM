@@ -16,7 +16,7 @@ import { pushAdminNavigation } from '../../lib/adminNavigation';
 import { pageForPasswordResetRequest } from '../../lib/pendingPasswordResetRequests';
 import { subscriberProblem } from '../../lib/philippineMobile';
 import MobileNumberField from './MobileNumberField';
-import { isValidPersonName, PERSON_NAME_MAX_LENGTH } from '../../lib/personName';
+import { TeamMemberCreationError, teamMemberNameError, teamMemberEmailError, validateTeamMemberFields, type TeamMemberFieldErrors } from '../../lib/teamMemberValidation';
 import { useCoverageLookup } from '../../lib/useCoverageLookup';
 import { DateField, TimeField } from './ScheduleFields';
 import { formatPhilippineTimestamp, PHILIPPINE_TIME_LABEL } from '../../lib/philippineTime';
@@ -146,18 +146,26 @@ function AddMemberModal({ onClose, onAdded }: {
   const [name,       setName]       = useState('');
   const [email,      setEmail]      = useState('');
   const [error,      setError]      = useState('');
+  const [fieldErrors, setFieldErrors] = useState<TeamMemberFieldErrors>({});
+  const nameRef = useRef<HTMLInputElement>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
+  const submittingRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
   const [created,    setCreated]    = useState<(TeamMember & { setupToken: string }) | null>(null);
   const [copied,     setCopied]     = useState(false);
   const [copyError,  setCopyError]  = useState('');
 
   const handleAdd = async () => {
+    if (submittingRef.current || created) return;
     setError('');
-    if (!name.trim()) { setError('Name is required.'); return; }
-    if (name.trim().length > PERSON_NAME_MAX_LENGTH) { setError(`Name must be ${PERSON_NAME_MAX_LENGTH} characters or fewer.`); return; }
-    if (!isValidPersonName(name)) { setError('Names can only contain letters, spaces, apostrophes, hyphens and periods.'); return; }
-    if (!/^\S+@\S+\.\S+$/.test(email.trim())) { setError('Enter a valid email address.'); return; }
+    const errors = validateTeamMemberFields(name, email);
+    setFieldErrors(errors);
+    if (errors.name || errors.email) {
+      (errors.name ? nameRef : emailRef).current?.focus();
+      return;
+    }
 
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       /* Creates the Supabase Auth login + the profile row in one database call (only the
@@ -169,8 +177,14 @@ function AddMemberModal({ onClose, onAdded }: {
       onAdded(member);
     } catch (e) {
       console.error('[createTeamMember] error:', e);
-      setError(e instanceof Error && e.message ? e.message : 'Something went wrong, please try again.');
+      if (e instanceof TeamMemberCreationError && e.field !== 'general') {
+        setFieldErrors({ [e.field]: e.message });
+        (e.field === 'name' ? nameRef : emailRef).current?.focus();
+      } else {
+        setError(e instanceof TeamMemberCreationError ? e.message : 'Could not add this team member. Please try again.');
+      }
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };
@@ -198,27 +212,37 @@ function AddMemberModal({ onClose, onAdded }: {
   return (
     <ModalShell title="Add Team Member" onClose={onClose}>
       {!created ? (
-        <div className="space-y-5">
+        <form noValidate onSubmit={(event) => { event.preventDefault(); void handleAdd(); }} className="space-y-5">
           <div>
-            <label className="block text-sm font-medium text-foreground mb-1.5">Name <span className="text-red-500">*</span></label>
+            <label htmlFor="team-member-name" className="block text-sm font-medium text-foreground mb-1.5">Name <span className="text-red-500">*</span></label>
             <input
-              type="text" value={name}
-              onChange={(e) => { setName(e.target.value); setError(''); }}
+              id="team-member-name" ref={nameRef} type="text" value={name} disabled={submitting} required
+              aria-invalid={!!fieldErrors.name || undefined} aria-describedby={fieldErrors.name ? 'team-member-name-error' : undefined}
+              onChange={(e) => {
+                setName(e.target.value); setError('');
+                setFieldErrors((previous) => previous.name ? { ...previous, name: teamMemberNameError(e.target.value) } : previous);
+              }}
               placeholder="e.g. Sofia Petrov"
-              className="w-full px-4 py-3 rounded-xl border border-border bg-white text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              className={`w-full px-4 py-3 rounded-xl border text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-60 ${fieldErrors.name ? 'border-red-400 bg-red-50' : 'border-border bg-white'}`}
             />
+            {fieldErrors.name && <p id="team-member-name-error" role="alert" className="mt-1.5 text-sm text-red-600">{fieldErrors.name}</p>}
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-foreground mb-1.5">
+            <label htmlFor="team-member-email" className="block text-sm font-medium text-foreground mb-1.5">
               <span className="flex items-center gap-1.5"><Mail className="w-4 h-4 text-primary/70" /> Email <span className="text-red-500">*</span></span>
             </label>
             <input
-              type="email" value={email}
-              onChange={(e) => { setEmail(e.target.value); setError(''); }}
+              id="team-member-email" ref={emailRef} type="email" value={email} disabled={submitting} required
+              aria-invalid={!!fieldErrors.email || undefined} aria-describedby={fieldErrors.email ? 'team-member-email-error' : undefined}
+              onChange={(e) => {
+                setEmail(e.target.value); setError('');
+                setFieldErrors((previous) => previous.email ? { ...previous, email: teamMemberEmailError(e.target.value) } : previous);
+              }}
               placeholder="name@company.com"
-              className="w-full px-4 py-3 rounded-xl border border-border bg-white text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              className={`w-full px-4 py-3 rounded-xl border text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-60 ${fieldErrors.email ? 'border-red-400 bg-red-50' : 'border-border bg-white'}`}
             />
+            {fieldErrors.email && <p id="team-member-email-error" role="alert" className="mt-1.5 text-sm text-red-600">{fieldErrors.email}</p>}
           </div>
 
           <div>
@@ -229,21 +253,21 @@ function AddMemberModal({ onClose, onAdded }: {
             </div>
           </div>
 
-          {error && <p className="text-xs text-red-500">{error}</p>}
+          {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
 
           <div className="flex gap-3 pt-1">
-            <button onClick={onClose} className="flex-1 px-4 py-2.5 border border-border rounded-xl hover:bg-accent transition-colors text-sm">
+            <button type="button" onClick={onClose} disabled={submitting} className="flex-1 px-4 py-2.5 border border-border rounded-xl hover:bg-accent transition-colors text-sm disabled:opacity-50">
               Cancel
             </button>
             <button
-              onClick={handleAdd}
+              type="submit"
               disabled={submitting}
               className="flex-1 px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2"
             >
               <UserPlus className="w-4 h-4" /> {submitting ? 'Adding…' : 'Add Member'}
             </button>
           </div>
-        </div>
+        </form>
       ) : (
         <div className="text-center py-4 space-y-4">
           <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto">
