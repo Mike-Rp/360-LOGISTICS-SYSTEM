@@ -13,6 +13,7 @@ import MobileNumberField from './MobileNumberField';
 import ConfirmPasswordDialog from './ConfirmPasswordDialog';
 import { playNotificationSound } from '../../lib/notificationSound';
 import { useModalFocus } from './useModalFocus';
+import { useFloatingPanelPresence } from './useFloatingPanelPresence';
 import type { StaffSession } from '../../lib/db';
 import { PERSON_NAME_PATTERN } from '../../lib/personName';
 import AccountRoleBadge from './AccountRoleBadge';
@@ -46,6 +47,7 @@ interface Props {
 }
 
 export default function SettingsPanel({ open, onClose, profile, avatarUrl, onProfileUpdated, notifEnabled, setNotifEnabled, soundEnabled, setSoundEnabled }: Props) {
+  const { mounted, visible } = useFloatingPanelPresence(open);
   const [openSection, setOpenSection] = useState<'contact' | 'security' | 'notifications' | null>(null);
   /* ── Persist notifications preference ── */
   useEffect(() => {
@@ -243,24 +245,24 @@ export default function SettingsPanel({ open, onClose, profile, avatarUrl, onPro
   /* Initials avatar */
   const initials = (profile?.name ?? '').split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2);
 
-  if (!open) return null;
+  if (!mounted) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-[60] isolate">
+    <div className={`fixed inset-0 z-[60] isolate ${open ? '' : 'pointer-events-none'}`} aria-hidden={!open || undefined}>
       {/* Backdrop */}
       <div
-        className="absolute inset-0 z-0 bg-black/40 backdrop-blur-[2px]"
+        className={`absolute inset-0 z-0 bg-black/40 transition-opacity motion-reduce:transition-none sm:transition-none ${visible ? 'opacity-100 duration-[225ms]' : 'opacity-0 duration-200 sm:opacity-100'}`}
         onClick={onClose}
       />
 
       {/* Centred modal — the wrapper ignores clicks so they fall through to the backdrop */}
-      <div className="absolute inset-0 z-10 flex items-end justify-center pointer-events-none sm:items-center sm:p-6">
+      <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none px-4 pt-[max(1.5rem,env(safe-area-inset-top))] pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:p-6">
       <div
         ref={modalRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-title"
-        className="pointer-events-auto flex max-h-[100dvh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:max-h-[min(85dvh,720px)] sm:max-w-[720px] sm:rounded-2xl"
+        className={`pointer-events-auto flex max-h-[calc(100dvh-max(1.5rem,env(safe-area-inset-top))-max(1.5rem,env(safe-area-inset-bottom)))] w-full min-w-0 flex-col overflow-hidden rounded-[20px] bg-white shadow-2xl transition-[opacity,transform] ease-out motion-reduce:transition-none sm:max-h-[min(85dvh,720px)] sm:max-w-[720px] sm:rounded-2xl sm:transform-none sm:opacity-100 sm:transition-none ${visible ? 'translate-y-0 opacity-100 duration-[225ms]' : 'translate-y-2 opacity-0 duration-200'}`}
       >
 
         {/* ── Panel header ── */}
@@ -284,7 +286,7 @@ export default function SettingsPanel({ open, onClose, profile, avatarUrl, onPro
         </div>
 
         {/* One scroll area keeps the header accessible on small screens. */}
-        <div className="min-h-0 min-w-0 overflow-y-auto overscroll-contain px-4 py-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] sm:px-8 sm:py-7">
+        <div className="min-h-0 min-w-0 overflow-y-auto overscroll-contain px-4 py-5 sm:px-8 sm:py-7">
 
           {/* ── Profile ── */}
           <section className="pb-6">
