@@ -13,7 +13,7 @@ const load = (file, requireImpl = require) => {
   return mod.exports;
 };
 const philippineMobile = load('philippineMobile.ts');
-const { delegationStatus, delegationScopeLabel, accessActive, formatWindowLength, checkCoverageWindow, toLocalInputValue,
+const { delegationStatus, delegationScopeLabel, accessActive, formatWindowLength, checkCoverageWindow, checkNewCoverageWindow, toLocalInputValue,
   normalizeContactPhone, formatContactPhone } = load('fleetDelegation.ts', (id) => id === './philippineMobile' ? philippineMobile : require(id));
 
 const NOW = new Date('2026-11-10T12:00:00').getTime();
@@ -70,6 +70,28 @@ test('the form window mirrors the database rules', () => {
 test('datetime-local value is zero-padded browser-local time', () => {
   assert.equal(toLocalInputValue(new Date(2026, 0, 5, 7, 4)), '2026-01-05T07:04');
   assert.equal(toLocalInputValue(new Date(2026, 10, 24, 18, 0)), '2026-11-24T18:00');
+});
+
+test('new coverage cannot backdate its start, including a manually typed date', () => {
+  assert.equal(checkNewCoverageWindow('2026-11-09T12:00', '2026-11-11T12:00', NOW).ok, false);
+  assert.equal(checkNewCoverageWindow('2026-11-10T11:00', '2026-11-11T12:00', NOW).ok, true);
+  assert.equal(checkNewCoverageWindow('2026-11-11T12:00', '2026-11-12T12:00', NOW).ok, true);
+  // Historical/backend window validation still accepts an already-started period.
+  assert.equal(checkCoverageWindow('2026-11-09T12:00', '2026-11-11T12:00', NOW).ok, true);
+});
+
+test('new coverage requires a complete date/time and an end later than both now and start', () => {
+  assert.equal(checkNewCoverageWindow('2026-11-10T', '2026-11-11T12:00', NOW).ok, false);
+  assert.equal(checkNewCoverageWindow('2026-11-10T11:00', '2026-11-10T11:30', NOW).ok, false);
+  assert.equal(checkNewCoverageWindow('2026-11-11T12:00', '2026-11-11T11:00', NOW).ok, false);
+  assert.equal(checkNewCoverageWindow('2026-11-11T12:00', '2026-11-11T12:00', NOW).ok, false);
+});
+
+test('a new coverage draft is rechecked after the calendar day changes', () => {
+  const start = '2026-11-10T12:00';
+  const end = '2026-11-13T12:00';
+  assert.equal(checkNewCoverageWindow(start, end, NOW).ok, true);
+  assert.equal(checkNewCoverageWindow(start, end, NOW + 24 * HOUR).ok, false);
 });
 
 test('contact number accepts common Philippine mobile formats and stores the local form', () => {

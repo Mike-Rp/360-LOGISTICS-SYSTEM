@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import {
   Users, Truck, Plus, Eye, EyeOff, RefreshCw,
   Shield, KeyRound, Phone,
@@ -265,7 +265,7 @@ interface Props {
   coverage?: FleetCoverage;
 }
 
-const NO_COVERAGE: FleetCoverage = { canResetPin: false, canRegister: false, pinUntil: null, registerUntil: null };
+const NO_COVERAGE: FleetCoverage = { canResetPin: false, canRegister: false, pinUntil: null, registerUntil: null, status: 'idle', retry: () => {} };
 
 const ROLE_LABEL: Record<string, string> = {
   admin:  'Admin',
@@ -279,8 +279,14 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
   /* The OPM does everything. A covering CSR gets only the pieces the OPM granted — never the PIN
      column, never archive. The database re-checks the window on every call. */
   const canResetPins = canManageFleetAccounts || coverage.canResetPin;
+  const canResetPinsRef = useRef(canResetPins);
+  canResetPinsRef.current = canResetPins;
   const canRegisterFleet = canManageFleetAccounts || coverage.canRegister;
   const covering = !canManageFleetAccounts && (coverage.canResetPin || coverage.canRegister);
+  const coverageUnverified = !canManageFleetAccounts && ['loading', 'refreshing', 'error'].includes(coverage.status);
+  const coverageBlock = coverageUnverified
+    ? coverage.status === 'error' ? 'Temporary access could not be verified. Retry the coverage check before continuing.' : 'Checking temporary access. Please wait before submitting.'
+    : undefined;
   const [tab, setTab] = useState<TabView>('Drivers');
   const [driverView, setDriverView] = useState<'active' | 'archived'>('active');
   const [availabilityFilter, setAvailabilityFilter] = useState<AvailabilityFilter>('all');
@@ -390,11 +396,15 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
     onActionFeedback(`${target.name} moved to archive.`, 'success', 'solid');
   };
   const handleNewPin = async (target: { id: string; name: string }) => {
+    if (!canResetPinsRef.current) throw new Error('coverage_not_verified');
     if (canManageFleetAccounts) {
       await onServerChange(() => resetDriverPin(target.id, generatePin()));
     } else {
       let pin = '';
-      await onServerChange(async () => { pin = await delegatedResetDriverPin(target.id); });
+      await onServerChange(async () => {
+        if (!canResetPinsRef.current) throw new Error('coverage_not_verified');
+        pin = await delegatedResetDriverPin(target.id);
+      });
       setIssuedPin({ name: target.name, pin });
     }
     setPinTarget(null);
@@ -458,6 +468,13 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
       </div>
 
       {/* ── Leave coverage notice (a CSR covering for the OPM) ── */}
+      {coverageUnverified && <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+        <p role={coverage.status === 'error' ? 'alert' : 'status'}>{coverage.status === 'error'
+          ? 'Could not verify temporary fleet access. Any previously loaded coverage is not verified; temporary actions are disabled.'
+          : coverage.status === 'refreshing' ? 'Refreshing temporary fleet access… Temporary actions are paused until verification completes.' : 'Checking temporary fleet access…'}</p>
+        {coverage.status === 'error' && <button type="button" onClick={coverage.retry} className="min-h-10 rounded-lg px-2 font-medium text-primary underline focus-visible:outline-2 focus-visible:outline-primary">Retry</button>}
+      </div>}
+      {!canManageFleetAccounts && coverage.status === 'success' && !covering && <p role="status" className="text-sm text-muted-foreground">No temporary fleet access is currently active.</p>}
       {covering && (
         <div role="status" className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
           <Shield aria-hidden="true" className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600" />
@@ -910,8 +927,9 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
       )}
 
       {/* ════ DIALOG: New PIN (password required) ════ */}
-      {pinTarget && canResetPins && (
+      {pinTarget && (canResetPins || coverageUnverified) && (
         <ConfirmPasswordDialog
+          blockedReason={coverageBlock}
           tone="primary"
           title="Set a new PIN?"
           message={<>
@@ -922,7 +940,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
           busyLabel="Saving…"
           onConfirm={() => handleNewPin(pinTarget)}
           onCancel={() => setPinTarget(null)}
-          errorText={(err) => !canManageFleetAccounts && err instanceof AssignmentActionError && err.code === 'not_authorized'
+          errorText={(err) => err instanceof Error && err.message === 'coverage_not_verified' ? 'Temporary fleet access is not verified. Retry the coverage check.' : !canManageFleetAccounts && err instanceof AssignmentActionError && err.code === 'not_authorized'
             ? 'Your leave coverage has ended or was revoked.'
             : accountActionError(err)}
         />
@@ -1002,8 +1020,10 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
       )}
 
       {/* ════ MODAL: Register Driver ════ */}
-      {showAddDriver && canRegisterFleet && (
+      {showAddDriver && (canRegisterFleet || coverageUnverified) && (
         <RegisterDriverModal
+          submissionBlockedReason={coverageBlock}
+          onRetryVerification={coverage.status === 'error' ? coverage.retry : undefined}
           drivers={drivers}
           onServerChange={onServerChange}
           onCreated={(driver) => { setAvailabilityFilter('all'); markLocalRecordAdded('driver', driver.id); activeDriversPage.setPage(1); }}
@@ -1012,8 +1032,10 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
       )}
 
       {/* ════ MODAL: Register Truck ════ */}
-      {showAddTruck && canRegisterFleet && (
+      {showAddTruck && (canRegisterFleet || coverageUnverified) && (
         <RegisterTruckModal
+          submissionBlockedReason={coverageBlock}
+          onRetryVerification={coverage.status === 'error' ? coverage.retry : undefined}
           trucks={trucks}
           onServerChange={onServerChange}
           onClose={() => setShowAddTruck(false)}

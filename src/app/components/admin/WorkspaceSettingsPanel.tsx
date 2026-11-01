@@ -7,7 +7,7 @@ import {
 import { listTeamMembers, createTeamMember, archiveTeamMember, restoreTeamMember, listCsrPasswordResetRequests, reviewCsrPasswordReset, createCsrPasswordResetLink, resolveAvatarUrls,
   listFleetDelegations, grantFleetDelegation, revokeFleetDelegation } from '../../lib/db';
 import type { CsrPasswordResetRequest } from '../../lib/db';
-import { checkCoverageWindow, delegationScopeLabel, delegationStatus, formatContactPhone, formatWindowLength, normalizeContactPhone, toLocalInputValue,
+import { checkNewCoverageWindow, delegationScopeLabel, delegationStatus, formatContactPhone, formatWindowLength, normalizeContactPhone, toLocalInputValue,
   type DelegationStatus, type FleetDelegation } from '../../lib/fleetDelegation';
 import ConfirmPasswordDialog from './ConfirmPasswordDialog';
 import type { AdminActivityEntry, AdminActivityType, AdminActivityInput, TeamMember } from '../../data/assignmentTypes';
@@ -17,6 +17,8 @@ import { pageForPasswordResetRequest } from '../../lib/pendingPasswordResetReque
 import { subscriberProblem } from '../../lib/philippineMobile';
 import MobileNumberField from './MobileNumberField';
 import { isValidPersonName, PERSON_NAME_MAX_LENGTH } from '../../lib/personName';
+import { useCoverageLookup } from '../../lib/useCoverageLookup';
+import { DateField, TimeField } from './ScheduleFields';
 
 /* ── Activity log helpers — moved here from SettingsPanel.tsx, extended for member events ── */
 const ACT_CONFIG: Record<AdminActivityType, { label: string; icon: React.ElementType; color: string }> = {
@@ -304,7 +306,15 @@ function CoverageModal({ members, onClose, onContinue }: {
   const [phone,       setPhone]       = useState('');
   const [phoneError,  setPhoneError]  = useState('');
   const [error,       setError]       = useState('');
-  const windowCheck = checkCoverageWindow(start, end, Date.now());
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(interval);
+  }, []);
+  const today = toLocalInputValue(new Date(now)).slice(0, 10);
+  const [startDate = '', startTime = ''] = start.split('T');
+  const [endDate = '', endTime = ''] = end.split('T');
+  const windowCheck = checkNewCoverageWindow(start, end, now);
 
   const handleContinue = () => {
     const csr = csrs.find((member) => member.id === csrId);
@@ -313,8 +323,9 @@ function CoverageModal({ members, onClose, onContinue }: {
     if (canResetPin && subscriberProblem(phone)) { setPhoneError(subscriberProblem(phone)); return; }
     const contactPhone = canResetPin ? normalizeContactPhone(`+63${phone}`) : null;
     if (canResetPin && !contactPhone) { setPhoneError('Enter a valid 10-digit mobile number.'); return; }
-    if (!windowCheck.ok) { setError(windowCheck.error); return; }
-    onContinue({ csr, startsAt: windowCheck.startsAt, endsAt: windowCheck.endsAt, length: windowCheck.length, canResetPin, canRegister, contactPhone });
+    const checked = checkNewCoverageWindow(start, end, Date.now());
+    if (!checked.ok) { setError(checked.error); return; }
+    onContinue({ csr, startsAt: checked.startsAt, endsAt: checked.endsAt, length: checked.length, canResetPin, canRegister, contactPhone });
   };
 
   const inputClass = 'w-full px-4 py-3 rounded-xl border border-border bg-white text-sm focus:outline-none focus:ring-2 focus:ring-primary/30';
@@ -364,11 +375,22 @@ function CoverageModal({ members, onClose, onContinue }: {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <label htmlFor="coverage-start" className="block text-sm font-medium text-foreground mb-1.5">Starts <span className="text-red-500">*</span></label>
-            <input id="coverage-start" type="datetime-local" value={start} onChange={(e) => { setStart(e.target.value); setError(''); }} className={inputClass} />
+            <div className="space-y-2">
+              <DateField id="coverage-start" label="Coverage start date" value={startDate} minIso={today} restrictToday layer
+                hasError={!!startDate && startDate < today}
+                onChange={(date) => { setStart(`${date}T${startTime}`); setError(''); }} />
+              <TimeField label="Coverage start time" value={startTime} layer
+                onChange={(time) => { setStart(`${startDate}T${time}`); setError(''); }} />
+            </div>
           </div>
           <div>
             <label htmlFor="coverage-end" className="block text-sm font-medium text-foreground mb-1.5">Ends <span className="text-red-500">*</span></label>
-            <input id="coverage-end" type="datetime-local" value={end} min={start || undefined} onChange={(e) => { setEnd(e.target.value); setError(''); }} className={inputClass} />
+            <div className="space-y-2">
+              <DateField id="coverage-end" label="Coverage end date" value={endDate} minIso={startDate > today ? startDate : today} restrictToday layer
+                onChange={(date) => { setEnd(`${date}T${endTime}`); setError(''); }} />
+              <TimeField label="Coverage end time" value={endTime} layer
+                onChange={(time) => { setEnd(`${endDate}T${time}`); setError(''); }} />
+            </div>
           </div>
         </div>
         {start && end && (windowCheck.ok
@@ -438,9 +460,9 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
   const logPageSize = 10;
 
   /* Leave coverage (REQ-018) */
-  const [coverage, setCoverage] = useState<FleetDelegation[]>([]);
-  const [coverageLoaded, setCoverageLoaded] = useState(false);
-  const [coverageError, setCoverageError] = useState('');
+  const coverageQuery = useCoverageLookup(open, adminEmail ?? '', listFleetDelegations, 30_000);
+  const coverage = coverageQuery.data ?? [];
+  const coverageVerified = coverageQuery.status === 'success';
   const [coverageNotice, setCoverageNotice] = useState('');
   const [coverageClock, setCoverageClock] = useState(Date.now());
   const [coverageView, setCoverageView] = useState<'current' | 'past'>('current');
@@ -450,28 +472,7 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
 
   useEffect(() => { if (open) setResetLoaded(false); }, [open]);
 
-  const fetchCoverage = async () => {
-    try {
-      setCoverage(await listFleetDelegations());
-      setCoverageError('');
-    } catch (e) {
-      console.error('[listFleetDelegations] error:', e);
-      setCoverageError('Could not load leave coverage. Something went wrong, please try again.');
-    } finally {
-      setCoverageLoaded(true);
-      setCoverageClock(Date.now());
-    }
-  };
-
-  useEffect(() => {
-    if (!open) return;
-    setCoverageLoaded(false);
-    void fetchCoverage();
-    const refresh = () => { void fetchCoverage(); };
-    window.addEventListener('focus', refresh);
-    const interval = window.setInterval(refresh, 30_000);
-    return () => { window.removeEventListener('focus', refresh); window.clearInterval(interval); };
-  }, [open]);
+  useEffect(() => { if (coverageVerified) setCoverageClock(Date.now()); }, [coverageQuery.data, coverageVerified]);
 
   useEffect(() => {
     if (!open || !targetRequestId) return;
@@ -618,28 +619,29 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
   /* The database writes the activity-log row for a grant or revoke itself. */
   const handleGrantCoverage = async () => {
     if (!coverageDraft) return;
-    await grantFleetDelegation({
+    const current = await coverageQuery.runUpdate(() => grantFleetDelegation({
       csrId: coverageDraft.csr.id, startsAt: coverageDraft.startsAt, endsAt: coverageDraft.endsAt,
       canResetPin: coverageDraft.canResetPin, canRegister: coverageDraft.canRegister, contactPhone: coverageDraft.contactPhone,
-    });
+    }));
+    if (!current) return;
     setCoverageNotice(`Leave coverage set for ${coverageDraft.csr.name}.`);
     setCoverageView('current');
     setCoverageDraft(null);
     setShowCoverageModal(false);
-    await fetchCoverage();
   };
 
   const handleRevokeCoverage = async () => {
     if (!revokeTarget) return;
     const who = members.find((member) => member.id === revokeTarget.csrId)?.name ?? 'the CSR';
-    await revokeFleetDelegation(revokeTarget.id);
+    const current = await coverageQuery.runUpdate(() => revokeFleetDelegation(revokeTarget.id));
+    if (!current) return;
     setCoverageNotice(`Leave coverage for ${who} has ended.`);
     setRevokeTarget(null);
-    await fetchCoverage();
   };
 
   const coverageErrorText = (err: unknown): string => {
     const m = err instanceof Error ? err.message : '';
+    if (m.includes('coverage_not_verified')) return 'Leave coverage is not verified. Close this confirmation and retry loading coverage.';
     if (m.includes('reauth_required'))       return 'Please enter your password again.';
     if (m.includes('invalid_window'))        return 'The end must be after the start and still in the future.';
     if (m.includes('no_scope'))              return 'Choose at least one thing the CSR may do.';
@@ -759,7 +761,7 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
               className={`min-h-10 shrink-0 rounded-lg px-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-primary ${tab === key ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'}`}>
               {label}{key === 'resets' && resetRequests.some((request) => request.status === 'pending') &&
                 <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800">{resetRequests.filter((request) => request.status === 'pending').length}</span>}
-              {key === 'coverage' && coverage.some((item) => delegationStatus(item, coverageClock) === 'active') &&
+              {key === 'coverage' && coverageVerified && coverage.some((item) => delegationStatus(item, coverageClock) === 'active') &&
                 <span className="ml-1.5 rounded-full bg-green-100 px-1.5 py-0.5 text-xs text-green-800">{coverage.filter((item) => delegationStatus(item, coverageClock) === 'active').length} active</span>}
             </button>
           ))}
@@ -853,8 +855,8 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
           {tab === 'coverage' && <section id="workspace-panel-coverage" role="tabpanel" aria-labelledby="workspace-tab-coverage" className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Leave Coverage</h3>
-              <button type="button" onClick={() => { setCoverageNotice(''); setShowCoverageModal(true); }}
-                className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-medium text-white hover:bg-primary/90">
+              <button type="button" disabled={!coverageVerified} onClick={() => { setCoverageNotice(''); setShowCoverageModal(true); }}
+                className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-medium text-white hover:bg-primary/90 disabled:opacity-50">
                 <CalendarClock className="h-4 w-4" /> Add Coverage
               </button>
             </div>
@@ -869,13 +871,18 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
               </button>)}
             </div>
             {coverageNotice && <p role="status" className="text-sm text-green-700">{coverageNotice}</p>}
-            {coverageError && <p role="alert" className="text-sm text-red-600">{coverageError}</p>}
-            {!coverageLoaded ? <p className="py-8 text-center text-sm text-muted-foreground">Loading…</p> : (() => {
+            {coverageQuery.status === 'error' && <div className="flex flex-wrap items-center gap-2 text-sm text-red-600">
+              <p role="alert">Could not verify leave coverage.{coverageQuery.data !== undefined && ' Previously loaded records may be out of date.'}</p>
+              <button type="button" onClick={() => void coverageQuery.refresh()} className="min-h-10 rounded-lg px-2 font-medium underline focus-visible:outline-2 focus-visible:outline-primary">Retry</button>
+            </div>}
+            {(coverageQuery.status === 'loading' || coverageQuery.status === 'refreshing') && <p role="status" className="text-sm text-muted-foreground">{coverageQuery.status === 'refreshing' ? 'Refreshing coverage… Previously loaded records are not yet verified.' : 'Loading coverage…'}</p>}
+            {(coverageVerified || coverage.length > 0) && (() => {
               const shown = coverage.filter((item) => {
                 const status = delegationStatus(item, coverageClock);
                 return coverageView === 'current' ? status === 'active' || status === 'scheduled' : status === 'ended' || status === 'revoked';
               });
               if (shown.length === 0) {
+                if (!coverageVerified) return null;
                 return <p className="py-8 text-center text-sm text-muted-foreground">{coverageView === 'current' ? 'No leave coverage is set. If you are going away, add one before you leave.' : 'No past coverage.'}</p>;
               }
               return <div className="space-y-2">{shown.map((item) => {
@@ -886,7 +893,7 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="break-words text-sm font-semibold">{member?.name ?? 'Unknown CSR'}</p>
-                      <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${badge.className}`}>{badge.label}</span>
+                      <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${coverageVerified ? badge.className : 'border-border bg-muted/40 text-muted-foreground'}`}>{coverageVerified ? badge.label : 'Not verified'}</span>
                     </div>
                     {member && <p className="break-all text-xs text-muted-foreground">{member.email}</p>}
                     <p className="mt-1 text-xs text-foreground">{delegationScopeLabel(item)}</p>
@@ -897,8 +904,8 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
                     </p>
                   </div>
                   {(status === 'active' || status === 'scheduled') &&
-                    <button type="button" onClick={() => { setCoverageNotice(''); setRevokeTarget(item); }}
-                      className="min-h-10 shrink-0 rounded-lg border border-red-200 bg-white px-3 text-sm font-medium text-red-600 hover:bg-red-50">
+                    <button type="button" disabled={!coverageVerified} onClick={() => { setCoverageNotice(''); setRevokeTarget(item); }}
+                      className="min-h-10 shrink-0 rounded-lg border border-red-200 bg-white px-3 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50">
                       {status === 'scheduled' ? 'Cancel' : 'End now'}
                     </button>}
                 </div>;

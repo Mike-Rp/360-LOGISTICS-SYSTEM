@@ -123,7 +123,7 @@ export default function AdminDashboard({
   const operationalReadOnly = isViewOnly || !canDispatchAssignments(adminRole);
   /* REQ-018: a CSR the OPM has asked to cover for their leave may reset PINs / register drivers and
      trucks for a window. The OPM themselves never uses this. */
-  const fleetCoverage = useMyFleetDelegation(adminRole === 'csr' || adminRole === 'admin');
+  const fleetCoverage = useMyFleetDelegation(adminRole === 'csr' || adminRole === 'admin', staffProfile?.id ?? adminEmail ?? '');
 
   useEffect(() => {
     setSearchInput({ page: activeNav, value: '' });

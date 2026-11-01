@@ -77,6 +77,18 @@ export function checkCoverageWindow(startValue: string, endValue: string, nowMs:
   return { ok: true, startsAt, endsAt, length: formatWindowLength(endsAt.getTime() - startsAt.getTime()) };
 }
 
+/** New grants may start today (including "start immediately") or on a future day.
+ * Existing historical windows and the backend's accepted timestamp contract stay unchanged. */
+export function checkNewCoverageWindow(startValue: string, endValue: string, nowMs: number): WindowCheck {
+  const checked = checkCoverageWindow(startValue, endValue, nowMs);
+  if (!checked.ok) return checked;
+  const today = toLocalInputValue(new Date(nowMs)).slice(0, 10);
+  if (toLocalInputValue(checked.startsAt).slice(0, 10) < today) {
+    return { ok: false, error: 'The start date must be today or a future date.' };
+  }
+  return checked;
+}
+
 /** Browser-local value for a `datetime-local` input. */
 export function toLocalInputValue(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
