@@ -528,9 +528,9 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
             )
           )}
 
-          {/* Empty state */}
+          {/* Keep empty/list trees distinct: pagination's measured min-height must not carry into the icon. */}
           {driverView === 'active' && (visibleDrivers.length === 0 ? (
-            <div className="bg-white rounded-2xl border border-dashed border-border p-16 text-center">
+            <div key="drivers-empty" className="bg-white rounded-2xl border border-dashed border-border p-16 text-center">
               <div className="w-16 h-16 bg-muted/50 rounded-full flex items-center justify-center mx-auto mb-4">
                 <Users className="w-8 h-8 text-muted-foreground/40" />
               </div>
@@ -544,7 +544,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
               )}
             </div>
           ) : (
-            <div className="bg-white rounded-2xl border border-border shadow-sm overflow-hidden">
+            <div key="drivers-list" className="bg-white rounded-2xl border border-border shadow-sm overflow-hidden">
               <div ref={activeDriversArea}>
               {/* Wide-screen table */}
               <div className="hidden xl:block overflow-x-auto">
@@ -753,7 +753,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
           )}
 
           {truckView === 'active' && (visibleTrucks.length === 0 ? (
-            <div className="bg-white rounded-2xl border border-dashed border-border p-16 text-center">
+            <div key="trucks-empty" className="bg-white rounded-2xl border border-dashed border-border p-16 text-center">
               <div className="w-16 h-16 bg-muted/50 rounded-full flex items-center justify-center mx-auto mb-4">
                 <Truck className="w-8 h-8 text-muted-foreground/40" />
               </div>
@@ -767,7 +767,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
               )}
             </div>
           ) : (
-            <div className="bg-white rounded-2xl border border-border shadow-sm overflow-hidden">
+            <div key="trucks-list" className="bg-white rounded-2xl border border-border shadow-sm overflow-hidden">
               <div ref={activeTrucksArea}>
               {/* Wide-screen table */}
               <div className="hidden overflow-x-auto xl:block">

@@ -279,6 +279,7 @@ export default function AdminDashboard({
             isViewOnly={operationalReadOnly}
             availabilityLoading={contentLoading}
             availabilityError={availabilityError}
+            onRetryAvailability={onRetryLoad}
             onLogActivity={onLogActivity}
             onServerChange={onServerChange}
             onActionFeedback={showActionFeedback}
@@ -350,11 +351,11 @@ export default function AdminDashboard({
         <span role="status" className="sr-only">{initialLoading ? 'Loading page content…' : ''}</span>
         <main aria-busy={contentLoading} className={`min-w-0 flex-1 p-4 sm:p-6 ${mobileMenuOpen || settingsOpen ? 'overflow-hidden' : 'overflow-y-auto'}`}>
           <div className={`max-w-[1600px] mx-auto space-y-4 sm:space-y-6 ${initialLoading ? '' : 'animate-in fade-in duration-300 motion-reduce:animate-none'}`}>
-            {(saveError || loadError) && <div className="space-y-2" role="alert">
+            {(saveError || loadError || availabilityError) && <div className="space-y-2" role="alert">
               {saveError && <p className="rounded-lg border border-red-200 bg-white px-4 py-3 text-sm text-red-700">{saveError}</p>}
-              {loadError && <div className="flex flex-wrap items-center gap-2 rounded-lg border border-red-200 bg-white px-4 py-3 text-sm text-red-700">
-                <span className="min-w-0 flex-1">{loadError}</span>
-                <button type="button" onClick={onRetryLoad} className="rounded-md px-2 py-1 font-semibold text-red-700 underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700">Retry</button>
+              {(loadError || availabilityError) && <div className="flex flex-wrap items-center gap-2 rounded-lg border border-red-200 bg-white px-4 py-3 text-sm text-red-700">
+                <span className="min-w-0 flex-1">{loadError ?? 'Could not refresh availability.'}{availabilityError && ' Availability is unverified; any displayed fleet data is from the last successful load and may be out of date. Dispatch selection is paused until a refresh succeeds.'}</span>
+                <button type="button" onClick={onRetryLoad} disabled={contentLoading} className="rounded-md px-2 py-1 font-semibold text-red-700 underline disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700">{contentLoading ? 'Retrying…' : 'Retry'}</button>
               </div>}
             </div>}
             {initialLoading ? <AdminContentSkeleton page={activeNav} isViewOnly={operationalReadOnly} canManageFleetAccounts={canManageFleetAccounts} /> : renderContent()}

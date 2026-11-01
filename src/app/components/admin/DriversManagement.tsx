@@ -1557,16 +1557,20 @@ const REAUTH_COOLDOWN_MS = 30_000;
 let reauthFails       = 0;
 let reauthLockedUntil = 0;
 
-function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose, onSaved, onServerChange }: {
+function EditAssignmentModal({ assignment, drivers, trucks, assignments, availabilityBlocked, onRetryAvailability, onClose, onSaved, onServerChange }: {
   /* Live copy from props — null once it leaves the active list (completed/cancelled elsewhere) */
   assignment: Assignment | null;
   drivers: LocalDriver[]; trucks: LocalTruck[]; assignments: Assignment[];
+  availabilityBlocked: boolean;
+  onRetryAvailability?: () => void;
   onClose: () => void;
   onSaved: (id: string) => void;
   onServerChange: (action: () => Promise<void>, onActionSuccess?: () => void) => Promise<void>;
 }) {
   /* The version the form was opened with */
   const [original] = useState(assignment);
+  const availabilityBlockedRef = useRef(availabilityBlocked);
+  availabilityBlockedRef.current = availabilityBlocked;
   const [routeFrom, routeTo] = (original?.destination ?? '').split('→').map((s) => s.trim());
 
   const [f, setF] = useState({
@@ -1673,6 +1677,7 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose
   };
 
   const handleSave = () => {
+    if (availabilityBlocked) return;
     if (!stillEditable || !validate()) return;
     const changes = buildChanges();
     if (Object.keys(changes).length === 0) { setFormError('Nothing has changed yet.'); return; }
@@ -1681,7 +1686,7 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose
   };
 
   const handleConfirm = async () => {
-    if (!pending || !password || busy || Date.now() < reauthLockedUntil) return;
+    if (!pending || !password || busy || availabilityBlockedRef.current || Date.now() < reauthLockedUntil) return;
     setBusy(true);
     setPwError('');
     const typed = password;
@@ -1689,6 +1694,10 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose
     try {
       await verifyOwnPassword(typed);
       reauthFails = 0;
+      if (availabilityBlockedRef.current) {
+        setPwError('Availability could not be verified. Close this confirmation and retry availability.');
+        return;
+      }
       await onServerChange(() => editAssignment(original.id, pending, f.reason.trim()));
       onSaved(original.id);
     } catch (err) {
@@ -1725,19 +1734,23 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose
         )}
 
         <SectionHeader>Assignment</SectionHeader>
+        {availabilityBlocked && <p role="status" className="mb-3 text-sm text-muted-foreground">
+          Availability is not verified. Refresh before selecting a driver or truck or saving changes.
+          {onRetryAvailability && <button type="button" onClick={onRetryAvailability} className="ml-2 rounded underline focus-visible:outline-2 focus-visible:outline-primary">Retry</button>}
+        </p>}
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <FieldLabel required>Driver Name</FieldLabel>
               <ResourceSelect value={f.driverId} onChange={(v) => set('driverId', v, 'driver')}
-                options={driverOptions} placeholder="Select a driver…" emptyLabel="No drivers available"
+                options={driverOptions} placeholder="Select a driver…" emptyLabel={availabilityBlocked ? 'Availability not verified' : 'No drivers available'} disabled={availabilityBlocked}
                 hasError={!!errors.driver} />
               {errText('driver')}
             </div>
             <div>
               <FieldLabel required>Truck</FieldLabel>
               <ResourceSelect value={f.truckId} onChange={(v) => set('truckId', v, 'truck')}
-                options={truckOptions} placeholder="Select a truck…" emptyLabel="No trucks available"
+                options={truckOptions} placeholder="Select a truck…" emptyLabel={availabilityBlocked ? 'Availability not verified' : 'No trucks available'} disabled={availabilityBlocked}
                 hasError={!!errors.truck} />
               {errText('truck')}
             </div>
@@ -1863,7 +1876,7 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose
             className="px-5 py-2.5 border border-border rounded-[10px] hover:bg-accent transition-colors text-sm font-medium text-foreground inline-flex items-center justify-center gap-1.5">
             <ArrowLeft className="w-4 h-4" /> Back
           </button>
-          <button onClick={handleSave} disabled={!stillEditable}
+          <button onClick={handleSave} disabled={!stillEditable || availabilityBlocked}
             className="flex-1 px-5 py-2.5 bg-[#1DBF73] text-white rounded-[10px] hover:bg-[#19a865] transition-all shadow-sm hover:shadow active:scale-[0.99] text-sm font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
             <CheckCircle2 className="w-4 h-4" /> Save Changes
           </button>
@@ -1884,6 +1897,7 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose
             <p className="text-xs text-muted-foreground text-center mt-1">
               Enter your account password to save {Object.keys(pending).length} change{Object.keys(pending).length === 1 ? '' : 's'}.
             </p>
+            {availabilityBlocked && <p role="status" className="mt-2 text-sm text-muted-foreground">Availability is not verified. Cancel this confirmation and retry availability before saving.</p>}
             <PasswordVisibilityInput aria-label="Your account password" autoFocus autoComplete="current-password" value={password}
               onChange={(e) => { setPassword(e.target.value); setPwError(''); }}
               disabled={busy || lockedFor > 0}
@@ -1900,7 +1914,7 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, onClose
                 className="flex-1 py-2 border border-border rounded-lg text-sm hover:bg-accent transition-colors disabled:opacity-50">
                 Cancel
               </button>
-              <button type="submit" disabled={busy || !password || lockedFor > 0}
+              <button type="submit" disabled={busy || !password || lockedFor > 0 || availabilityBlocked}
                 className="flex-1 py-2 bg-[#1DBF73] text-white rounded-lg text-sm font-medium hover:bg-[#19a865] transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                 {busy ? 'Saving…' : 'Confirm & Save'}
               </button>
@@ -1924,6 +1938,7 @@ interface Props {
   isViewOnly?: boolean;
   availabilityLoading?: boolean;
   availabilityError?: boolean;
+  onRetryAvailability?: () => void;
   onLogActivity?: (entry: AdminActivityInput) => void;
   /* Runs a database-function change (edit / cancel), then reloads — see App.tsx */
   onServerChange: (action: () => Promise<void>, onActionSuccess?: () => void) => Promise<void>;
@@ -1976,7 +1991,7 @@ function reviewQueueRequested() {
 export default function DriversManagement({
   drivers, setDrivers, trucks, setTrucks,
   assignments, setAssignments, notifications, completed, setCompleted, cancelled, setCancelled,
-  isViewOnly = false, availabilityLoading = false, availabilityError = false, onLogActivity, onServerChange, onActionFeedback, adminEmail,
+  isViewOnly = false, availabilityLoading = false, availabilityError = false, onRetryAvailability, onLogActivity, onServerChange, onActionFeedback, adminEmail,
   openDispatchOnMount = false, onDispatchOpened, search, onSearchChange, notificationTarget, onNotificationTargetHandled,
 }: Props) {
 
@@ -2902,6 +2917,7 @@ export default function DriversManagement({
                   <div className="min-w-0">
                     <p className="font-semibold text-foreground">{resourceNotice.title}</p>
                     <p>{resourceNotice.detail}</p>
+                    {availabilityError && onRetryAvailability && <button type="button" disabled={availabilityLoading} onClick={onRetryAvailability} className="mt-1 rounded underline disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-primary">{availabilityLoading ? 'Retrying…' : 'Retry'}</button>}
                   </div>
                 </div>}
 
@@ -3120,6 +3136,8 @@ export default function DriversManagement({
         <EditAssignmentModal
           key={editId}
           assignment={assignments.find((a) => a.id === editId) ?? null}
+          availabilityBlocked={availabilityLoading || availabilityError}
+          onRetryAvailability={onRetryAvailability}
           drivers={drivers}
           trucks={trucks}
           assignments={assignments}

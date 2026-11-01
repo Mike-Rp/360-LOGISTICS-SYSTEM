@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, type Dispatch, type SetStateAction } from 'react';
 import { CheckCircle2 } from 'lucide-react';
 import { supabase } from './lib/supabaseClient';
-import { loadAdminData, syncAdminData, markNotificationsRead, resetAllData, restoreSession, signOut, checkSessionStatus, endThisDeviceSession, readRecordCreationTimes, resolveAvatarUrl } from './lib/db';
+import { loadAdminData, AvailabilityLookupError, syncAdminData, markNotificationsRead, resetAllData, restoreSession, signOut, checkSessionStatus, endThisDeviceSession, readRecordCreationTimes, resolveAvatarUrl } from './lib/db';
 import { rememberNotificationReads, restoreNotificationReads } from './lib/notificationReadState';
 import type { StaffSession } from './lib/db';
 import AdminDashboard from './components/admin/AdminDashboard';
@@ -265,7 +265,7 @@ export default function App() {
       console.error('[loadData] error:', err);
       // do NOT clear state on error — leave whatever is already in memory
       /* Without this the screen just rendered empty or stale with no explanation. */
-      setLoadError('Could not load your data. Something went wrong, please try again.');
+      setLoadError(err instanceof AvailabilityLookupError ? err.message : 'Could not load your data. Something went wrong, please try again.');
       setAvailabilityRefreshError(true);
     } finally {
       if (sessionEpochRef.current === epoch) {

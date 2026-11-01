@@ -473,6 +473,13 @@ export async function readRecordCreationTimes(table: 'assignments' | 'drivers', 
     .map((row) => ({ id: row.id, createdAt: row.created_at }));
 }
 
+export class AvailabilityLookupError extends Error {
+  constructor() {
+    super('Could not verify driver and truck availability. Please retry.');
+    this.name = 'AvailabilityLookupError';
+  }
+}
+
 export async function loadAdminData(): Promise<AdminData & ArchivedData> {
   const [driverRows, pinRows, truckRows, asnRows, docRows, photoRows, delayRows, issueRows, notifRows, actRows, unavailRows] = await Promise.all([
     fetchAll('drivers',              [['created_at', true], ['id', true]]),
@@ -485,9 +492,10 @@ export async function loadAdminData(): Promise<AdminData & ArchivedData> {
     fetchAll('assignment_issues',    [['reported_at', false]]),
     fetchAll('notifications',        [['created_at', false], ['id', false]]),
     fetchAll('activity_log',         [['ts', false], ['id', false]]),
-    /* REQ-019: who is unavailable right now. If the migration has not been applied yet the view does not
-       exist — the page must still load, so a failure here just means "nobody is marked". */
-    fetchAll('current_unavailability', [['since', true], ['id', true]]).catch((): Row[] => []),
+    /* Availability is required for a verified snapshot. Reject before replacing the last successful
+       data or diff baseline; an error must never look like a successful empty availability result. */
+    fetchAll('current_unavailability', [['since', true], ['id', true]])
+      .catch(() => { throw new AvailabilityLookupError(); }),
   ]);
   await signStoredFiles([...docRows.map((r) => r.file_url), ...photoRows.map((r) => r.url), ...notifRows.map((r) => r.photo_url)]);
 
