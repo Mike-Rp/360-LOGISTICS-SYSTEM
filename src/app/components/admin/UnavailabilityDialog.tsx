@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { X, UserX, Wrench, AlertTriangle } from 'lucide-react';
 import {
   DRIVER_REASONS, NOTE_MAX_LENGTH, checkUnavailabilityForm,
@@ -6,6 +6,8 @@ import {
 } from '../../lib/unavailability';
 import { toLocalInputValue } from '../../lib/fleetDelegation';
 import { PHILIPPINE_TIME_LABEL, persistedTimestamp } from '../../lib/philippineTime';
+import { useModalFocus } from './useModalFocus';
+import DiscardChangesDialog from './DiscardChangesDialog';
 
 /* "Mark unavailable" (driver) / "Put under maintenance" (truck), and the same form to edit an active period.
    The database re-checks everything; this only explains problems before sending. `onSubmit` runs the real call
@@ -39,6 +41,15 @@ export default function UnavailabilityDialog({
   const [errors, setErrors] = useState<{ reason?: string; note?: string; returnAt?: string }>({});
   const [submitError, setSubmitError] = useState('');
   const [busy, setBusy] = useState(false);
+  const modalRef = useRef<HTMLFormElement>(null);
+  const original = useRef({ reason, note, returnValue });
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const requestClose = () => {
+    if (busy) return;
+    if (reason !== original.current.reason || note !== original.current.note || returnValue !== original.current.returnValue) setConfirmDiscard(true);
+    else onCancel();
+  };
+  useModalFocus(true, modalRef, requestClose);
 
   const title = mode === 'edit' ? 'Edit details' : isDriver ? 'Mark driver unavailable' : 'Put truck under maintenance';
   const Icon = isDriver ? UserX : Wrench;
@@ -49,7 +60,12 @@ export default function UnavailabilityDialog({
     if (busy) return;
     setSubmitError('');
     const check = checkUnavailabilityForm({ kind, reason: isDriver ? reason : 'maintenance', note, returnValue, originalReturnAt: initial?.expectedReturnAt, nowMs: Date.now() });
-    if (!check.ok) { setErrors(check.errors); return; }
+    if (!check.ok) {
+      setErrors(check.errors);
+      const id = check.errors.reason ? 'unavailable-reason' : check.errors.note ? 'unavailable-note' : 'unavailable-return';
+      modalRef.current?.querySelector<HTMLElement>(`#${id}`)?.focus();
+      return;
+    }
     setErrors({});
     setBusy(true);
     try {
@@ -62,24 +78,24 @@ export default function UnavailabilityDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => { if (!busy) onCancel(); }} />
-      <form onSubmit={(e) => { e.preventDefault(); void handleSubmit(); }} role="dialog" aria-modal="true" aria-labelledby="unavailability-title"
-        className="relative flex max-h-[92vh] w-full max-w-md flex-col rounded-2xl border border-border bg-white shadow-2xl animate-in fade-in zoom-in-95 duration-200">
-        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+    <><div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={requestClose} />
+      <form ref={modalRef} tabIndex={-1} noValidate onSubmit={(e) => { e.preventDefault(); void handleSubmit(); }} role="dialog" aria-modal="true" aria-labelledby="unavailability-title"
+        className="relative flex max-h-[92dvh] min-w-0 w-full max-w-md flex-col rounded-2xl border border-border bg-white shadow-2xl animate-in fade-in zoom-in-95 duration-200 motion-reduce:animate-none">
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-5 py-4">
           <div className="flex min-w-0 items-center gap-3">
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-50 text-amber-700"><Icon className="h-4 w-4" aria-hidden="true" /></span>
             <div className="min-w-0">
               <h3 id="unavailability-title" className="text-base font-semibold text-foreground">{title}</h3>
-              <p className="truncate text-xs text-muted-foreground">{name}</p>
+              <p className="break-words text-sm text-muted-foreground">{name}</p>
             </div>
           </div>
-          <button type="button" onClick={onCancel} disabled={busy} aria-label="Close"
-            className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-accent disabled:opacity-50"><X className="h-5 w-5" /></button>
+          <button type="button" onClick={requestClose} disabled={busy} aria-label={`Close ${title.toLowerCase()}`}
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-primary"><X aria-hidden="true" className="h-5 w-5" /></button>
         </div>
 
-        <div className="space-y-4 overflow-y-auto px-5 py-4">
-          <p className="text-xs text-muted-foreground">
+        <div className="min-h-0 space-y-4 overflow-y-auto overflow-x-hidden px-5 py-4">
+          <p className="text-sm text-muted-foreground">
             {isDriver
               ? 'While unavailable, this driver cannot be given a delivery. A driver with an active delivery cannot be marked until it is completed or cancelled.'
               : 'While under maintenance, this truck cannot be given a delivery. A truck on an active delivery cannot be marked until it is completed or cancelled.'}
@@ -90,13 +106,13 @@ export default function UnavailabilityDialog({
               <label htmlFor="unavailable-reason" className="mb-1.5 block text-sm font-medium text-foreground">Reason <span className="text-red-500">*</span></label>
               {mode === 'edit'
                 ? <p className="rounded-xl border border-border bg-muted/30 px-3.5 py-2.5 text-sm text-foreground">{DRIVER_REASONS.find((r) => r.value === reason)?.label ?? reason}</p>
-                : <select id="unavailable-reason" value={reason} aria-invalid={errors.reason ? true : undefined}
+                : <select id="unavailable-reason" value={reason} aria-invalid={errors.reason ? true : undefined} aria-describedby={errors.reason ? 'unavailable-reason-error' : undefined}
                     onChange={(e) => { setReason(e.target.value); setErrors((p) => ({ ...p, reason: undefined, note: undefined })); }}
                     className={inputClass(errors.reason)}>
                     <option value="">Choose a reason…</option>
                     {DRIVER_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
                   </select>}
-              {errors.reason && <p role="alert" className="mt-1 text-xs text-red-500">{errors.reason}</p>}
+              {errors.reason && <p id="unavailable-reason-error" role="alert" className="mt-1 text-sm text-red-600">{errors.reason}</p>}
             </div>
           ) : (
             <div>
@@ -109,13 +125,13 @@ export default function UnavailabilityDialog({
             <label htmlFor="unavailable-note" className="mb-1.5 block text-sm font-medium text-foreground">
               Note {noteRequired ? <span className="text-red-500">*</span> : <span className="text-xs font-normal text-muted-foreground">(optional)</span>}
             </label>
-            <textarea id="unavailable-note" value={note} rows={2} maxLength={NOTE_MAX_LENGTH + 20} aria-invalid={errors.note ? true : undefined}
+            <textarea id="unavailable-note" value={note} rows={2} maxLength={NOTE_MAX_LENGTH + 20} aria-invalid={errors.note ? true : undefined} aria-describedby={errors.note ? 'unavailable-note-error' : undefined}
               onChange={(e) => { setNote(e.target.value); setErrors((p) => ({ ...p, note: undefined })); }}
               placeholder={isDriver ? 'e.g. Fever, back on Monday' : 'e.g. Brake repair at the shop'}
               className={`${inputClass(errors.note)} resize-none`} />
             <div className="mt-1 flex items-start justify-between gap-2">
-              {errors.note ? <p role="alert" className="text-xs text-red-500">{errors.note}</p> : <span />}
-              <span className={`text-xs tabular-nums ${note.trim().length > NOTE_MAX_LENGTH ? 'text-red-500' : 'text-muted-foreground'}`}>{note.trim().length}/{NOTE_MAX_LENGTH}</span>
+              {errors.note ? <p id="unavailable-note-error" role="alert" className="text-sm text-red-600">{errors.note}</p> : <span />}
+              <span className={`shrink-0 text-sm tabular-nums ${note.trim().length > NOTE_MAX_LENGTH ? 'text-red-600' : 'text-muted-foreground'}`}>{note.trim().length}/{NOTE_MAX_LENGTH}</span>
             </div>
           </div>
 
@@ -123,12 +139,12 @@ export default function UnavailabilityDialog({
             <label htmlFor="unavailable-return" className="mb-1.5 block text-sm font-medium text-foreground">
               Expected return <span className="text-xs font-normal text-muted-foreground">(optional)</span>
             </label>
-            <input id="unavailable-return" type="datetime-local" value={returnValue} aria-invalid={errors.returnAt ? true : undefined}
+            <input id="unavailable-return" type="datetime-local" value={returnValue} aria-invalid={errors.returnAt ? true : undefined} aria-describedby={`unavailable-return-help${errors.returnAt ? ' unavailable-return-error' : ''}`}
               onChange={(e) => { setReturnValue(e.target.value); setErrors((p) => ({ ...p, returnAt: undefined })); }}
-              className={inputClass(errors.returnAt)} />
-            <p className="mt-1 text-sm text-muted-foreground">{PHILIPPINE_TIME_LABEL}</p>
-            {errors.returnAt && <p role="alert" className="mt-1 text-xs text-red-500">{errors.returnAt}</p>}
-            <p className="mt-1 text-xs text-muted-foreground">
+              className={`${inputClass(errors.returnAt)} min-w-0 max-w-full`} />
+            <p id="unavailable-return-help" className="mt-1 text-sm text-muted-foreground">{PHILIPPINE_TIME_LABEL}</p>
+            {errors.returnAt && <p id="unavailable-return-error" role="alert" className="mt-1 text-sm text-red-600">{errors.returnAt}</p>}
+            <p className="mt-1 text-sm text-muted-foreground">
               {returnValue ? 'It ends by itself at this time.' : isDriver && reason === 'no_show'
                 ? 'Left empty, a no-show ends at the end of today.'
                 : `Left empty, ${isDriver ? 'they stay' : 'it stays'} ${isDriver ? 'unavailable' : 'under maintenance'} until you mark ${isDriver ? 'them' : 'it'} back.`}
@@ -138,13 +154,13 @@ export default function UnavailabilityDialog({
           {submitError && (
             <div role="alert" className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" aria-hidden="true" />
-              <p className="break-words text-xs text-red-700">{submitError}</p>
+              <p className="break-words text-sm text-red-700">{submitError}</p>
             </div>
           )}
         </div>
 
-        <div className="flex flex-col-reverse gap-2 border-t border-border px-5 py-4 sm:flex-row">
-          <button type="button" onClick={onCancel} disabled={busy}
+        <div className="flex shrink-0 flex-col-reverse gap-2 border-t border-border px-5 py-4 sm:flex-row">
+          <button type="button" onClick={requestClose} disabled={busy}
             className="flex-1 rounded-xl border border-border py-2.5 text-sm transition-colors hover:bg-accent disabled:opacity-50">Cancel</button>
           <button type="submit" disabled={busy}
             className="flex-1 rounded-xl bg-amber-600 py-2.5 text-sm font-medium text-white transition-colors hover:bg-amber-700 disabled:opacity-50">
@@ -153,5 +169,7 @@ export default function UnavailabilityDialog({
         </div>
       </form>
     </div>
+    <DiscardChangesDialog open={confirmDiscard} onKeepEditing={() => setConfirmDiscard(false)} onDiscard={onCancel} />
+    </>
   );
 }

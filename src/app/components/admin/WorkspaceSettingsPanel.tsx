@@ -20,6 +20,8 @@ import { TeamMemberCreationError, teamMemberNameError, teamMemberEmailError, val
 import { useCoverageLookup } from '../../lib/useCoverageLookup';
 import { DateField, TimeField } from './ScheduleFields';
 import { formatPhilippineTimestamp, PHILIPPINE_TIME_LABEL } from '../../lib/philippineTime';
+import { useModalFocus } from './useModalFocus';
+import DiscardChangesDialog from './DiscardChangesDialog';
 
 /* ── Activity log helpers — moved here from SettingsPanel.tsx, extended for member events ── */
 const ACT_CONFIG: Record<AdminActivityType, { label: string; icon: React.ElementType; color: string }> = {
@@ -121,17 +123,19 @@ function underDelegation(e: AdminActivityEntry): string {
 function ModalShell({ title, onClose, children, footer }: {
   title: string; onClose: () => void; children: React.ReactNode; footer?: React.ReactNode;
 }) {
+  const modalRef = useRef<HTMLDivElement>(null);
+  useModalFocus(true, modalRef, onClose);
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border flex-shrink-0">
-          <h3 className="text-lg font-semibold text-foreground">{title}</h3>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-accent transition-colors text-muted-foreground">
-            <X className="w-5 h-5" />
+      <div ref={modalRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={title} className="relative bg-white rounded-2xl shadow-2xl min-w-0 w-full max-w-md flex flex-col max-h-[90dvh] animate-in fade-in zoom-in-95 duration-200 motion-reduce:animate-none">
+        <div className="flex items-center justify-between gap-2 px-5 sm:px-6 py-4 border-b border-border flex-shrink-0">
+          <h3 className="min-w-0 text-lg font-semibold text-foreground">{title}</h3>
+          <button type="button" aria-label={`Close ${title.toLowerCase()}`} onClick={onClose} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg hover:bg-accent transition-colors text-muted-foreground focus-visible:outline-2 focus-visible:outline-primary">
+            <X aria-hidden="true" className="w-5 h-5" />
           </button>
         </div>
-        <div className="p-6 overflow-y-auto flex-1">{children}</div>
+        <div className="min-h-0 p-5 sm:p-6 overflow-y-auto overflow-x-hidden flex-1">{children}</div>
         {footer && <div className="px-6 pb-5 pt-3 border-t border-border flex-shrink-0">{footer}</div>}
       </div>
     </div>
@@ -154,6 +158,12 @@ function AddMemberModal({ onClose, onAdded }: {
   const [created,    setCreated]    = useState<(TeamMember & { setupToken: string }) | null>(null);
   const [copied,     setCopied]     = useState(false);
   const [copyError,  setCopyError]  = useState('');
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const requestClose = () => {
+    if (submittingRef.current) return;
+    if (!created && (name || email)) setConfirmDiscard(true);
+    else onClose();
+  };
 
   const handleAdd = async () => {
     if (submittingRef.current || created) return;
@@ -210,7 +220,7 @@ function AddMemberModal({ onClose, onAdded }: {
   };
 
   return (
-    <ModalShell title="Add Team Member" onClose={onClose}>
+    <><ModalShell title="Add Team Member" onClose={requestClose}>
       {!created ? (
         <form noValidate onSubmit={(event) => { event.preventDefault(); void handleAdd(); }} className="space-y-5">
           <div>
@@ -256,7 +266,7 @@ function AddMemberModal({ onClose, onAdded }: {
           {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
 
           <div className="flex gap-3 pt-1">
-            <button type="button" onClick={onClose} disabled={submitting} className="flex-1 px-4 py-2.5 border border-border rounded-xl hover:bg-accent transition-colors text-sm disabled:opacity-50">
+            <button type="button" onClick={requestClose} disabled={submitting} className="flex-1 px-4 py-2.5 border border-border rounded-xl hover:bg-accent transition-colors text-sm disabled:opacity-50">
               Cancel
             </button>
             <button
@@ -294,6 +304,7 @@ function AddMemberModal({ onClose, onAdded }: {
         </div>
       )}
     </ModalShell>
+    <DiscardChangesDialog open={confirmDiscard} onKeepEditing={() => setConfirmDiscard(false)} onDiscard={onClose} /></>
   );
 }
 
@@ -332,6 +343,14 @@ function CoverageModal({ members, onClose, onContinue }: {
   const [phoneError,  setPhoneError]  = useState('');
   const [error,       setError]       = useState('');
   const [now, setNow] = useState(Date.now());
+  const [errorField, setErrorField] = useState<'csr' | 'scopes' | 'window' | null>(null);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const original = useRef({ start, end, csrId, canResetPin, canRegister, phone });
+  const requestClose = () => {
+    const initial = original.current;
+    if (start !== initial.start || end !== initial.end || csrId !== initial.csrId || canResetPin !== initial.canResetPin || canRegister !== initial.canRegister || phone !== initial.phone) setConfirmDiscard(true);
+    else onClose();
+  };
   useEffect(() => {
     const interval = window.setInterval(() => setNow(Date.now()), 30_000);
     return () => window.clearInterval(interval);
@@ -343,46 +362,48 @@ function CoverageModal({ members, onClose, onContinue }: {
 
   const handleContinue = () => {
     const csr = csrs.find((member) => member.id === csrId);
-    if (!csr) { setError('Choose which CSR will cover for you.'); return; }
-    if (!canResetPin && !canRegister) { setError('Choose at least one thing the CSR may do.'); return; }
-    if (canResetPin && subscriberProblem(phone)) { setPhoneError(subscriberProblem(phone)); return; }
+    if (!csr) { setErrorField('csr'); setError('Choose which CSR will cover for you.'); document.getElementById('coverage-csr')?.focus(); return; }
+    if (!canResetPin && !canRegister) { setErrorField('scopes'); setError('Choose at least one thing the CSR may do.'); document.getElementById('coverage-reset-pin')?.focus(); return; }
+    if (canResetPin && subscriberProblem(phone)) { setPhoneError(subscriberProblem(phone)); document.getElementById('coverage-phone')?.focus(); return; }
     const contactPhone = canResetPin ? normalizeContactPhone(`+63${phone}`) : null;
-    if (canResetPin && !contactPhone) { setPhoneError('Enter a valid 10-digit mobile number.'); return; }
+    if (canResetPin && !contactPhone) { setPhoneError('Enter a valid 10-digit mobile number.'); document.getElementById('coverage-phone')?.focus(); return; }
     const checked = checkNewCoverageWindow(start, end, Date.now());
-    if (!checked.ok) { setError(checked.error); return; }
+    if (!checked.ok) { setErrorField('window'); setError(checked.error); document.getElementById(end ? 'coverage-start' : 'coverage-end')?.focus(); return; }
     onContinue({ csr, startsAt: checked.startsAt, endsAt: checked.endsAt, length: checked.length, canResetPin, canRegister, contactPhone });
   };
 
   const inputClass = 'w-full px-4 py-3 rounded-xl border border-border bg-white text-sm focus:outline-none focus:ring-2 focus:ring-primary/30';
   return (
-    <ModalShell title="Add Leave Coverage" onClose={onClose}>
+    <><ModalShell title="Add Leave Coverage" onClose={requestClose}>
       <div className="space-y-5">
-        <p className="text-xs text-muted-foreground">
+        <p className="text-sm text-muted-foreground">
           The CSR gets only what you tick, only between these times. They can never view existing PINs, archive anyone, or manage the team.
         </p>
 
         <div>
           <label htmlFor="coverage-csr" className="block text-sm font-medium text-foreground mb-1.5">CSR covering for you <span className="text-red-500">*</span></label>
-          <select id="coverage-csr" value={csrId} onChange={(e) => { setCsrId(e.target.value); setError(''); }} className={inputClass}>
+          <select id="coverage-csr" value={csrId} aria-invalid={!!error && errorField === 'csr' || undefined} aria-describedby={error && errorField === 'csr' ? 'coverage-csr-error' : undefined} onChange={(e) => { setCsrId(e.target.value); setError(''); }} className={inputClass}>
             <option value="">{csrs.length === 0 ? 'No active CSR members' : 'Choose a CSR…'}</option>
             {csrs.map((member) => <option key={member.id} value={member.id}>{member.name} — {member.email}</option>)}
           </select>
+          {error && errorField === 'csr' && <p id="coverage-csr-error" role="alert" className="mt-1 text-sm text-red-600">{error}</p>}
         </div>
 
-        <fieldset>
+        <fieldset aria-describedby={error && errorField === 'scopes' ? 'coverage-scopes-error' : undefined}>
           <legend className="block text-sm font-medium text-foreground mb-2">They may</legend>
           <div className="space-y-2">
             <label className="flex items-start gap-3 rounded-xl border border-border px-3 py-2.5 text-sm">
-              <input type="checkbox" checked={canResetPin} onChange={(e) => { setCanResetPin(e.target.checked); setError(''); }} className="mt-0.5 h-4 w-4" />
+              <input id="coverage-reset-pin" type="checkbox" checked={canResetPin} aria-invalid={!!error && errorField === 'scopes' || undefined} aria-describedby={error && errorField === 'scopes' ? 'coverage-scopes-error' : undefined} onChange={(e) => { setCanResetPin(e.target.checked); setError(''); }} className="mt-0.5 h-4 w-4" />
               <span><span className="font-medium text-foreground">Set new driver PINs</span>
-                <span className="block text-xs text-muted-foreground">They see only the PIN they just set, once.</span></span>
+                <span className="block text-sm text-muted-foreground">They see only the PIN they just set, once.</span></span>
             </label>
             <label className="flex items-start gap-3 rounded-xl border border-border px-3 py-2.5 text-sm">
-              <input type="checkbox" checked={canRegister} onChange={(e) => { setCanRegister(e.target.checked); setError(''); }} className="mt-0.5 h-4 w-4" />
+              <input type="checkbox" checked={canRegister} aria-invalid={!!error && errorField === 'scopes' || undefined} aria-describedby={error && errorField === 'scopes' ? 'coverage-scopes-error' : undefined} onChange={(e) => { setCanRegister(e.target.checked); setError(''); }} className="mt-0.5 h-4 w-4" />
               <span><span className="font-medium text-foreground">Register new drivers and trucks</span>
-                <span className="block text-xs text-muted-foreground">For when someone new joins while you are away.</span></span>
+                <span className="block text-sm text-muted-foreground">For when someone new joins while you are away.</span></span>
             </label>
           </div>
+          {error && errorField === 'scopes' && <p id="coverage-scopes-error" role="alert" className="mt-1 text-sm text-red-600">{error}</p>}
         </fieldset>
 
         {canResetPin && (
@@ -391,7 +412,7 @@ function CoverageModal({ members, onClose, onContinue }: {
             <MobileNumberField id="coverage-phone" value={phone} error={phoneError} ariaLabel="Mobile number drivers should call, ten digits after +63"
               onChange={(digits) => { setPhone(digits); setError(''); }} onError={setPhoneError}
               onBlur={() => { if (phone && subscriberProblem(phone)) setPhoneError(subscriberProblem(phone)); }} />
-            <p className="mt-1 text-xs text-muted-foreground">
+            <p className="mt-1 text-sm text-muted-foreground">
               A driver who forgot their PIN sees this number on the login screen while this coverage is active (usually the covering CSR&apos;s mobile). Afterwards the screen goes back to the usual number.
             </p>
           </div>
@@ -403,9 +424,9 @@ function CoverageModal({ members, onClose, onContinue }: {
             <label htmlFor="coverage-start" className="block text-sm font-medium text-foreground mb-1.5">Starts <span className="text-red-500">*</span></label>
             <div className="space-y-2">
               <DateField id="coverage-start" label="Coverage start date" value={startDate} minIso={today} calendarToday={today} restrictToday layer
-                hasError={!!startDate && startDate < today}
+                hasError={(!!startDate && startDate < today) || (!!error && errorField === 'window')} describedBy={error && errorField === 'window' ? 'coverage-window-error' : undefined}
                 onChange={(date) => { setStart(`${date}T${startTime}`); setError(''); }} />
-              <TimeField label="Coverage start time" value={startTime} layer
+              <TimeField label="Coverage start time" value={startTime} layer hasError={!!error && errorField === 'window'} describedBy={error && errorField === 'window' ? 'coverage-window-error' : undefined}
                 onChange={(time) => { setStart(`${startDate}T${time}`); setError(''); }} />
             </div>
           </div>
@@ -413,20 +434,21 @@ function CoverageModal({ members, onClose, onContinue }: {
             <label htmlFor="coverage-end" className="block text-sm font-medium text-foreground mb-1.5">Ends <span className="text-red-500">*</span></label>
             <div className="space-y-2">
               <DateField id="coverage-end" label="Coverage end date" value={endDate} minIso={startDate > today ? startDate : today} calendarToday={today} restrictToday layer
+                hasError={!!error && errorField === 'window'} describedBy={error && errorField === 'window' ? 'coverage-window-error' : undefined}
                 onChange={(date) => { setEnd(`${date}T${endTime}`); setError(''); }} />
-              <TimeField label="Coverage end time" value={endTime} layer
+              <TimeField label="Coverage end time" value={endTime} layer hasError={!!error && errorField === 'window'} describedBy={error && errorField === 'window' ? 'coverage-window-error' : undefined}
                 onChange={(time) => { setEnd(`${endDate}T${time}`); setError(''); }} />
             </div>
           </div>
         </div>
         {start && end && (windowCheck.ok
-          ? <p role="status" className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">That is <strong>{windowCheck.length}</strong> of coverage. Check the dates are right.</p>
-          : <p role="alert" className="text-xs text-red-500">{windowCheck.error}</p>)}
+          ? <p role="status" className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">That is <strong>{windowCheck.length}</strong> of coverage. Check the dates are right.</p>
+          : !error && <p role="status" className="text-sm text-red-600">{windowCheck.error}</p>)}
 
-        {error && <p role="alert" className="text-xs text-red-500">{error}</p>}
+        {error && errorField === 'window' && <p id="coverage-window-error" role="alert" className="text-sm text-red-600">{error}</p>}
 
         <div className="flex gap-3 pt-1">
-          <button type="button" onClick={onClose} className="flex-1 px-4 py-2.5 border border-border rounded-xl hover:bg-accent transition-colors text-sm">Cancel</button>
+          <button type="button" onClick={requestClose} className="flex-1 px-4 py-2.5 border border-border rounded-xl hover:bg-accent transition-colors text-sm">Cancel</button>
           <button type="button" onClick={handleContinue}
             className="flex-1 px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors text-sm font-medium">
             Continue
@@ -434,6 +456,7 @@ function CoverageModal({ members, onClose, onContinue }: {
         </div>
       </div>
     </ModalShell>
+    <DiscardChangesDialog open={confirmDiscard} onKeepEditing={() => setConfirmDiscard(false)} onDiscard={onClose} /></>
   );
 }
 
@@ -495,6 +518,8 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
   const [showCoverageModal, setShowCoverageModal] = useState(false);
   const [coverageDraft, setCoverageDraft] = useState<CoverageDraft | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<FleetDelegation | null>(null);
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  useModalFocus(open, workspaceRef, onClose);
 
   useEffect(() => { if (open) setResetLoaded(false); }, [open]);
 
@@ -609,13 +634,6 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
       setResetBusyId(null);
     }
   };
-
-  /* ── Close on Esc ── */
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape' && !showAddMember && !showCoverageModal && !coverageDraft && !revokeTarget) onClose(); };
-    if (open) document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [open, onClose, showAddMember, showCoverageModal, coverageDraft, revokeTarget]);
 
   /* ── Body scroll lock ── */
   useEffect(() => {
@@ -756,7 +774,7 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
     <>
       <div className="fixed inset-0 z-40 bg-black/40 backdrop-blur-[2px]" onClick={onClose} />
 
-      <div role="dialog" aria-modal="true" aria-labelledby="workspace-settings-title" className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 pointer-events-none">
+      <div ref={workspaceRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="workspace-settings-title" className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 pointer-events-none">
       <div className="pointer-events-auto flex h-[94dvh] w-[calc(100vw-16px)] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl sm:h-[min(84dvh,840px)] sm:w-[min(950px,calc(100vw-32px))]">
         <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-gradient-to-r from-[#0d9488]/8 to-transparent flex-shrink-0">
           <div className="flex items-center gap-3">
@@ -887,7 +905,7 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
                 <CalendarClock className="h-4 w-4" /> Add Coverage
               </button>
             </div>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               Going on leave? Let one CSR set new driver PINs and/or register drivers and trucks while you are away. Access starts and ends on the dates you choose and can be ended early.
               Archiving and team management are never included, and the CSR can never view existing PINs. Every action is recorded in the Activity Log.
             </p>
@@ -920,12 +938,12 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="break-words text-sm font-semibold">{member?.name ?? 'Unknown CSR'}</p>
-                      <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${coverageVerified ? badge.className : 'border-border bg-muted/40 text-muted-foreground'}`}>{coverageVerified ? badge.label : 'Not verified'}</span>
+                      <span className={`rounded-full border px-2 py-0.5 text-sm font-medium ${coverageVerified ? badge.className : 'border-border bg-muted/40 text-muted-foreground'}`}>{coverageVerified ? badge.label : 'Not verified'}</span>
                     </div>
                     {member && <p className="break-all text-xs text-muted-foreground">{member.email}</p>}
-                    <p className="mt-1 text-xs text-foreground">{delegationScopeLabel(item)}</p>
-                    {item.contactPhone && <p className="text-xs text-muted-foreground">Drivers call {formatContactPhone(item.contactPhone)}</p>}
-                    <p className="text-xs text-muted-foreground">
+                    <p className="mt-1 break-words text-sm text-foreground">{delegationScopeLabel(item)}</p>
+                    {item.contactPhone && <p className="text-sm text-muted-foreground">Drivers call {formatContactPhone(item.contactPhone)}</p>}
+                    <p className="break-words text-sm text-muted-foreground">
                       {formatPhilippineTimestamp(item.startsAt)} → {formatPhilippineTimestamp(item.endsAt)} · {formatWindowLength(new Date(item.endsAt).getTime() - new Date(item.startsAt).getTime())}
                       {item.revokedAt ? ` · ended early ${formatPhilippineTimestamp(item.revokedAt)}` : ''}
                     </p>

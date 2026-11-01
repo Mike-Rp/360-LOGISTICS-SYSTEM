@@ -33,15 +33,15 @@ export default function MobileNumberField({ id, value, onChange, error, onError,
 
   return (
     <div>
-      <div className={`flex items-center rounded-xl border overflow-hidden focus-within:ring-2 focus-within:ring-primary/30 ${error ? 'border-red-400 bg-red-50' : 'border-border bg-white'} ${disabled ? 'opacity-60' : ''}`}>
-        <span className="px-3 py-3 bg-muted/40 border-r border-border text-sm font-semibold text-foreground select-none whitespace-nowrap">+63</span>
+      <div className={`flex min-w-0 max-w-full items-center rounded-xl border overflow-hidden focus-within:ring-2 focus-within:ring-primary/30 ${error ? 'border-red-400 bg-red-50' : 'border-border bg-white'} ${disabled ? 'opacity-60' : ''}`}>
+        <span className="shrink-0 px-2 sm:px-3 py-3 bg-muted/40 border-r border-border text-sm font-semibold text-foreground select-none whitespace-nowrap">+63</span>
         <input id={id} type="text" inputMode="numeric" autoComplete="off" value={value} maxLength={10} disabled={disabled}
-          aria-label={ariaLabel} aria-invalid={error ? true : undefined} placeholder="9171234567"
+          aria-label={ariaLabel} aria-invalid={error ? true : undefined} aria-describedby={error ? `${id}-error` : undefined} placeholder="9171234567"
           onChange={(e) => handleInput(e.target.value)} onPaste={handlePaste} onBlur={onBlur}
-          className="min-w-0 flex-1 px-4 py-3 bg-transparent text-foreground placeholder:text-muted-foreground focus:outline-none text-sm tracking-wider tabular-nums" />
-        <span className={`px-3 text-xs font-medium tabular-nums ${value.length === 10 ? 'text-green-600' : 'text-muted-foreground'}`}>{value.length}/10</span>
+          className="min-w-0 w-full flex-1 px-2 sm:px-4 py-3 bg-transparent text-foreground placeholder:text-muted-foreground focus:outline-none text-sm tracking-wider tabular-nums" />
+        <span className={`shrink-0 px-2 sm:px-3 text-sm font-medium tabular-nums ${value.length === 10 ? 'text-green-600' : 'text-muted-foreground'}`}>{value.length}/10</span>
       </div>
-      {error && <p role="alert" className="text-xs text-red-500 mt-1.5">{error}</p>}
+      {error && <p id={`${id}-error`} role="alert" className="text-sm text-red-600 mt-1.5 break-words">{error}</p>}
     </div>
   );
 }

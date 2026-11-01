@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { KeyRound, AlertTriangle } from 'lucide-react';
 import { verifyOwnPassword, AssignmentActionError } from '../../lib/db';
 import PasswordVisibilityInput from './PasswordVisibilityInput';
+import { useModalFocus } from './useModalFocus';
 
 /* Failed password attempts are counted per browser tab and survive closing/reopening
    the dialog. Supabase Auth also rate-limits sign-ins on its own servers. */
@@ -33,8 +34,11 @@ export default function ConfirmPasswordDialog({
 }) {
   const [password, setPassword] = useState('');
   const [error,    setError]    = useState('');
+  const [passwordInvalid, setPasswordInvalid] = useState(false);
   const [busy,     setBusy]     = useState(false);
   const [now,      setNow]      = useState(Date.now());
+  const modalRef = useRef<HTMLFormElement>(null);
+  useModalFocus(true, modalRef, () => { if (!busy) onCancel(); });
 
   /* Tick once a second so the cooldown counts down */
   useEffect(() => {
@@ -47,6 +51,7 @@ export default function ConfirmPasswordDialog({
     if (busy || blockedReason || lockedFor > 0 || (requirePassword && !password)) return;
     setBusy(true);
     setError('');
+    setPasswordInvalid(false);
     const typed = password;
     setPassword('');                     // don't keep the password in state any longer than needed
     try {
@@ -55,6 +60,7 @@ export default function ConfirmPasswordDialog({
           await verifyOwnPassword(typed);
         } catch (err) {
           if (err instanceof AssignmentActionError && err.code === 'wrong_password') {
+            setPasswordInvalid(true);
             fails += 1;
             if (fails >= MAX_FAILS) {
               fails = 0;
@@ -85,38 +91,41 @@ export default function ConfirmPasswordDialog({
     <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => { if (!busy) onCancel(); }} />
       <form
+        ref={modalRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="account-confirm-title"
         onSubmit={(e) => { e.preventDefault(); void handleConfirm(); }}
-        className="relative bg-white rounded-2xl border border-border shadow-2xl p-5 w-full max-w-[360px] animate-in fade-in zoom-in-95 duration-200">
+        className="relative bg-white rounded-2xl border border-border shadow-2xl p-5 w-full max-w-[360px] max-h-[92dvh] overflow-y-auto animate-in fade-in zoom-in-95 duration-200 motion-reduce:animate-none">
         <div className={`w-11 h-11 rounded-full flex items-center justify-center mx-auto mb-3 border ${
           danger ? 'bg-red-50 border-red-100' : 'bg-[#1DBF73]/10 border-[#1DBF73]/25'}`}>
           {requirePassword
             ? <KeyRound className={`w-5 h-5 ${danger ? 'text-red-600' : 'text-[#1DBF73]'}`} />
             : <AlertTriangle className={`w-5 h-5 ${danger ? 'text-red-600' : 'text-[#1DBF73]'}`} />}
         </div>
-        <p className="text-base font-semibold text-foreground text-center">{title}</p>
+        <p id="account-confirm-title" className="text-base font-semibold text-foreground text-center">{title}</p>
         <div className="text-sm text-muted-foreground text-center mt-1.5 break-words">{message}</div>
 
         {blockedReason && (
           <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 mt-4">
             <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-            <p className="text-xs text-amber-800 break-words">{blockedReason}</p>
+            <p className="text-sm text-amber-800 break-words">{blockedReason}</p>
           </div>
         )}
 
         {requirePassword && !blockedReason && (
           <>
-            <label htmlFor="account-confirm-password" className="block text-xs font-medium text-foreground mt-4 mb-1.5">Your account password</label>
-            <PasswordVisibilityInput id="account-confirm-password" autoFocus autoComplete="current-password" value={password}
-              onChange={(e) => { setPassword(e.target.value); setError(''); }}
+            <label htmlFor="account-confirm-password" className="block text-sm font-medium text-foreground mt-4 mb-1.5">Your account password</label>
+            <PasswordVisibilityInput id="account-confirm-password" autoComplete="current-password" value={password}
+              aria-invalid={passwordInvalid || undefined}
+              aria-describedby={passwordInvalid || lockedFor > 0 ? 'account-confirm-error' : undefined}
+              onChange={(e) => { setPassword(e.target.value); setError(''); setPasswordInvalid(false); }}
               disabled={busy || lockedFor > 0}
               placeholder="Password"
               className={`w-full px-3.5 py-2.5 rounded-[10px] border text-sm focus:outline-none focus:ring-2 focus:ring-[#1DBF73]/25 focus:border-[#1DBF73] disabled:opacity-60 ${
-                error ? 'border-red-400 bg-red-50' : 'border-border bg-white'}`} />
+                passwordInvalid ? 'border-red-400 bg-red-50' : 'border-border bg-white'}`} />
           </>
         )}
 
         {(error || lockedFor > 0) && (
-          <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mt-2 break-words">
+          <p id="account-confirm-error" role="alert" className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mt-2 break-words">
             {lockedFor > 0 ? `Too many failed attempts. Try again in ${lockedFor}s.` : error}
           </p>
         )}

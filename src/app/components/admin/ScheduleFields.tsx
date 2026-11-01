@@ -33,7 +33,7 @@ const thinScroll =
   'hover:[&::-webkit-scrollbar-thumb]:bg-[#1DBF73]/50';
 
 /* ─── Date field — type into the input, or click the icon for a calendar ─── */
-export function DateField({ value, onChange, hasError, minIso, maxIso, id, label, restrictToday = false, layer = false, calendarToday }: {
+export function DateField({ value, onChange, hasError, minIso, maxIso, id, label, restrictToday = false, layer = false, calendarToday, describedBy }: {
   /* `bad` = the browser holds a half-typed or impossible date (its value is then '') */
   value: string; onChange: (v: string, bad?: boolean) => void; hasError?: boolean;
   /* Bound the selectable range; typing is still validated on submit */
@@ -41,6 +41,7 @@ export function DateField({ value, onChange, hasError, minIso, maxIso, id, label
   maxIso?: string;
   id?: string;
   label?: string;
+  describedBy?: string;
   restrictToday?: boolean;
   layer?: boolean;
   /** Override only the calendar day; date-only selections are never converted to instants. */
@@ -78,7 +79,7 @@ export function DateField({ value, onChange, hasError, minIso, maxIso, id, label
       <PopoverAnchor asChild>
         <div className="relative">
           <input
-            id={id} aria-label={label} aria-invalid={hasError || undefined} type="date" value={value}
+            id={id} aria-label={label} aria-describedby={describedBy} aria-invalid={hasError || undefined} type="date" value={value}
             onChange={(e) => onChange(e.target.value, e.target.validity.badInput)}
             onBlur={(e) => { if (e.target.validity.badInput) onChange(e.target.value, true); }}
             /* Without a max the browser lets the year run to 6 digits */
@@ -156,10 +157,11 @@ export function DateField({ value, onChange, hasError, minIso, maxIso, id, label
 const WHEEL_HOURS = Array.from({ length: 12 }, (_, i) => i + 1);
 const WHEEL_MINS  = Array.from({ length: 60 }, (_, i) => i);
 
-export function TimeField({ value, onChange, hasError, id, label, layer = false }: {
+export function TimeField({ value, onChange, hasError, id, label, layer = false, describedBy }: {
   value: string; onChange: (v: string) => void; hasError?: boolean;
   id?: string;
   label?: string;
+  describedBy?: string;
   layer?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -187,7 +189,7 @@ export function TimeField({ value, onChange, hasError, id, label, layer = false 
       <PopoverAnchor asChild>
         <div className="relative">
           <input
-            id={id} aria-label={label} aria-invalid={hasError || undefined} type="time" value={value}
+            id={id} aria-label={label} aria-describedby={describedBy} aria-invalid={hasError || undefined} type="time" value={value}
             onChange={(e) => onChange(e.target.value)}
             className={`${fieldBase} ${fieldTone(hasError)} pr-10 [&::-webkit-calendar-picker-indicator]:hidden`}
           />

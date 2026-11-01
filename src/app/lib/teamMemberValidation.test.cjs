@@ -25,7 +25,7 @@ function setup(t) {
   let cursor = 0;
   let focused;
   const calls = [], added = [];
-  let resolve, reject;
+  let resolve, reject, closed = 0;
   const hooks = {
     useState(initial) {
       const id = cursor++;
@@ -41,6 +41,7 @@ function setup(t) {
     'lucide-react': new Proxy({}, { get: () => 'svg' }),
     '../../lib/db': { createTeamMember }, '../../lib/teamMemberValidation': validation,
     '../../lib/fleetDelegation': {}, './ConfirmPasswordDialog': {}, './Pagination': {},
+    './useModalFocus': { useModalFocus() {} }, './DiscardChangesDialog': { default: 'discard-confirmation' },
     '../../lib/adminNavigation': {}, '../../lib/pendingPasswordResetRequests': {},
     '../../lib/philippineMobile': {}, './MobileNumberField': {}, '../../lib/useCoverageLookup': {},
     './ScheduleFields': {}, '../../lib/philippineTime': {},
@@ -56,7 +57,7 @@ function setup(t) {
   }
   const render = () => {
     cursor = 0;
-    const tree = AddMemberModal({ onClose() {}, onAdded: (member) => added.push(member) });
+    const tree = AddMemberModal({ onClose() { closed++; }, onAdded: (member) => added.push(member) });
     for (const node of nodes(tree)) {
       if (node.type === 'input' && node.ref) node.ref.current = { focus: () => { focused = node.props.id; } };
     }
@@ -75,7 +76,7 @@ function setup(t) {
   t.after(() => { console.error = oldConsoleError; });
   render();
   return {
-    calls, added, input, form, submit,
+    calls, added, input, form, submit, closed: () => closed,
     type(field, value) { input(field).props.onChange({ target: { value } }); render(); },
     error: (field) => nodes(render()).find((node) => node.props.id === `team-member-${field}-error`),
     content: () => text(render()),
@@ -222,4 +223,16 @@ test('the actual createTeamMember service preserves backend field codes and its 
   const member = await db.createTeamMember(input);
   assert.equal(member.name, input.name); assert.equal(member.setupToken, 'test-only-token');
   assert.deepEqual(calls.at(-1), { name: 'create_team_member', args: { p_name: input.name, p_email: input.email, p_role: 'csr' } });
+});
+
+test('closing an edited team-member draft requires explicit discard and Keep Editing preserves values', (t) => {
+  const app = setup(t);
+  app.type('name', 'Niño Peña');
+  app.nodes().find(node => node.type === 'button' && node.props.children === 'Cancel').props.onClick();
+  const confirmation = () => app.nodes().find(node => node.type === 'discard-confirmation');
+  assert.equal(confirmation().props.open, true); assert.equal(app.closed(), 0);
+  confirmation().props.onKeepEditing(); assert.equal(confirmation().props.open, false);
+  assert.equal(app.input('name').props.value, 'Niño Peña'); assert.equal(app.calls.length, 0);
+  app.nodes().find(node => node.type === 'button' && node.props.children === 'Cancel').props.onClick();
+  confirmation().props.onDiscard(); assert.equal(app.closed(), 1);
 });

@@ -17,6 +17,16 @@ const imports = {
 };
 new Function('require', 'module', 'exports', source)((id) => imports[id], mod, mod.exports);
 const { DateField, TimeField } = mod.exports;
+
+test('schedule inputs associate the shared coverage-window error only when supplied', () => {
+  for (const Field of [DateField, TimeField]) {
+    const field = nodes(Field({ value: '', hasError: true, describedBy: 'coverage-window-error', onChange() {} })).find(node => node.type === 'input');
+    assert.equal(field.props['aria-describedby'], 'coverage-window-error');
+    assert.equal(field.props['aria-invalid'], true);
+    const ordinary = nodes(Field({ value: '', onChange() {} })).find(node => node.type === 'input');
+    assert.equal(ordinary.props['aria-describedby'], undefined);
+  }
+});
 function nodes(node) {
   if (Array.isArray(node)) return node.flatMap(nodes);
   return React.isValidElement(node) ? [node, ...nodes(node.props.children)] : [];

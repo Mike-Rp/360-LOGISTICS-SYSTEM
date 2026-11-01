@@ -88,6 +88,7 @@ function setup(t, mode = 'opm') {
       '../../lib/philippineTime': philippineTime,
       './ScheduleFields': { DateField: 'date-field', TimeField: 'time-field' },
       './ConfirmPasswordDialog': { default: 'confirmation' },
+      './useModalFocus': { useModalFocus() {} }, './DiscardChangesDialog': { default: 'discard-confirmation' },
       './Pagination': { PaginationFooter: 'pagination' },
       '../../lib/adminNavigation': {},
       '../../lib/pendingPasswordResetRequests': {},

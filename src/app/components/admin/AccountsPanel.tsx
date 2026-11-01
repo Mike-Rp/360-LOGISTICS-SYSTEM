@@ -151,7 +151,7 @@ function AvailabilityBadge({ kind, state, unavailable }: { kind: UnavailabilityK
         {cfg.label}
       </span>
       {state === 'unavailable' && unavailable && (
-        <p className="mt-1 break-words text-xs leading-snug text-muted-foreground" title={unavailable.note || undefined}>
+        <p className="mt-1 break-words [overflow-wrap:anywhere] text-sm leading-snug text-muted-foreground" title={unavailable.note || undefined}>
           {/* The badge already says "Maintenance" for a truck, so only the return is added there */}
           {kind === 'truck'
             ? describeReturn(unavailable.expectedReturnAt).replace(/^./, (c) => c.toUpperCase())

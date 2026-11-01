@@ -61,6 +61,7 @@ function setup(t, kind = 'admin', language = 'en') {
     '../../lib/fleetDelegation': {},
     '../../lib/useDriverHelpContact': { useDriverHelpContact: () => ({ contact: { status: 'loading' }, retry() {} }) },
     '../../lib/useLoginLockout': load('useLoginLockout.ts', { react: hooks }),
+    '../admin/useModalFocus': { useModalFocus() {} },
     '../driver/driverI18n': { ...i18n, getLastDriverLanguage: () => language },
   });
   function nodes(node) {

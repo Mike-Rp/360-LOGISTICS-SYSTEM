@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef } from 'react';
 import imgLogo from 'figma:asset/5e73e3c08e898d68c86717993c6e7442d03e9ac4.png';
 import { Eye, EyeOff, AlertCircle, CheckCircle2, Phone, Loader2, X } from 'lucide-react';
 import { signInStaff, signInDriver, LoginError, requestCsrPasswordReset } from '../../lib/db';
@@ -6,6 +6,7 @@ import type { StaffSession } from '../../lib/db';
 import { formatContactPhone } from '../../lib/fleetDelegation';
 import { useDriverHelpContact } from '../../lib/useDriverHelpContact';
 import { useLoginLockout } from '../../lib/useLoginLockout';
+import { useModalFocus } from '../admin/useModalFocus';
 import { getLastDriverLanguage, translateDriver } from '../driver/driverI18n';
 
 interface Props {
@@ -45,6 +46,8 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
   /* "Forgot your PIN?" dialog — purely informational, it starts no reset flow. */
   const [showPinHelp,   setShowPinHelp]   = useState(false);
   const { contact: helpContact, retry: retryHelpContact } = useDriverHelpContact(showPinHelp);
+  const pinHelpRef = useRef<HTMLDivElement>(null);
+  useModalFocus(showPinHelp, pinHelpRef, () => setShowPinHelp(false));
 
   const pinRefs = [
     useRef<HTMLInputElement>(null),
@@ -78,15 +81,6 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
     } catch { setResetError('Could not submit the request. Please try again.'); }
     finally { setResetBusy(false); }
   };
-
-  /* Escape closes the PIN-help dialog. The listener is only attached while the dialog is
-     open, and the cleanup removes it — otherwise every render would stack another one. */
-  useEffect(() => {
-    if (!showPinHelp) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowPinHelp(false); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [showPinHelp]);
 
   const handleMobile = (v: string) => {
     // digits only, max 10, must start with 9
@@ -472,12 +466,12 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
             onClick={() => setShowPinHelp(false)}
           />
 
-          <div className="relative w-full max-w-sm bg-white rounded-3xl shadow-2xl p-6 sm:p-7 text-center animate-in fade-in zoom-in-95 duration-200">
+          <div ref={pinHelpRef} tabIndex={-1} className="relative w-full max-w-sm max-h-[90dvh] overflow-y-auto bg-white rounded-3xl shadow-2xl p-6 sm:p-7 text-center animate-in fade-in zoom-in-95 duration-200 motion-reduce:animate-none">
             <button
               type="button"
               onClick={() => setShowPinHelp(false)}
               aria-label={tr('login.close')}
-              className="absolute right-4 top-4 p-1.5 rounded-lg text-muted-foreground hover:bg-gray-100 hover:text-foreground transition-colors"
+              className="absolute right-3 top-3 flex h-11 w-11 items-center justify-center rounded-lg text-muted-foreground hover:bg-gray-100 hover:text-foreground transition-colors focus-visible:outline-2 focus-visible:outline-primary"
             >
               <X className="w-5 h-5" />
             </button>
