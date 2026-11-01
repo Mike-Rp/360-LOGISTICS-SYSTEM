@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { LayoutDashboard, Truck, FileText, ChartNoAxesCombined, ClipboardList, Route, Menu, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import imgLogo from 'figma:asset/5e73e3c08e898d68c86717993c6e7442d03e9ac4.png';
 import { adminHref, followAdminLink } from '../../lib/adminNavigation';
+import { useModalFocus } from './useModalFocus';
 
 type NavItem = 'Dashboard' | 'Monitor' | 'Deliveries' | 'Documents' | 'Reports' | 'Accounts';
 
@@ -37,6 +38,14 @@ const navItems: { name: NavItem; label?: string; icon: React.ElementType }[] = [
 ];
 
 export default function Sidebar({ activeNav, setActiveNav, mobileOpen, setMobileOpen }: SidebarProps) {
+  const mobileDrawerRef = useRef<HTMLElement>(null);
+  useModalFocus(mobileOpen, mobileDrawerRef);
+  useLayoutEffect(() => {
+    const drawer = mobileDrawerRef.current;
+    if (!drawer) return;
+    if (mobileOpen) drawer.removeAttribute('inert');
+    else drawer.setAttribute('inert', '');
+  }, [mobileOpen]);
   const [collapsed, setCollapsed] = useState(() => {
     try { return localStorage.getItem('360_admin_sidebar_collapsed') === 'true'; }
     catch { return false; }
@@ -103,18 +112,19 @@ export default function Sidebar({ activeNav, setActiveNav, mobileOpen, setMobile
   return (
     <>
       {/* ── Mobile overlay ── */}
-      {mobileOpen && (
-        <div
-          className="fixed inset-0 z-[80] bg-black/40 backdrop-blur-sm md:hidden"
-          onClick={() => setMobileOpen(false)}
-        />
-      )}
+      <div aria-hidden="true"
+        className={`fixed inset-0 z-[80] bg-black/40 transition-[opacity,visibility] ease-out motion-reduce:transition-none md:hidden ${
+          mobileOpen ? 'visible opacity-100 duration-[250ms]' : 'invisible opacity-0 duration-200'
+        }`}
+        onClick={() => setMobileOpen(false)}
+      />
 
       {/* ── Mobile drawer ── */}
       <aside
+        ref={mobileDrawerRef} tabIndex={-1}
         role="dialog" aria-label="Navigation menu" aria-modal={mobileOpen} aria-hidden={!mobileOpen}
-        className={`fixed inset-y-0 left-0 z-[90] flex w-[min(16rem,calc(100vw-1rem))] flex-col border-r border-border bg-white pb-[env(safe-area-inset-bottom)] shadow-2xl transition-[transform,visibility] duration-150 md:hidden ${
-          mobileOpen ? 'visible translate-x-0' : 'invisible pointer-events-none -translate-x-full'
+        className={`fixed inset-y-0 left-0 z-[90] flex w-[min(16rem,calc(100vw-1rem))] flex-col border-r border-border bg-white pb-[env(safe-area-inset-bottom)] shadow-2xl transition-[transform,visibility] ease-out motion-reduce:transition-none md:hidden ${
+          mobileOpen ? 'visible translate-x-0 duration-[250ms]' : 'invisible pointer-events-none -translate-x-full duration-200'
         }`}
       >
         <div className="flex h-[calc(71px+env(safe-area-inset-top))] flex-shrink-0 items-center justify-between border-b border-border pl-7 pr-4 pt-[env(safe-area-inset-top)]">
