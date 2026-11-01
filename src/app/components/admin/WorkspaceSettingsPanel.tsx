@@ -519,7 +519,19 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
   const [coverageDraft, setCoverageDraft] = useState<CoverageDraft | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<FleetDelegation | null>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
+  const tabsRef = useRef<HTMLDivElement>(null);
   useModalFocus(open, workspaceRef, onClose);
+
+  useEffect(() => {
+    const tabs = tabsRef.current;
+    const selected = tabs?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!tabs || !selected) return;
+    const left = selected.offsetLeft - tabs.offsetLeft;
+    if (left < tabs.scrollLeft) tabs.scrollLeft = left;
+    else if (left + selected.offsetWidth > tabs.scrollLeft + tabs.clientWidth) {
+      tabs.scrollLeft = left + selected.offsetWidth - tabs.clientWidth;
+    }
+  }, [open, tab]);
 
   useEffect(() => { if (open) setResetLoaded(false); }, [open]);
 
@@ -791,18 +803,18 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
           </button>
         </div>
 
-        <div role="tablist" aria-label="Workspace sections" onKeyDown={(event) => {
+        <div ref={tabsRef} role="tablist" aria-label="Workspace sections" onKeyDown={(event) => {
           if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
           event.preventDefault();
           const sections = ['members', 'resets', 'coverage', 'activity'] as const;
-          const next = sections[(sections.indexOf(tab) + (event.key === 'ArrowRight' ? 1 : 2)) % sections.length];
+          const next = sections[(sections.indexOf(tab) + (event.key === 'ArrowRight' ? 1 : sections.length - 1)) % sections.length];
           setTab(next);
           document.getElementById(`workspace-tab-${next}`)?.focus();
         }} className="flex shrink-0 gap-1 overflow-x-auto border-b border-border px-3 py-2 sm:px-6">
           {([['members', 'Team Members'], ['resets', 'Password Reset Requests'], ['coverage', 'Leave Coverage'], ['activity', 'Activity Log']] as const).map(([key, label]) => (
             <button key={key} id={`workspace-tab-${key}`} type="button" role="tab" aria-selected={tab === key}
               aria-controls={`workspace-panel-${key}`} tabIndex={tab === key ? 0 : -1} onClick={() => setTab(key)}
-              className={`min-h-10 shrink-0 rounded-lg px-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-primary ${tab === key ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'}`}>
+              className={`min-h-10 shrink-0 whitespace-nowrap rounded-lg px-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-primary ${tab === key ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'}`}>
               {label}{key === 'resets' && resetRequests.some((request) => request.status === 'pending') &&
                 <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800">{resetRequests.filter((request) => request.status === 'pending').length}</span>}
               {key === 'coverage' && coverageVerified && coverage.some((item) => delegationStatus(item, coverageClock) === 'active') &&
@@ -835,21 +847,21 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
               : loadError ? <p role="alert" className="py-6 text-center text-sm text-red-600">{loadError}</p>
               : visibleMembers.length === 0 ? <p className="py-8 text-center text-sm text-muted-foreground">No {memberStatus === 'active' ? 'active' : 'archived'} members found.</p>
               : <div className="space-y-2">{visibleMembers.map((member) => <div key={member.id}
-                  className="flex flex-wrap items-center gap-3 rounded-xl border border-border px-3 py-3">
+                  className="grid grid-cols-[36px_minmax(0,1fr)] items-start gap-x-3 gap-y-1.5 rounded-xl border border-border px-3 py-3 sm:flex sm:flex-wrap sm:items-center sm:gap-3">
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-800 text-xs font-semibold text-white">
                     {member.avatarPath && memberAvatars.get(member.avatarPath)
                       ? <img src={memberAvatars.get(member.avatarPath)} alt="" className="h-full w-full object-cover" />
                       : member.name.split(' ').map((part) => part[0]).join('').toUpperCase().slice(0, 2)}
                   </span>
                   <div className="min-w-0 flex-1"><p className="break-words text-sm font-semibold">{member.name}</p><p className="break-all text-xs text-muted-foreground">{member.email}</p></div>
-                  <div className="text-xs text-muted-foreground"><span className="font-medium text-foreground">CSR</span><span className="mx-1.5">·</span>{memberStatus === 'active' ? `Last login: ${member.lastActive ? fmtTs(member.lastActive) : 'Never'}` : 'Access inactive'}</div>
+                  <div className="col-start-2 min-w-0 text-xs text-muted-foreground"><span className="font-medium text-foreground">CSR</span><span className="mx-1.5">·</span>{memberStatus === 'active' ? `Last login: ${member.lastActive ? fmtTs(member.lastActive) : 'Never'}` : 'Access inactive'}</div>
                   {memberStatus === 'active'
                     ? <button type="button" onClick={() => setArchiveTarget(member)}
-                        className="min-h-9 shrink-0 rounded-lg border border-red-200 bg-white px-3 text-sm font-medium text-red-600 hover:bg-red-50">
+                        className="col-start-2 min-h-9 shrink-0 justify-self-start rounded-lg border border-red-200 bg-white px-3 text-sm font-medium text-red-600 hover:bg-red-50">
                         Archive
                       </button>
                     : <button type="button" onClick={() => setRestoreTarget(member)}
-                        className="min-h-9 shrink-0 rounded-lg border border-border bg-white px-3 text-sm font-medium text-foreground hover:bg-muted/40">
+                        className="col-start-2 min-h-9 shrink-0 justify-self-start rounded-lg border border-border bg-white px-3 text-sm font-medium text-foreground hover:bg-muted/40">
                         Restore
                       </button>}
                 </div>)}</div>}
