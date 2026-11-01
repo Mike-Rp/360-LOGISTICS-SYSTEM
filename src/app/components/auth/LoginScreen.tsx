@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
 import imgLogo from 'figma:asset/5e73e3c08e898d68c86717993c6e7442d03e9ac4.png';
 import { Eye, EyeOff, AlertCircle, CheckCircle2, Phone, Loader2, X } from 'lucide-react';
-import { signInStaff, signInDriver, LoginError, requestCsrPasswordReset, getDriverHelpPhone } from '../../lib/db';
+import { signInStaff, signInDriver, LoginError, requestCsrPasswordReset } from '../../lib/db';
 import type { StaffSession } from '../../lib/db';
 import { formatContactPhone } from '../../lib/fleetDelegation';
+import { useDriverHelpContact } from '../../lib/useDriverHelpContact';
 import { getLastDriverLanguage, translateDriver } from '../driver/driverI18n';
 
 interface Props {
@@ -43,18 +44,7 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
   const mobileHasError = !!mobileError;
   /* "Forgot your PIN?" dialog — purely informational, it starts no reset flow. */
   const [showPinHelp,   setShowPinHelp]   = useState(false);
-  /* Number set by the OPM for the current PIN-reset coverage, if any (null = none, so the dialog shows wording without a number).
-     Loaded when the screen opens, so it is ready before a driver taps "Forgot your PIN?", and
-     again each time the dialog opens in case the coverage changed meanwhile. */
-  const [helpPhone,     setHelpPhone]     = useState<string | null | undefined>(undefined);   // undefined = still loading, null = no number to show
-  useEffect(() => {
-    let alive = true;
-    getDriverHelpPhone()
-      .then((phone) => { if (alive) setHelpPhone(phone); })
-      /* A failed lookup keeps whatever number we already had; only a first-ever failure shows "no number". */
-      .catch(() => { if (alive) setHelpPhone((current) => current === undefined ? null : current); });
-    return () => { alive = false; };
-  }, [showPinHelp]);
+  const { contact: helpContact, retry: retryHelpContact } = useDriverHelpContact(showPinHelp);
 
   const pinRefs = [
     useRef<HTMLInputElement>(null),
@@ -480,21 +470,27 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
               {tr('login.forgotPin')}
             </h3>
             <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
-              {helpPhone === null ? tr('login.pinHelpNoNumber') : tr('login.pinHelp')}
+              {helpContact.status === 'unavailable' ? tr('login.pinHelpNoNumber') : tr('login.pinHelp')}
             </p>
 
             {/* tel: link — taps to dial on a phone, reads as plain text on a laptop.
                 No number at all (none set, or the lookup failed) → just the wording above. */}
-            {helpPhone && (
+            {helpContact.status === 'available' && (
               <a
-                href={`tel:${helpPhone}`}
+                href={`tel:${helpContact.phone}`}
                 className="mt-5 flex items-center justify-center gap-2 w-full py-4 bg-[#f3f4f6] rounded-2xl text-xl font-bold text-foreground tracking-wide hover:bg-gray-200 transition-colors"
               >
                 <Phone className="w-5 h-5 text-[#10b981] flex-shrink-0" />
-                {formatContactPhone(helpPhone)}
+                {formatContactPhone(helpContact.phone)}
               </a>
             )}
-            {helpPhone === undefined && <p className="mt-5 text-sm text-muted-foreground" aria-live="polite">…</p>}
+            {helpContact.status === 'loading' && <p role="status" className="mt-5 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+              <Loader2 aria-hidden="true" className="h-4 w-4 motion-safe:animate-spin" />{tr('login.pinHelpLoading')}
+            </p>}
+            {helpContact.status === 'error' && <div className="mt-5 text-sm text-muted-foreground">
+              <p role="alert">{tr('login.pinHelpError')}</p>
+              <button type="button" onClick={retryHelpContact} className="mt-1 min-h-11 rounded-lg px-3 font-medium text-primary underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-primary">{tr('login.pinHelpRetry')}</button>
+            </div>}
 
             <button
               type="button"
