@@ -28,6 +28,7 @@ interface Props {
   searchPlaceholder?: string;
   searchValue: string;
   onSearchChange: (value: string) => void;
+  mobileNavigation?: React.ReactNode;
 }
 
 const NOTIF_ICON: Record<AppNotification['type'], React.ElementType> = {
@@ -56,7 +57,7 @@ export default function Header({
   notifications, onReviewResetRequest,
   setNotifications, onOpenNotification, onLogout, onOpenSettings, onOpenHelp,
   isOperationManager, adminRole, adminEmail, adminName, avatarUrl, onOpenWorkspaceSettings,
-  searchPlaceholder, searchValue, onSearchChange,
+  searchPlaceholder, searchValue, onSearchChange, mobileNavigation,
 }: Props) {
   const [bellOpen,    setBellOpen]    = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
@@ -129,11 +130,12 @@ export default function Header({
     setNotifications((p) => p.map((n) => (isOperationManager || n.type !== 'password_reset_requested') ? { ...n, read: true } : n));
 
   return (
-    <header className="relative bg-white border-b border-border px-4 sm:px-6 py-3.5">
+    <header className="relative bg-white border-b border-border px-4 sm:px-6 pb-3.5 pt-[calc(0.875rem+env(safe-area-inset-top))] md:py-3.5">
       <div className="flex min-w-0 items-center justify-end gap-2 sm:gap-3">
+        {mobileNavigation}
 
         <div title={`${fullDate} · Asia/Manila (Philippine Time)`} aria-label={`Today in the Philippines: ${fullDate}`}
-          className="flex h-9 min-w-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-border bg-white px-2.5 text-sm font-semibold text-foreground shadow-sm sm:px-3">
+          className="hidden h-9 min-w-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-border bg-white px-2.5 text-sm font-semibold text-foreground shadow-sm sm:px-3 md:flex">
           <CalendarDays aria-hidden="true" className="hidden h-4 w-4 shrink-0 lg:block" />
           <span className="hidden truncate lg:block">{fullDate}</span>
           <span className="hidden truncate min-[360px]:block lg:hidden">{shortDate}</span>
@@ -152,7 +154,7 @@ export default function Header({
             </div>
             <button type="button" onClick={() => setSearchOpen((open) => !open)}
               aria-label={searchOpen ? 'Close search' : 'Open search'} aria-expanded={searchOpen}
-              className="fixed right-4 top-[calc(0.75rem+env(safe-area-inset-top))] z-40 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border bg-white text-muted-foreground shadow-sm hover:bg-accent sm:static sm:h-9 sm:w-9 lg:hidden">
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border bg-white text-muted-foreground shadow-sm hover:bg-accent sm:h-9 sm:w-9 lg:hidden">
               <Search className="h-4 w-4" />
             </button>
           </>
@@ -272,17 +274,18 @@ export default function Header({
         </Popover>
 
         {/* ── Admin User pill ── */}
-        <div className="relative" ref={accountRef}>
+        <div className="relative min-w-0" ref={accountRef}>
           <button
             ref={accountBtnRef}
             onClick={() => { setAccountOpen((v) => !v); setBellOpen(false); }}
-            className="flex min-w-0 max-w-[calc(100vw-9rem)] shrink-0 items-center gap-2.5 rounded-full border border-border px-3 py-1.5 transition-colors hover:bg-accent sm:max-w-none"
+            aria-label={`Open profile menu for ${adminName ?? 'Admin User'}`} aria-expanded={accountOpen}
+            className="flex h-10 w-10 min-w-0 shrink-0 items-center justify-center rounded-full border border-border transition-colors hover:bg-accent md:h-auto md:w-auto md:max-w-none md:gap-2.5 md:px-3 md:py-1.5"
           >
             <div className="w-7 h-7 bg-black rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden">
               {avatarUrl ? <img src={avatarUrl} alt="" className="h-full w-full object-cover" /> : <User className="w-4 h-4 text-white" />}
             </div>
-            <span className="min-w-0 truncate text-sm font-medium text-foreground">{adminName ?? 'Admin User'}</span>
-            <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform duration-150 ${accountOpen ? 'rotate-180' : ''}`} />
+            <span className="hidden min-w-0 truncate text-sm font-medium text-foreground md:block">{adminName ?? 'Admin User'}</span>
+            <ChevronDown className={`hidden w-4 h-4 text-muted-foreground transition-transform duration-150 md:block ${accountOpen ? 'rotate-180' : ''}`} />
           </button>
 
           {accountOpen && (
@@ -346,7 +349,7 @@ export default function Header({
 
       </div>
       {searchPlaceholder && searchOpen && (
-        <div className="absolute inset-x-0 top-full z-50 border-b border-border bg-white p-3 shadow-lg lg:hidden">
+        <div className="mt-3 min-w-0 border-t border-border bg-white pt-3 lg:hidden">
           <div className="flex min-w-0 items-center gap-2">
             <button type="button" onClick={() => setSearchOpen(false)} aria-label="Close search" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border text-muted-foreground"><ArrowLeft className="h-4 w-4" /></button>
             <div className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-xl border border-border px-3 focus-within:border-primary">

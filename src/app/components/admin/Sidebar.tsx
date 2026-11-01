@@ -12,6 +12,21 @@ interface SidebarProps {
   setMobileOpen: (open: boolean) => void;
 }
 
+export function MobileTopBar({ onOpenMenu, onDashboard, mobileOpen }: {
+  onOpenMenu: () => void; onDashboard: () => void; mobileOpen: boolean;
+}) {
+  return <div className="mr-auto flex min-w-0 shrink-0 items-center gap-2 md:hidden">
+    <button type="button" onClick={onOpenMenu} aria-label="Open menu" aria-expanded={mobileOpen}
+      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground hover:text-foreground">
+      <Menu className="h-5 w-5" />
+    </button>
+    <a href={adminHref('Dashboard')} onClick={(event) => followAdminLink(event, onDashboard)} aria-label="Go to Dashboard"
+      className="flex items-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40">
+      <img src={imgLogo} alt="360 Logistics" className="h-5 w-auto" />
+    </a>
+  </div>;
+}
+
 const navItems: { name: NavItem; label?: string; icon: React.ElementType }[] = [
   { name: 'Dashboard',  icon: LayoutDashboard },
   { name: 'Monitor',    label: 'Dispatch', icon: Route },
@@ -87,15 +102,6 @@ export default function Sidebar({ activeNav, setActiveNav, mobileOpen, setMobile
 
   return (
     <>
-      {/* ── Mobile top bar ── */}
-      <div className="fixed inset-x-0 top-0 z-30 flex h-[calc(4rem+env(safe-area-inset-top))] items-center gap-3 border-b border-border bg-white px-4 pt-[env(safe-area-inset-top)] md:hidden">
-        <button type="button" onClick={() => setMobileOpen(true)} aria-label="Open menu" aria-expanded={mobileOpen}
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground hover:text-foreground">
-          <Menu className="h-5 w-5" />
-        </button>
-        <LogoButton compact />
-      </div>
-
       {/* ── Mobile overlay ── */}
       {mobileOpen && (
         <div

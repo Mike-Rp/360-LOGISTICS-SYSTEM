@@ -146,6 +146,7 @@ function renderAdminAvailability(overrides = {}) {
     '../../lib/useMyFleetDelegation': { useMyFleetDelegation: () => ({}) },
   };
   for (const child of children) imports[`./${child}`] = { default: (props) => { captured.push({ child, props }); return null; } };
+  imports['./Sidebar'].MobileTopBar = () => null;
   const { default: AdminDashboard } = loadModule('../components/admin/AdminDashboard.tsx', imports);
   const previousWindow = global.window;
   const previousStorage = global.localStorage;

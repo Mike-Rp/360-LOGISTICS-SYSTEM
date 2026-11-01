@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Sidebar from './Sidebar';
+import Sidebar, { MobileTopBar } from './Sidebar';
 import Header from './Header';
 import NotificationToastContainer from './NotificationToastContainer';
 import KPICards from './KPICards';
@@ -49,6 +49,7 @@ const SEARCH_PLACEHOLDERS: Partial<Record<NavItem, string>> = {
 /* Dashboard redesign switch — true = new dashboard (dashboard/DashboardHome.tsx),
    false = the original KPICards + DeliveryStatusBoard + Charts. Nothing else changes. */
 const USE_NEW_DASHBOARD = true;
+const mobileDateFormat = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', weekday: 'short', month: 'short', day: 'numeric' });
 
 interface Props {
   initialLoading: boolean;
@@ -100,6 +101,12 @@ export default function AdminDashboard({
   onLogout, isViewOnly, adminRole, staffProfile, avatarUrl, onStaffProfileUpdated, savingToDb,
   onResetAll, isOperationManager, adminEmail,
 }: Props) {
+  const [mobileDate, setMobileDate] = useState(() => new Date());
+  useEffect(() => {
+    const timer = window.setInterval(() => setMobileDate(new Date()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const mobileDateText = mobileDateFormat.format(mobileDate);
 
   /* ── Floating panel state ── */
   const [settingsOpen,  setSettingsOpen]  = useState(false);
@@ -294,7 +301,7 @@ export default function AdminDashboard({
         );
       case 'Deliveries':
         return (
-          <DeliveryTable fullView assignments={assignments} completed={completed} cancelled={cancelled} trucks={trucks} search={currentSearchQuery} />
+          <DeliveryTable fullView assignments={assignments} completed={completed} cancelled={cancelled} trucks={trucks} search={currentSearchQuery} mobileDate={mobileDateText} />
         );
       case 'Documents':
         return <DocumentArchive assignments={assignments} completed={completed} cancelled={cancelled} setAssignments={setAssignments} isViewOnly={operationalReadOnly} search={currentSearchQuery} onSearchChange={changeSearch} notificationTarget={notificationTarget?.page === 'Documents' ? notificationTarget : null} onNotificationTargetHandled={clearNotificationTarget} />;
@@ -324,10 +331,12 @@ export default function AdminDashboard({
   };
 
   return (
-    <div className="flex h-screen bg-background overflow-hidden">
+    <div className="flex h-screen h-[100dvh] bg-background overflow-hidden">
       <Sidebar activeNav={activeNav} setActiveNav={navigateToModule} mobileOpen={mobileMenuOpen} setMobileOpen={setMobileMenuOpen} />
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden pt-[calc(4rem+env(safe-area-inset-top))] md:pt-0">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="relative z-30 shrink-0 bg-white">
         <Header
+          mobileNavigation={<MobileTopBar onOpenMenu={() => setMobileMenuOpen(true)} onDashboard={() => navigateToModule('Dashboard')} mobileOpen={mobileMenuOpen} />}
           notifications={notifications}
           onReviewResetRequest={(id) => {
             setResetRequestTarget(id);
@@ -348,9 +357,11 @@ export default function AdminDashboard({
           searchValue={currentSearchInput}
           onSearchChange={changeSearch}
         />
+        </div>
         <span role="status" className="sr-only">{initialLoading ? 'Loading page content…' : ''}</span>
-        <main aria-busy={contentLoading} className={`min-w-0 flex-1 p-4 sm:p-6 ${mobileMenuOpen || settingsOpen ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+        <main aria-busy={contentLoading} className={`min-h-0 min-w-0 flex-1 p-4 sm:p-6 ${mobileMenuOpen || settingsOpen ? 'overflow-hidden' : 'overflow-y-auto'}`}>
           <div className={`max-w-[1600px] mx-auto space-y-4 sm:space-y-6 ${initialLoading ? '' : 'animate-in fade-in duration-300 motion-reduce:animate-none'}`}>
+            {activeNav !== 'Deliveries' && <p className="text-right text-sm font-medium text-muted-foreground md:hidden" aria-label={`Today in the Philippines: ${mobileDateText}`}>{mobileDateText}</p>}
             {(saveError || loadError || availabilityError) && <div className="space-y-2" role="alert">
               {saveError && <p className="rounded-lg border border-red-200 bg-white px-4 py-3 text-sm text-red-700">{saveError}</p>}
               {(loadError || availabilityError) && <div className="flex flex-wrap items-center gap-2 rounded-lg border border-red-200 bg-white px-4 py-3 text-sm text-red-700">

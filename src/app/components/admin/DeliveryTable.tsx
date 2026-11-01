@@ -13,6 +13,7 @@ import CompletedDeliverySummary from './CompletedDeliverySummary';
 import DeliveryTimingBadge from './DeliveryTimingBadge';
 import { getDispatchTimingNotices } from '../../lib/assignmentTiming';
 import { isDashboardDelayedAssignment } from '../../lib/dashboardDelayed';
+import { revealSelectedDeliveryTab } from '../../lib/deliveryTabScroll';
 import { formatOperationalStamp } from '../../lib/assignmentOperational';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
 import { sortNewestFirst, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
@@ -29,6 +30,7 @@ interface DeliveryTableProps {
   assignments?: Assignment[];
   trucks?: LocalTruck[];
   search?: string;
+  mobileDate?: string;
   /* Cancelled assignments — shown under the "Cancelled" tab. */
   cancelled?: Assignment[];
 }
@@ -237,6 +239,7 @@ export default function DeliveryTable({
   trucks = [],
   cancelled = [],
   search = '',
+  mobileDate,
 }: DeliveryTableProps) {
 
   if (!fullView) {
@@ -245,6 +248,11 @@ export default function DeliveryTable({
   const timingNow = new Date();
 
   const [tab, setTab] = useState<DeliveriesTab>(() => deliveriesRouteFromUrl(new URL(window.location.href)).tab);
+  const tabsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!window.matchMedia('(max-width: 767px)').matches) return;
+    revealSelectedDeliveryTab(tabsRef.current);
+  }, [tab]);
   const [period, setPeriod] = useState<FilterPeriod>(() => deliveriesRouteFromUrl(new URL(window.location.href)).period);
   const [remarksAssignment, setRemarksAssignment] = useState<Assignment | null>(null);
   const [cancelledDetails, setCancelledDetails] = useState<Assignment | null>(null);
@@ -356,13 +364,16 @@ export default function DeliveryTable({
       {/* Header */}
       <div className="px-6 py-5 border-b border-border">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-semibold text-foreground">Deliveries</h2>
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-start justify-between gap-3">
+              <h2 className="text-lg font-semibold text-foreground">Deliveries</h2>
+              {mobileDate && <span className="shrink-0 text-sm font-medium text-muted-foreground md:hidden" aria-label={`Today in the Philippines: ${mobileDate}`}>{mobileDate}</span>}
+            </div>
             <p className="text-sm text-muted-foreground mt-0.5">View and manage current delivery assignments.</p>
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex w-full min-w-0 max-w-full flex-wrap items-center gap-2 sm:w-auto">
             {/* Tab */}
-            <div role="group" aria-label="Delivery categories" className="flex max-w-full min-w-0 overflow-x-auto bg-muted/30 rounded-lg p-1 border border-border">
+            <div ref={tabsRef} role="group" aria-label="Delivery categories" className="flex w-full max-w-full min-w-0 overscroll-x-contain overflow-x-auto bg-muted/30 rounded-lg p-1 border border-border sm:w-auto">
               {([
                 ['active', 'Active', filteredActiveBase.length],
                 ['delayed', 'Delayed', filteredDelayed.length],
