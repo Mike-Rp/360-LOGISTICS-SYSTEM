@@ -9,7 +9,7 @@ import type { Assignment, CompletedTask, DocStatus } from '../../data/assignment
 import { assignmentDisplayStatusConfig, getAssignmentDisplayStatus, getAssignmentDocumentSummary } from '../../lib/assignmentWorkflow';
 import type { AssignmentDisplayStatus } from '../../lib/assignmentWorkflow';
 import { statusColors } from '../../data/statusColors';
-import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
+import { PaginationFooter, usePagination } from './Pagination';
 import { sortNewestFirst, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
 import { matchesAssignmentDate } from '../../lib/assignmentDateFilter';
 import UploadedFilePreviewModal from './UploadedFilePreviewModal';
@@ -466,7 +466,6 @@ export default function DocumentArchive({ assignments, completed, cancelled = []
     }
     previousSearch.current = search;
   }, [search, setPage, focusedId, onNotificationTargetHandled]);
-  const pageArea = useStablePageHeight(currentPage, visibleGroups.length, 10, `${search}|${filter}|${period}|${focusedId ?? ''}`);
   const targetIndex = visibleGroups.findIndex(group => group.assignmentId === notificationTarget?.assignmentId);
 
   useEffect(() => {
@@ -637,7 +636,7 @@ export default function DocumentArchive({ assignments, completed, cancelled = []
         </div>
       ) : (
         <div className="bg-white rounded-2xl border border-border shadow-sm overflow-hidden">
-          <div ref={pageArea}>
+          <div>
           <div className="hidden xl:block">
             <table className="w-full table-fixed border-collapse text-sm">
               <colgroup>
