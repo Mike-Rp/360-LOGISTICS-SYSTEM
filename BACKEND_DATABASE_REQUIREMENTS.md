@@ -2833,6 +2833,16 @@ public anon key and skip this lockout. Closing that needs Supabase's Password Ve
 hook, which is Team/Enterprise plan only. Also uncovered: the in-app "confirm your password"
 re-checks (change password, cancel-assignment re-auth) still call Supabase directly.
 
+**FRONTEND FIX REQ07 (local frontend update):** Lockout feedback is scoped to the submitted
+account and kept separate from editable credential errors. Only finite, positive remaining
+seconds within the existing 300-second contract can temporarily disable that account's
+submit action. Missing/invalid timing shows a generic retry-later notice without a fabricated
+disabled period. Expiry enables a fresh backend attempt; it does not certify that the backend
+has unlocked the account. No passwords, PINs or lockout notices are persisted by this UI.
+There is no existing pre-login lockout-status endpoint, so refresh waits for the next
+authentication response to confirm the current state. The direct Auth API limitation above
+remains a backend security requirement; this UI change does not close it or alter Auth policy.
+
 ## [REQ-017] Person-name validation (Add Team Member) and Ñ in names
 
 **Status: IMPLEMENTED (2026-10-31).**

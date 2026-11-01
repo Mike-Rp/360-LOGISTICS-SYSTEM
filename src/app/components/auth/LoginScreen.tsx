@@ -5,6 +5,7 @@ import { signInStaff, signInDriver, LoginError, requestCsrPasswordReset } from '
 import type { StaffSession } from '../../lib/db';
 import { formatContactPhone } from '../../lib/fleetDelegation';
 import { useDriverHelpContact } from '../../lib/useDriverHelpContact';
+import { useLoginLockout } from '../../lib/useLoginLockout';
 import { getLastDriverLanguage, translateDriver } from '../driver/driverI18n';
 
 interface Props {
@@ -30,7 +31,6 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
   const [resetBusy, setResetBusy] = useState(false);
   const driverLanguage = getLastDriverLanguage();
   const tr = (key: Parameters<typeof translateDriver>[1], params?: Record<string, string | number>) => translateDriver(driverLanguage, key, params);
-  const lockMinutes = (e: unknown) => Math.max(1, Math.ceil(((e instanceof LoginError && e.retryAfterSeconds) || 300) / 60));
 
   /* ── Driver form ── */
   const [mobile,        setMobile]        = useState('');
@@ -60,6 +60,12 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
   const [adminError,   setAdminError]   = useState('');
   const [adminFieldError, setAdminFieldError] = useState<{ field: 'email' | 'password'; msg: string } | null>(null);
   const [adminLoading, setAdminLoading] = useState(false);
+  const driverLockout = useLoginLockout(mobile);
+  const adminLockout = useLoginLockout(email);
+  const driverSubmitting = useRef(false);
+  const adminSubmitting = useRef(false);
+  const lockMessage = (feedback: { minutes: number | null } | null) => !feedback ? '' : feedback.minutes === null
+    ? tr('login.lockedUnknown') : feedback.minutes === 1 ? tr('login.lockedOne') : tr('login.locked', { minutes: feedback.minutes });
 
   const submitResetRequest = async () => {
     if (resetBusy || resetSubmitted) return;
@@ -111,7 +117,7 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
   };
 
   const handleDriverLogin = async () => {
-    if (driverLoading) return;
+    if (driverSubmitting.current || driverLockout.isBlocked()) return;
     const fullPin = pin.join('');
 
     // mobile is the 10-digit local number (e.g. "9123456789")
@@ -128,28 +134,33 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
       return;
     }
 
+    driverSubmitting.current = true;
+    const requestedAt = Date.now();
     setDriverLoading(true);
     setDriverError(null);
 
     try {
       const driver = await signInDriver(mobile, fullPin);
+      driverLockout.clear(mobile);
       onDriverLogin(driver);
     } catch (e) {
       console.error('[signInDriver] error:', e);
       const code = e instanceof LoginError ? e.code : 'network';
+      if (code === 'invalid_credentials' || code === 'no_access') driverLockout.clear(mobile);
       if (code === 'invalid_credentials') setDriverError({ type: 'general', msg: tr('login.wrongPin') });
       else if (code === 'no_access')      setDriverError({ type: 'general', msg: tr('login.notDriver') });
       else if (code === 'server')         setDriverError({ type: 'general', msg: tr('login.server') });
       else if (code === 'rate_limited')   setDriverError({ type: 'general', msg: tr('login.rateLimited') });
-      else if (code === 'locked')         setDriverError({ type: 'general', msg: tr('login.locked', { minutes: lockMinutes(e) }) });
+      else if (code === 'locked')         driverLockout.confirm(mobile, e instanceof LoginError ? e.retryAfterSeconds : undefined, requestedAt);
       else                                setDriverError({ type: 'general', msg: tr('login.network') });
     } finally {
+      driverSubmitting.current = false;
       setDriverLoading(false);
     }
   };
 
   const handleAdminLogin = async () => {
-    if (adminLoading) return;
+    if (adminSubmitting.current || adminLockout.isBlocked()) return;
     setAdminError('');
     setAdminFieldError(null);
     const inputEmail = email.trim().toLowerCase();
@@ -158,22 +169,27 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(inputEmail)) { setAdminFieldError({ field: 'email', msg: 'Enter a valid email address.' }); return; }
     if (!inputPass) { setAdminFieldError({ field: 'password', msg: 'Enter your password.' }); return; }
 
+    adminSubmitting.current = true;
+    const requestedAt = Date.now();
     setAdminLoading(true);
     try {
       /* OPM and CSR are both Supabase Auth users — one call.
          Which role you get comes from your row in the `profiles` table, not from this code. */
       const session = await signInStaff(inputEmail, inputPass);
+      adminLockout.clear(inputEmail);
       await onAdminLogin(session);
     } catch (e) {
       console.error('[signInStaff] error:', e);
       const code = e instanceof LoginError ? e.code : 'network';
+      if (code === 'invalid_credentials' || code === 'no_access') adminLockout.clear(inputEmail);
       if (code === 'invalid_credentials') setAdminError('Incorrect email or password.');
       else if (code === 'no_access')      setAdminError('This account does not have access to the admin portal. Contact the Operation Manager.');
       else if (code === 'server')         setAdminError('Unable to log in right now. Please try again.');
       else if (code === 'rate_limited')   setAdminError('Too many login requests. Please try again shortly.');
-      else if (code === 'locked')         setAdminError(`Too many failed attempts. Try again in ${lockMinutes(e)} min.`);
+      else if (code === 'locked')         adminLockout.confirm(inputEmail, e instanceof LoginError ? e.retryAfterSeconds : undefined, requestedAt);
       else                                setAdminError('Unable to connect to the server. Please try again.');
     } finally {
+      adminSubmitting.current = false;
       setAdminLoading(false);
     }
   };
@@ -261,7 +277,7 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
                       type="tel"
                       inputMode="numeric"
                       autoComplete="off"
-                      value={mobile}
+                      value={mobile} disabled={driverLoading}
                       onChange={(e) => handleMobile(e.target.value)}
                       aria-invalid={mobileHasError || undefined}
                       aria-describedby={mobileHasError ? 'driver-mobile-error' : undefined}
@@ -287,7 +303,7 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
                     {pin.map((digit, i) => (
                       <input
                         key={i} ref={pinRefs[i]}
-                        type="password" inputMode="numeric" maxLength={1} value={digit}
+                        type="password" inputMode="numeric" maxLength={1} value={digit} disabled={driverLoading}
                         onChange={(e) => handlePin(i, e.target.value)}
                         onKeyDown={(e) => handlePinKey(i, e)}
                         aria-label={`PIN digit ${i + 1}`}
@@ -304,15 +320,17 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
                   {driverError?.type === 'pin' && <p id="driver-pin-error" role="alert" className="text-sm leading-5 text-red-600">{driverError.msg}</p>}
                 </div>
 
-                {driverError?.type === 'general' && (
+                {!driverLockout.feedback && driverError?.type === 'general' && (
                   <div role="alert" className="flex items-start gap-2 text-red-600 text-sm leading-5">
                     <AlertCircle aria-hidden="true" className="w-4 h-4 flex-shrink-0 mt-0.5" /> <span>{driverError.msg}</span>
                   </div>
                 )}
 
+                {driverLockout.feedback && <p id="driver-lockout" role="status" className="text-sm leading-5 text-red-600">{lockMessage(driverLockout.feedback)}</p>}
                 <button
+                  aria-describedby={driverLockout.feedback ? 'driver-lockout' : undefined}
                   onClick={handleDriverLogin}
-                  disabled={driverLoading}
+                  disabled={driverLoading || !!driverLockout.feedback?.blocked}
                   className="w-full py-5 bg-[#10b981] text-white rounded-2xl hover:bg-[#059669] transition-colors shadow-lg font-bold text-xl disabled:opacity-60 flex items-center justify-center gap-2"
                 >
                   {driverLoading ? <><Loader2 className="w-5 h-5 animate-spin" /> {tr('login.verifying')}</> : tr('login.logIn')}
@@ -340,7 +358,7 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
                 <div className="space-y-2">
                   <label className="text-base font-semibold text-foreground block">Company Email</label>
                   <input
-                    type="email" value={email}
+                    type="email" value={email} disabled={adminLoading}
                     onChange={(e) => { setEmail(e.target.value); setAdminError(''); setAdminFieldError(null); }}
                     placeholder="e.g. 360logistics@email.ph"
                     onKeyDown={(e) => e.key === 'Enter' && handleAdminLogin()}
@@ -355,7 +373,7 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
                   <label className="text-base font-semibold text-foreground block">Password</label>
                   <div className="relative">
                     <input
-                      type={showPass ? 'text' : 'password'} value={password}
+                      type={showPass ? 'text' : 'password'} value={password} disabled={adminLoading}
                       onChange={(e) => { setPassword(e.target.value); setAdminError(''); setAdminFieldError(null); }}
                       placeholder="Enter password"
                       onKeyDown={(e) => e.key === 'Enter' && handleAdminLogin()}
@@ -374,14 +392,16 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
                   {adminFieldError?.field === 'password' && <p id="admin-password-error" role="alert" className="text-sm leading-5 text-red-600">{adminFieldError.msg}</p>}
                 </div>
 
-                {adminError && (
+                {!adminLockout.feedback && adminError && (
                   <div role="alert" className="flex items-start gap-2 text-red-600 text-sm leading-5">
                     <AlertCircle aria-hidden="true" className="w-4 h-4 flex-shrink-0 mt-0.5" /> <span>{adminError}</span>
                   </div>
                 )}
 
+                {adminLockout.feedback && <p id="admin-lockout" role="status" className="text-sm leading-5 text-red-600">{lockMessage(adminLockout.feedback)}</p>}
                 <button
-                  onClick={handleAdminLogin} disabled={adminLoading}
+                  aria-describedby={adminLockout.feedback ? 'admin-lockout' : undefined}
+                  onClick={handleAdminLogin} disabled={adminLoading || !!adminLockout.feedback?.blocked}
                   className="w-full py-5 bg-[#10b981] text-white rounded-2xl hover:bg-[#059669] transition-colors shadow-lg font-bold text-xl disabled:opacity-60 flex items-center justify-center gap-2"
                 >
                   {adminLoading ? <><Loader2 className="w-5 h-5 animate-spin" /> Signing in…</> : 'Log In'}

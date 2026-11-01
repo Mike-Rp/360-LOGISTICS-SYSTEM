@@ -77,6 +77,7 @@ function setup(t, language = 'en') {
     '../../lib/db': { LoginError: class extends Error {} },
     '../../lib/fleetDelegation': { formatContactPhone: (phone) => phone.replace(/^(\d{4})(\d{3})(\d{4})$/, '$1 $2 $3') },
     '../../lib/useDriverHelpContact': hook,
+    '../../lib/useLoginLockout': load('useLoginLockout.ts', { react: hooks }),
     '../driver/driverI18n': { ...i18n, getLastDriverLanguage: () => language },
   });
   const render = () => {

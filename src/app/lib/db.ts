@@ -192,7 +192,7 @@ async function authenticate(email: string, password: string): Promise<{ id: stri
       try { body = await error.context.json(); } catch { /* keep the generic result */ }
     }
     switch (body.error) {
-      case 'locked': throw new LoginError('locked', typeof body.retryAfterSeconds === 'number' ? body.retryAfterSeconds : 300);
+      case 'locked': throw new LoginError('locked', typeof body.retryAfterSeconds === 'number' && Number.isFinite(body.retryAfterSeconds) && body.retryAfterSeconds > 0 && body.retryAfterSeconds <= 300 ? body.retryAfterSeconds : undefined);
       case 'invalid_credentials': throw new LoginError('invalid_credentials');
       case 'rate_limited': throw new LoginError('rate_limited');
       case 'server': throw new LoginError('server');
