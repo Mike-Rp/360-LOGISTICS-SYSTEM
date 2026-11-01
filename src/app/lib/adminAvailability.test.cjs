@@ -18,7 +18,8 @@ function loadModule(file, imports = {}) {
   return mod.exports;
 }
 
-const { driverState, truckState } = loadModule('unavailability.ts');
+const philippineTime = loadModule('philippineTime.ts', { './assignmentTiming': loadModule('assignmentTiming.ts') });
+const { driverState, truckState } = loadModule('unavailability.ts', { './philippineTime': philippineTime });
 function fixture() {
   const rows = {
     drivers: [

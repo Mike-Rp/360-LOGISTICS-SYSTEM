@@ -19,6 +19,7 @@ import MobileNumberField from './MobileNumberField';
 import { isValidPersonName, PERSON_NAME_MAX_LENGTH } from '../../lib/personName';
 import { useCoverageLookup } from '../../lib/useCoverageLookup';
 import { DateField, TimeField } from './ScheduleFields';
+import { formatPhilippineTimestamp, PHILIPPINE_TIME_LABEL } from '../../lib/philippineTime';
 
 /* ── Activity log helpers — moved here from SettingsPanel.tsx, extended for member events ── */
 const ACT_CONFIG: Record<AdminActivityType, { label: string; icon: React.ElementType; color: string }> = {
@@ -372,11 +373,12 @@ function CoverageModal({ members, onClose, onContinue }: {
           </div>
         )}
 
+        <p className="text-sm text-muted-foreground">{PHILIPPINE_TIME_LABEL}</p>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <label htmlFor="coverage-start" className="block text-sm font-medium text-foreground mb-1.5">Starts <span className="text-red-500">*</span></label>
             <div className="space-y-2">
-              <DateField id="coverage-start" label="Coverage start date" value={startDate} minIso={today} restrictToday layer
+              <DateField id="coverage-start" label="Coverage start date" value={startDate} minIso={today} calendarToday={today} restrictToday layer
                 hasError={!!startDate && startDate < today}
                 onChange={(date) => { setStart(`${date}T${startTime}`); setError(''); }} />
               <TimeField label="Coverage start time" value={startTime} layer
@@ -386,7 +388,7 @@ function CoverageModal({ members, onClose, onContinue }: {
           <div>
             <label htmlFor="coverage-end" className="block text-sm font-medium text-foreground mb-1.5">Ends <span className="text-red-500">*</span></label>
             <div className="space-y-2">
-              <DateField id="coverage-end" label="Coverage end date" value={endDate} minIso={startDate > today ? startDate : today} restrictToday layer
+              <DateField id="coverage-end" label="Coverage end date" value={endDate} minIso={startDate > today ? startDate : today} calendarToday={today} restrictToday layer
                 onChange={(date) => { setEnd(`${date}T${endTime}`); setError(''); }} />
               <TimeField label="Coverage end time" value={endTime} layer
                 onChange={(time) => { setEnd(`${endDate}T${time}`); setError(''); }} />
@@ -853,6 +855,7 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
 
           {/* ── Leave Coverage ── */}
           {tab === 'coverage' && <section id="workspace-panel-coverage" role="tabpanel" aria-labelledby="workspace-tab-coverage" className="space-y-4">
+            <p className="text-sm text-muted-foreground">{PHILIPPINE_TIME_LABEL}</p>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Leave Coverage</h3>
               <button type="button" disabled={!coverageVerified} onClick={() => { setCoverageNotice(''); setShowCoverageModal(true); }}
@@ -899,8 +902,8 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
                     <p className="mt-1 text-xs text-foreground">{delegationScopeLabel(item)}</p>
                     {item.contactPhone && <p className="text-xs text-muted-foreground">Drivers call {formatContactPhone(item.contactPhone)}</p>}
                     <p className="text-xs text-muted-foreground">
-                      {fmtTs(item.startsAt)} → {fmtTs(item.endsAt)} · {formatWindowLength(new Date(item.endsAt).getTime() - new Date(item.startsAt).getTime())}
-                      {item.revokedAt ? ` · ended early ${fmtTs(item.revokedAt)}` : ''}
+                      {formatPhilippineTimestamp(item.startsAt)} → {formatPhilippineTimestamp(item.endsAt)} · {formatWindowLength(new Date(item.endsAt).getTime() - new Date(item.startsAt).getTime())}
+                      {item.revokedAt ? ` · ended early ${formatPhilippineTimestamp(item.revokedAt)}` : ''}
                     </p>
                   </div>
                   {(status === 'active' || status === 'scheduled') &&
@@ -1052,8 +1055,8 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
           message={<>
             <span className="font-medium text-foreground">{coverageDraft.csr.name}</span> will be allowed to:{' '}
             <span className="font-medium text-foreground">{delegationScopeLabel({ canResetPin: coverageDraft.canResetPin, canRegister: coverageDraft.canRegister })}</span>
-            {' '}from <span className="font-medium text-foreground">{fmtTs(coverageDraft.startsAt.toISOString())}</span> to{' '}
-            <span className="font-medium text-foreground">{fmtTs(coverageDraft.endsAt.toISOString())}</span> ({coverageDraft.length}).
+            {' '}from <span className="font-medium text-foreground">{formatPhilippineTimestamp(coverageDraft.startsAt.toISOString())}</span> to{' '}
+            <span className="font-medium text-foreground">{formatPhilippineTimestamp(coverageDraft.endsAt.toISOString())}</span> ({coverageDraft.length}).
             {coverageDraft.contactPhone && <> Drivers who forgot their PIN will be shown <span className="font-medium text-foreground">{formatContactPhone(coverageDraft.contactPhone)}</span> to call.</>}
           </>}
           confirmLabel="Give Coverage"

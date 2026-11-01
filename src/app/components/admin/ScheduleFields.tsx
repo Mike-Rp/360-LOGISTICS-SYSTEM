@@ -33,7 +33,7 @@ const thinScroll =
   'hover:[&::-webkit-scrollbar-thumb]:bg-[#1DBF73]/50';
 
 /* ─── Date field — type into the input, or click the icon for a calendar ─── */
-export function DateField({ value, onChange, hasError, minIso, maxIso, id, label, restrictToday = false, layer = false }: {
+export function DateField({ value, onChange, hasError, minIso, maxIso, id, label, restrictToday = false, layer = false, calendarToday }: {
   /* `bad` = the browser holds a half-typed or impossible date (its value is then '') */
   value: string; onChange: (v: string, bad?: boolean) => void; hasError?: boolean;
   /* Bound the selectable range; typing is still validated on submit */
@@ -43,17 +43,20 @@ export function DateField({ value, onChange, hasError, minIso, maxIso, id, label
   label?: string;
   restrictToday?: boolean;
   layer?: boolean;
+  /** Override only the calendar day; date-only selections are never converted to instants. */
+  calendarToday?: string;
 }) {
   const [open, setOpen] = useState(false);
 
   /* Which month the calendar is showing — follows the value when there is one */
-  const anchor = value ? isoToDate(value) : new Date();
+  const today = calendarToday ?? todayIso();
+  const anchor = isoToDate(value || today);
   const [viewY, setViewY] = useState(anchor.getFullYear());
   const [viewM, setViewM] = useState(anchor.getMonth());
 
   /* Re-centre on the selected date each time the calendar is opened */
   const openCalendar = () => {
-    const a = value ? isoToDate(value) : new Date();
+    const a = isoToDate(value || today);
     setViewY(a.getFullYear());
     setViewM(a.getMonth());
     setOpen((v) => !v);
@@ -122,7 +125,7 @@ export function DateField({ value, onChange, hasError, minIso, maxIso, id, label
             const iso      = dateToIso(cell);
             const disabled = (!!min && cell < min) || (!!max && cell > max);
             const selected = iso === value;
-            const isToday  = iso === todayIso();
+            const isToday  = iso === today;
             return (
               <button key={iso} type="button" disabled={disabled}
                 onClick={() => { onChange(iso); setOpen(false); }}
@@ -139,7 +142,7 @@ export function DateField({ value, onChange, hasError, minIso, maxIso, id, label
         </div>
 
         <div className="flex items-center justify-between mt-2 pt-2 border-t border-border">
-          <button type="button" disabled={restrictToday && ((!!minIso && todayIso() < minIso) || (!!maxIso && todayIso() > maxIso))} onClick={() => { onChange(todayIso()); setOpen(false); }}
+          <button type="button" disabled={restrictToday && ((!!minIso && today < minIso) || (!!maxIso && today > maxIso))} onClick={() => { onChange(today); setOpen(false); }}
             className="text-xs font-medium text-[#1DBF73] hover:underline disabled:opacity-40 disabled:cursor-not-allowed">Today</button>
           <button type="button" onClick={() => { onChange(''); setOpen(false); }}
             className="text-xs font-medium text-muted-foreground hover:text-foreground">Clear</button>

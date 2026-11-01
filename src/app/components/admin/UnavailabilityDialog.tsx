@@ -5,6 +5,7 @@ import {
   type UnavailabilityKind, type UnavailableReason,
 } from '../../lib/unavailability';
 import { toLocalInputValue } from '../../lib/fleetDelegation';
+import { PHILIPPINE_TIME_LABEL, persistedTimestamp } from '../../lib/philippineTime';
 
 /* "Mark unavailable" (driver) / "Put under maintenance" (truck), and the same form to edit an active period.
    The database re-checks everything; this only explains problems before sending. `onSubmit` runs the real call
@@ -31,7 +32,10 @@ export default function UnavailabilityDialog({
   const isDriver = kind === 'driver';
   const [reason, setReason] = useState<string>(initial?.reason ?? '');
   const [note, setNote] = useState(initial?.note ?? '');
-  const [returnValue, setReturnValue] = useState(initial?.expectedReturnAt ? toLocalInputValue(new Date(initial.expectedReturnAt)) : '');
+  const [returnValue, setReturnValue] = useState(() => {
+    const saved = persistedTimestamp(initial?.expectedReturnAt);
+    return saved ? toLocalInputValue(saved) : '';
+  });
   const [errors, setErrors] = useState<{ reason?: string; note?: string; returnAt?: string }>({});
   const [submitError, setSubmitError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -44,7 +48,7 @@ export default function UnavailabilityDialog({
   const handleSubmit = async () => {
     if (busy) return;
     setSubmitError('');
-    const check = checkUnavailabilityForm({ kind, reason: isDriver ? reason : 'maintenance', note, returnValue, nowMs: Date.now() });
+    const check = checkUnavailabilityForm({ kind, reason: isDriver ? reason : 'maintenance', note, returnValue, originalReturnAt: initial?.expectedReturnAt, nowMs: Date.now() });
     if (!check.ok) { setErrors(check.errors); return; }
     setErrors({});
     setBusy(true);
@@ -122,6 +126,7 @@ export default function UnavailabilityDialog({
             <input id="unavailable-return" type="datetime-local" value={returnValue} aria-invalid={errors.returnAt ? true : undefined}
               onChange={(e) => { setReturnValue(e.target.value); setErrors((p) => ({ ...p, returnAt: undefined })); }}
               className={inputClass(errors.returnAt)} />
+            <p className="mt-1 text-sm text-muted-foreground">{PHILIPPINE_TIME_LABEL}</p>
             {errors.returnAt && <p role="alert" className="mt-1 text-xs text-red-500">{errors.returnAt}</p>}
             <p className="mt-1 text-xs text-muted-foreground">
               {returnValue ? 'It ends by itself at this time.' : isDriver && reason === 'no_show'

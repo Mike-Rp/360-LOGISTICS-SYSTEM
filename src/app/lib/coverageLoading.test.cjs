@@ -17,6 +17,7 @@ function load(file, imports = {}) {
   return mod.exports;
 }
 const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
+const philippineTime = load('philippineTime.ts', { './assignmentTiming': load('assignmentTiming.ts') });
 function deferred() {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -68,7 +69,7 @@ function setup(t, mode = 'opm') {
   const requests = [];
   const lookup = () => { const request = deferred(); requests.push(request); return request.promise; };
   const shared = load('useCoverageLookup.ts', { react: hooks });
-  const helpers = load('fleetDelegation.ts', { './philippineMobile': {} });
+  const helpers = load('fleetDelegation.ts', { './philippineMobile': {}, './philippineTime': philippineTime });
   const csr = load('useMyFleetDelegation.ts', {
     react: hooks, './db': { getMyFleetDelegation: lookup }, './fleetDelegation': helpers, './useCoverageLookup': shared,
   });
@@ -84,6 +85,7 @@ function setup(t, mode = 'opm') {
       },
       '../../lib/fleetDelegation': helpers,
       '../../lib/useCoverageLookup': shared,
+      '../../lib/philippineTime': philippineTime,
       './ScheduleFields': { DateField: 'date-field', TimeField: 'time-field' },
       './ConfirmPasswordDialog': { default: 'confirmation' },
       './Pagination': { PaginationFooter: 'pagination' },
@@ -103,7 +105,7 @@ function setup(t, mode = 'opm') {
       './RegisterModals': { RegisterDriverModal: 'driver-modal', RegisterTruckModal: 'truck-modal' },
       '../TruckImage': { default: 'truck-image' }, './ConfirmPasswordDialog': { default: 'confirmation' },
       '../../lib/db': {}, './UnavailabilityDialog': { default: 'unavailable-dialog' },
-      '../../lib/unavailability': load('unavailability.ts'),
+      '../../lib/unavailability': load('unavailability.ts', { './philippineTime': philippineTime }),
       '../ui/dropdown-menu': {},
       './Pagination': {
         PaginationFooter: 'pagination', useStablePageHeight: () => ({ current: null }),
@@ -111,6 +113,7 @@ function setup(t, mode = 'opm') {
       },
       '../../lib/recordOrdering': { sortNewestFirst: (items) => items, useLocalAddedHighlight: () => null },
       '../../data/truckTypes': {}, './ASNWithCopy': { default: 'asn' }, '../../lib/philippineMobile': {},
+      '../../lib/philippineTime': philippineTime,
     });
     component = () => Accounts({ drivers: [], trucks: [], search: '', canManageFleetAccounts: false,
       coverage: csr.useMyFleetDelegation(enabled, owner) });

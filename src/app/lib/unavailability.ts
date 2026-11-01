@@ -1,3 +1,5 @@
+import { parsePhilippineInputValue, persistedTimestamp, philippineDateKey, toPhilippineInputValue, PHILIPPINE_TIME_ZONE } from './philippineTime';
+
 /* Drivers can be marked Unavailable and trucks Under maintenance (REQ-019). The database decides who is
    unavailable (current_unavailability) and refuses to dispatch them; these helpers only shape what the
    screens show and check the form before it is sent. */
@@ -40,20 +42,20 @@ export const driverState = (d: { status: string; unavailable?: Unavailability })
 export const truckState = (t: { status: string; unavailable?: Unavailability }): FleetState =>
   t.unavailable ? 'unavailable' : t.status === 'Assigned' ? 'onDelivery' : 'available';
 
-const monthDay = (date: Date) => date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-const monthDayTime = (date: Date) => date.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+const monthDay = (date: Date) => date.toLocaleDateString('en-US', { timeZone: PHILIPPINE_TIME_ZONE, month: 'short', day: 'numeric' });
+const monthDayTime = (date: Date) => date.toLocaleString('en-US', { timeZone: PHILIPPINE_TIME_ZONE, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
 /** "until Nov 3, 5:00 PM" / "until end of today" / "return date not set". A return at exactly midnight is shown as
     the end of the previous day, which is how a no-show is stored. */
 export function describeReturn(expectedReturnAt: string | null, now: Date = new Date()): string {
   if (!expectedReturnAt) return 'return date not set';
-  const at = new Date(expectedReturnAt);
-  if (!Number.isFinite(at.getTime())) return 'return date not set';
-  if (at.getHours() === 0 && at.getMinutes() === 0) {
+  const at = persistedTimestamp(expectedReturnAt);
+  if (!at) return 'return date not set';
+  if (toPhilippineInputValue(at).endsWith('T00:00') && at.getUTCSeconds() === 0 && at.getUTCMilliseconds() === 0) {
     const day = new Date(at.getTime() - 60_000);
-    return day.toDateString() === now.toDateString() ? 'until end of today' : `until end of ${monthDay(day)}`;
+    return philippineDateKey(day) === philippineDateKey(now) ? 'until end of today (PHT)' : `until end of ${monthDay(day)} (PHT)`;
   }
-  return `until ${monthDayTime(at)}`;
+  return `until ${monthDayTime(at)} PHT`;
 }
 
 /** One line for a badge or row: "Sick · until Nov 3, 5:00 PM". */
@@ -64,7 +66,7 @@ export function describeUnavailability(u: Pick<Unavailability, 'reason' | 'expec
 /** "5 days" once an open-ended period has run for a day or more, so nobody stays blocked by accident; else null. */
 export function openEndedFor(u: Pick<Unavailability, 'expectedReturnAt' | 'since'>, nowMs: number): string | null {
   if (u.expectedReturnAt) return null;
-  const since = new Date(u.since).getTime();
+  const since = persistedTimestamp(u.since)?.getTime() ?? NaN;
   if (!Number.isFinite(since)) return null;
   const days = Math.floor((nowMs - since) / 86_400_000);
   return days >= 1 ? `${days} ${days === 1 ? 'day' : 'days'}` : null;
@@ -74,8 +76,10 @@ export interface UnavailabilityFormInput {
   kind: UnavailabilityKind;
   reason: string;
   note: string;
-  /** Browser-local `YYYY-MM-DDTHH:mm`, or '' for "until I mark them back". */
+  /** Philippine wall time `YYYY-MM-DDTHH:mm`, or '' for "until I mark them back". */
   returnValue: string;
+  /** Retain a saved instant's seconds/milliseconds when only the note is edited. */
+  originalReturnAt?: string | null;
   nowMs: number;
 }
 export interface UnavailabilityFormErrors { reason?: string; note?: string; returnAt?: string }
@@ -99,8 +103,10 @@ export function checkUnavailabilityForm(input: UnavailabilityFormInput): Unavail
 
   let expectedReturn: Date | null = null;
   if (input.returnValue) {
-    const at = new Date(input.returnValue);
-    if (!Number.isFinite(at.getTime())) errors.returnAt = 'Enter a valid return date and time.';
+    const original = persistedTimestamp(input.originalReturnAt);
+    const at = original && toPhilippineInputValue(original) === input.returnValue
+      ? original : parsePhilippineInputValue(input.returnValue);
+    if (!at) errors.returnAt = 'Enter a valid return date and time.';
     else if (at.getTime() <= input.nowMs) errors.returnAt = 'The return time must be in the future.';
     else expectedReturn = at;
   }

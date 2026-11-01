@@ -62,3 +62,11 @@ test('shared time picker preserves 24-hour values and AM/PM conversion', () => {
   assert.equal(tree.find((node) => node.type === 'input').props['aria-label'], 'Coverage end time');
   assert.match(tree.find((node) => node.type === 'popup').props.className, /z-\[90\]/);
 });
+
+test('coverage can supply Philippine today without shifting date-only selections', () => {
+  let selected;
+  const tree = nodes(DateField({ value: '', calendarToday: '2030-01-01', onChange: (value) => { selected = value; } }));
+  assert.ok(tree.find((node) => node.key === '2030-01-01'), 'empty calendar anchors to the supplied Philippine month');
+  tree.find((node) => node.type === 'button' && node.props.children === 'Today').props.onClick();
+  assert.equal(selected, '2030-01-01');
+});

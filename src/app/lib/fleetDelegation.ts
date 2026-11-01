@@ -1,4 +1,5 @@
 import { parsePhilippineMobile } from './philippineMobile';
+import { parsePhilippineInputValue, toPhilippineInputValue } from './philippineTime';
 
 /* Leave coverage (REQ-018): the OPM lets one CSR reset driver PINs and/or register drivers and
    trucks for a stated window. The database is the authority (every call re-checks the window);
@@ -63,13 +64,13 @@ export type WindowCheck =
   | { ok: true; startsAt: Date; endsAt: Date; length: string }
   | { ok: false; error: string };
 
-/** Validates the two date-time fields from the form (browser-local `YYYY-MM-DDTHH:mm`). Mirrors the
+/** Validates Philippine wall-time form values (`YYYY-MM-DDTHH:mm`). Mirrors the
     database rules: an end after the start, and not already over. */
 export function checkCoverageWindow(startValue: string, endValue: string, nowMs: number): WindowCheck {
   if (!startValue || !endValue) return { ok: false, error: 'Choose when the coverage starts and ends.' };
-  const startsAt = new Date(startValue);
-  const endsAt = new Date(endValue);
-  if (!Number.isFinite(startsAt.getTime()) || !Number.isFinite(endsAt.getTime())) {
+  const startsAt = parsePhilippineInputValue(startValue);
+  const endsAt = parsePhilippineInputValue(endValue);
+  if (!startsAt || !endsAt) {
     return { ok: false, error: 'Enter a valid start and end date.' };
   }
   if (endsAt.getTime() <= startsAt.getTime()) return { ok: false, error: 'The end must be after the start.' };
@@ -89,11 +90,8 @@ export function checkNewCoverageWindow(startValue: string, endValue: string, now
   return checked;
 }
 
-/** Browser-local value for a `datetime-local` input. */
-export function toLocalInputValue(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
+/** PHT wall-time value for a datetime-local input; "local" refers to the HTML input type. */
+export const toLocalInputValue = toPhilippineInputValue;
 
 /** Accepts 09171234567, 0917 123 4567, +63 917 123 4567 …; returns the local form the database stores
     (09XXXXXXXXX), or null when it is not a Philippine mobile number. */

@@ -27,6 +27,7 @@ import { capacityKgOnly } from '../../data/truckTypes';
 import ASNWithCopy from './ASNWithCopy';
 import type { ActionFeedbackToast } from '../../lib/notificationEvents';
 import { parsePhilippineMobile } from '../../lib/philippineMobile';
+import { formatPhilippineTimestamp } from '../../lib/philippineTime';
 
 /* Plain-language text for the errors the archive / PIN database functions can return */
 const accountActionError = (err: unknown): string => {
@@ -481,8 +482,8 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
           <div className="min-w-0 text-sm text-amber-900">
             <p className="font-semibold">Covering for the Operation Manager</p>
             <p className="mt-0.5">
-              {coverage.canResetPin && <>You can set new driver PINs until {fmtArchived(coverage.pinUntil ?? undefined)}. </>}
-              {coverage.canRegister && <>You can register drivers and trucks until {fmtArchived(coverage.registerUntil ?? undefined)}. </>}
+              {coverage.canResetPin && <>You can set new driver PINs until {formatPhilippineTimestamp(coverage.pinUntil)}. </>}
+              {coverage.canRegister && <>You can register drivers and trucks until {formatPhilippineTimestamp(coverage.registerUntil)}. </>}
               Everything you do here is recorded in the activity log.
             </p>
           </div>

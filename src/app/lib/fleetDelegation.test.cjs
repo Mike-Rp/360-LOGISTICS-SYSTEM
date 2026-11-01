@@ -13,10 +13,11 @@ const load = (file, requireImpl = require) => {
   return mod.exports;
 };
 const philippineMobile = load('philippineMobile.ts');
+const philippineTime = load('philippineTime.ts', (id) => id === './assignmentTiming' ? load('assignmentTiming.ts') : require(id));
 const { delegationStatus, delegationScopeLabel, accessActive, formatWindowLength, checkCoverageWindow, checkNewCoverageWindow, toLocalInputValue,
-  normalizeContactPhone, formatContactPhone } = load('fleetDelegation.ts', (id) => id === './philippineMobile' ? philippineMobile : require(id));
+  normalizeContactPhone, formatContactPhone } = load('fleetDelegation.ts', (id) => id === './philippineMobile' ? philippineMobile : id === './philippineTime' ? philippineTime : require(id));
 
-const NOW = new Date('2026-11-10T12:00:00').getTime();
+const NOW = new Date('2026-11-10T12:00:00+08:00').getTime();
 const HOUR = 3_600_000;
 const iso = (offsetHours) => new Date(NOW + offsetHours * HOUR).toISOString();
 
@@ -67,9 +68,9 @@ test('the form window mirrors the database rules', () => {
   assert.equal(checkCoverageWindow('2026-11-10T11:00', '2026-11-11T11:00', NOW).ok, true);
 });
 
-test('datetime-local value is zero-padded browser-local time', () => {
-  assert.equal(toLocalInputValue(new Date(2026, 0, 5, 7, 4)), '2026-01-05T07:04');
-  assert.equal(toLocalInputValue(new Date(2026, 10, 24, 18, 0)), '2026-11-24T18:00');
+test('datetime-local value is zero-padded Philippine wall time', () => {
+  assert.equal(toLocalInputValue(new Date('2026-01-05T07:04+08:00')), '2026-01-05T07:04');
+  assert.equal(toLocalInputValue(new Date('2026-11-24T18:00+08:00')), '2026-11-24T18:00');
 });
 
 test('new coverage cannot backdate its start, including a manually typed date', () => {
