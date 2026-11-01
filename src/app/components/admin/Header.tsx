@@ -348,6 +348,13 @@ export default function Header({
         </div>
 
       </div>
+      <div className="mt-2 flex md:hidden">
+        <div className="inline-flex min-h-9 items-center gap-1.5 whitespace-nowrap rounded-full border border-border bg-white px-2.5 text-sm font-semibold text-foreground shadow-sm"
+          title={`${fullDate} · Asia/Manila (Philippine Time)`} aria-label={`Today in the Philippines: ${fullDate}`}>
+          <CalendarDays aria-hidden="true" className="h-4 w-4 shrink-0" />
+          <span>{fullDate}</span>
+        </div>
+      </div>
       {searchPlaceholder && searchOpen && (
         <div className="mt-3 min-w-0 border-t border-border bg-white pt-3 lg:hidden">
           <div className="flex min-w-0 items-center gap-2">

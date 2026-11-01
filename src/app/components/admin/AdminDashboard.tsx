@@ -49,7 +49,6 @@ const SEARCH_PLACEHOLDERS: Partial<Record<NavItem, string>> = {
 /* Dashboard redesign switch — true = new dashboard (dashboard/DashboardHome.tsx),
    false = the original KPICards + DeliveryStatusBoard + Charts. Nothing else changes. */
 const USE_NEW_DASHBOARD = true;
-const mobileDateFormat = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', weekday: 'short', month: 'short', day: 'numeric' });
 
 interface Props {
   initialLoading: boolean;
@@ -101,13 +100,6 @@ export default function AdminDashboard({
   onLogout, isViewOnly, adminRole, staffProfile, avatarUrl, onStaffProfileUpdated, savingToDb,
   onResetAll, isOperationManager, adminEmail,
 }: Props) {
-  const [mobileDate, setMobileDate] = useState(() => new Date());
-  useEffect(() => {
-    const timer = window.setInterval(() => setMobileDate(new Date()), 60_000);
-    return () => window.clearInterval(timer);
-  }, []);
-  const mobileDateText = mobileDateFormat.format(mobileDate);
-
   /* ── Floating panel state ── */
   const [settingsOpen,  setSettingsOpen]  = useState(false);
   const [helpOpen,      setHelpOpen]      = useState(false);
@@ -301,7 +293,7 @@ export default function AdminDashboard({
         );
       case 'Deliveries':
         return (
-          <DeliveryTable fullView assignments={assignments} completed={completed} cancelled={cancelled} trucks={trucks} search={currentSearchQuery} mobileDate={mobileDateText} />
+          <DeliveryTable fullView assignments={assignments} completed={completed} cancelled={cancelled} trucks={trucks} search={currentSearchQuery} />
         );
       case 'Documents':
         return <DocumentArchive assignments={assignments} completed={completed} cancelled={cancelled} setAssignments={setAssignments} isViewOnly={operationalReadOnly} search={currentSearchQuery} onSearchChange={changeSearch} notificationTarget={notificationTarget?.page === 'Documents' ? notificationTarget : null} onNotificationTargetHandled={clearNotificationTarget} />;
@@ -361,7 +353,6 @@ export default function AdminDashboard({
         <span role="status" className="sr-only">{initialLoading ? 'Loading page content…' : ''}</span>
         <main aria-busy={contentLoading} className={`min-h-0 min-w-0 flex-1 p-4 sm:p-6 ${mobileMenuOpen || settingsOpen ? 'overflow-hidden' : 'overflow-y-auto'}`}>
           <div className={`max-w-[1600px] mx-auto space-y-4 sm:space-y-6 ${initialLoading ? '' : 'animate-in fade-in duration-300 motion-reduce:animate-none'}`}>
-            {activeNav !== 'Deliveries' && <p className="text-right text-sm font-medium text-muted-foreground md:hidden" aria-label={`Today in the Philippines: ${mobileDateText}`}>{mobileDateText}</p>}
             {(saveError || loadError || availabilityError) && <div className="space-y-2" role="alert">
               {saveError && <p className="rounded-lg border border-red-200 bg-white px-4 py-3 text-sm text-red-700">{saveError}</p>}
               {(loadError || availabilityError) && <div className="flex flex-wrap items-center gap-2 rounded-lg border border-red-200 bg-white px-4 py-3 text-sm text-red-700">

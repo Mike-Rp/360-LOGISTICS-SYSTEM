@@ -30,7 +30,6 @@ interface DeliveryTableProps {
   assignments?: Assignment[];
   trucks?: LocalTruck[];
   search?: string;
-  mobileDate?: string;
   /* Cancelled assignments — shown under the "Cancelled" tab. */
   cancelled?: Assignment[];
 }
@@ -239,7 +238,6 @@ export default function DeliveryTable({
   trucks = [],
   cancelled = [],
   search = '',
-  mobileDate,
 }: DeliveryTableProps) {
 
   if (!fullView) {
@@ -367,7 +365,6 @@ export default function DeliveryTable({
           <div className="min-w-0">
             <div className="flex min-w-0 items-start justify-between gap-3">
               <h2 className="text-lg font-semibold text-foreground">Deliveries</h2>
-              {mobileDate && <span className="shrink-0 text-sm font-medium text-muted-foreground md:hidden" aria-label={`Today in the Philippines: ${mobileDate}`}>{mobileDate}</span>}
             </div>
             <p className="text-sm text-muted-foreground mt-0.5">View and manage current delivery assignments.</p>
           </div>
