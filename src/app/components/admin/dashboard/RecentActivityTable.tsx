@@ -106,7 +106,29 @@ export default function RecentActivityTable({ notifications, completed }: Props)
           </p>
         </div>
       ) : (
-        <div className="mt-4 overflow-x-auto -mx-1">
+        <>
+        <ul aria-label="Recent fleet activity" className="mt-4 min-w-0 divide-y divide-border/60 md:hidden">
+          {rows.map((r) => (
+            <li key={r.id} className="min-w-0 py-3 first:pt-0 last:pb-0">
+              <div className="flex min-w-0 items-start justify-between gap-2">
+                <div className="min-w-0 flex-1 text-[15px] font-medium text-foreground">
+                  <ASNWithCopy value={r.assignmentId} alignTextStart />
+                </div>
+                <time className="shrink-0 pt-2 text-sm text-muted-foreground" dateTime={parseStoredTimestamp(r.timestamp)?.toISOString()}>{fmtRelative(r.timestamp)}</time>
+              </div>
+              <div className="mt-1 flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1">
+                <div className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+                  <p className="text-sm font-semibold text-foreground">{r.driverName || '—'}</p>
+                  {r.truckPlate && <p className="text-sm text-muted-foreground">{r.truckPlate}</p>}
+                </div>
+                <span className={`inline-flex max-w-full items-center rounded-md border px-2 py-0.5 text-sm font-medium ${r.badge.cls}`}>
+                  {r.badge.label}
+                </span>
+              </div>
+            </li>
+          ))}
+        </ul>
+        <div className="-mx-1 mt-4 hidden overflow-x-auto md:block">
           <table className="w-full min-w-[360px] text-left">
             <thead>
               <tr className="text-sm text-muted-foreground">
@@ -135,6 +157,7 @@ export default function RecentActivityTable({ notifications, completed }: Props)
             </tbody>
           </table>
         </div>
+        </>
       )}
 
       {(notifications.length + completed.length) > MAX_ROWS && (
