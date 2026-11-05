@@ -14,6 +14,7 @@ import { statusColors } from '../../data/statusColors';
 import { PaginationFooter, usePagination } from './Pagination';
 import QRCode from 'qrcode';
 import { restoreSession, issueReport, listIssuedReports, type IssuedReportSummary } from '../../lib/db';
+import { reportPdfPrintTitle } from '../../lib/reportPdfFilename';
 import { REPORT_TYPE_LABEL } from '../../lib/reportTypes';
 import WeeklyPrintReport from './WeeklyPrintReport';
 import MonthlyPrintReport from './MonthlyPrintReport';
@@ -461,6 +462,12 @@ function PreviewModal({
     reportId: string | null; qrDataUrl: string | null;
   } | null>(null);
   const [printError, setPrintError] = useState('');
+  const originalPrintTitle = useRef<string | null>(null);
+  const restorePrintTitle = () => {
+    if (originalPrintTitle.current === null) return;
+    document.title = originalPrintTitle.current;
+    originalPrintTitle.current = null;
+  };
   const selectedDataKey = JSON.stringify(
     reportKey === 'weekly' ? weeklyRows : reportKey === 'monthly' ? monthlyPreviewRows
       : reportKey === 'delay' ? delayRows : utilTab === 'trucks' ? truckUtilRows : driverUtilRows,
@@ -471,12 +478,14 @@ function PreviewModal({
     const restorePage = () => {
       setPrinting(false);
       setFormalPrintContext(null);
+      restorePrintTitle();
     };
     window.addEventListener('beforeprint', showAllForPrint);
     window.addEventListener('afterprint', restorePage);
     return () => {
       window.removeEventListener('beforeprint', showAllForPrint);
       window.removeEventListener('afterprint', restorePage);
+      restorePrintTitle();
     };
   }, []);
   const visibleWeeklyRows = printing ? weeklyRows : weeklyPage.pageItems;
@@ -622,8 +631,11 @@ function PreviewModal({
         reportId: issued.id,
         qrDataUrl,
       }));
+      originalPrintTitle.current = document.title;
+      document.title = reportPdfPrintTitle(reportKey, new Date(), issued.id);
       window.print();
     } catch {
+      restorePrintTitle();
       setPrintError('Unable to prepare the report. Please try again.');
     }
   };
