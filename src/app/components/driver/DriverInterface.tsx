@@ -24,6 +24,7 @@ import { isAudioUnlockGesture, newNotificationIds, notificationAudioReady, notif
 import { canOpenDocumentReview, driverNotificationDestination } from '../../lib/driverNotificationNavigation';
 import { observeDriverCompletion, type DriverCompletionSnapshot } from './driverCompletion';
 import type { CancelledHistoryItem } from '../../lib/driverHistory';
+import { sortCompletedNewestFirst } from '../../lib/completedOrdering';
 import { completedPhotoGroup, getNextRequiredAction, getNextRequiredDocument, getNextRequiredPhoto, getRequiredPhotoProgress } from './driverPhotoGuidance';
 import { galleryPhotoMetadata, gpsAccuracyLevel, isCurrentPhotoLocationRequest, isPhotoLocationStale, savedPhotoMetadata } from './driverPhotoEvidence';
 import UploadedFilePreviewModal from '../admin/UploadedFilePreviewModal';
@@ -34,7 +35,7 @@ import { LimitedTextCounter, STANDARD_REMARK_LIMIT, withinTextLimit } from '../u
 /* ── Types ── */
 interface CompletedHistoryItem {
   id: string; destination: string; destinationArea?: string | null; company: string;
-  deliveryDate: string; completedAt: string; truckPlate: string; taskStatus: string;
+  deliveryDate: string; completedAt: string; completedEventAt?: string | null; truckPlate: string; taskStatus: string;
 }
 interface DriverData {
   driver: { id: string; name: string; phone: string; status: string; currentLocation: string };
@@ -2456,8 +2457,8 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   const completedHistory = data?.completedHistory ?? [];
   const cancelledHistory = data?.cancelledHistory ?? [];
   const selectedCancelledHistory = cancelledHistory.find((item) => item.id === selectedCancelledId);
-  const filteredCompletedHistory = completedHistory.filter((item) =>
-    `${item.truckPlate} ${item.company}`.toLowerCase().includes(historySearch.trim().toLowerCase()));
+  const filteredCompletedHistory = sortCompletedNewestFirst(completedHistory.filter((item) =>
+    `${item.truckPlate} ${item.company}`.toLowerCase().includes(historySearch.trim().toLowerCase())));
   const filteredCancelledHistory = cancelledHistory.filter((item) =>
     `${item.id} ${item.truckPlate} ${item.company} ${item.cancelReason ?? ''}`.toLowerCase().includes(historySearch.trim().toLowerCase()));
   const filteredHistory = historyTab === 'completed' ? filteredCompletedHistory : filteredCancelledHistory;

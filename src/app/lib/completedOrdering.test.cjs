@@ -34,3 +34,17 @@ test('the full completion audit timestamp wins over a yearless label', () => {
   assert.deepEqual(loaded.exports.sortCompletedNewestFirst(records).map(record => record.id),
     ['newer', 'older', 'no-year']);
 });
+
+test('driver history sorts real completion instants before filtering and pagination', () => {
+  const records = [
+    { id: 'ASN80630', completedAt: 'Oct 20, 04:00 PM', completedEventAt: '2026-10-20T08:00:00Z', company: 'Acme' },
+    { id: 'unknown', completedAt: 'Oct 20, 04:00 PM', company: 'Acme' },
+    { id: 'ASN56038', completedAt: 'Nov 2, 09:00 AM', completedEventAt: '2026-11-02T01:00:00Z', company: 'Acme' },
+    { id: 'same-day-later', completedAt: 'Nov 2, 10:00 AM', completedEventAt: '2026-11-02T02:00:00Z', company: 'Other' },
+  ];
+  const filtered = records.filter(record => record.company === 'Acme');
+  assert.deepEqual(loaded.exports.sortCompletedNewestFirst(filtered).map(record => record.id),
+    ['ASN56038', 'ASN80630', 'unknown']);
+  assert.deepEqual(loaded.exports.sortCompletedNewestFirst(records).slice(0, 2).map(record => record.id),
+    ['same-day-later', 'ASN56038']);
+});

@@ -1292,7 +1292,7 @@ export interface DriverNotificationRecord {
 export interface DriverViewData {
   driver: { id: string; name: string; phone: string; status: string; currentLocation: string };
   assignment: Assignment | null;
-  completedHistory: Array<{ id: string; destination: string; destinationArea?: string | null; company: string; deliveryDate: string; completedAt: string; truckPlate: string; taskStatus: string }>;
+  completedHistory: Array<{ id: string; destination: string; destinationArea?: string | null; company: string; deliveryDate: string; completedAt: string; completedEventAt?: string | null; truckPlate: string; taskStatus: string }>;
   cancelledHistory: CancelledHistoryItem[];
   /** Most recent cancelled assignment the driver hasn't dismissed yet, or null. */
   cancelledNotice: { id: string; reason: string | null; cancelledAt: string } | null;
@@ -1341,11 +1341,11 @@ export async function loadDriverData(driverId: string): Promise<DriverViewData> 
   }
 
   const completedHistory = rows.filter((r) => r.state === 'completed')
-    .sort((a, b) => (b.completed_at ?? '').localeCompare(a.completed_at ?? ''))
     .map((r) => ({
       id: r.id, destination: r.destination, destinationArea: r.destination_area ?? null,
       company: r.company, deliveryDate: r.delivery_date,
-      completedAt: r.completed_at ?? '', truckPlate: r.truck_plate, taskStatus: r.task_status,
+      completedAt: r.completed_at ?? '', completedEventAt: r.completed_at_utc ?? null,
+      truckPlate: r.truck_plate, taskStatus: r.task_status,
     }));
 
   const cancelledHistory = cancelledHistoryForDriver(rows, driverId);
