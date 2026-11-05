@@ -172,11 +172,11 @@ function dateErrors(pickup: string, delivery: string, bad: BadDates, requireFill
 
 /* Every schedule rule checked on submit — used by both Dispatch Truck and Edit */
 function scheduleErrors(s: {
-  pickup: string; delivery: string; pickupTime: string; eta: string; remarks: string; bad: BadDates;
+  pickup: string; delivery: string; pickupTime: string; scheduledArrivalTime: string; remarks: string; bad: BadDates;
 }): Record<string, string> {
   const e = dateErrors(s.pickup, s.delivery, s.bad, true);
   if (!s.pickupTime) e.pickupTime = 'Select a pick up time.';
-  if (!s.eta)        e.eta        = 'Select an ETA.';
+  if (!s.scheduledArrivalTime)        e.scheduledArrivalTime        = 'Select a scheduled time of arrival.';
 
   /* If the delivery date is today, times must be in the future */
   if (s.delivery && !e.date) {
@@ -186,12 +186,12 @@ function scheduleErrors(s: {
       const now = new Date();
       if (s.pickupTime && time24ToDate(selDate, s.pickupTime) <= now)
         e.pickupTime = "Pickup time must be in the future for today's date.";
-      if (s.eta && time24ToDate(selDate, s.eta) <= now)
-        e.eta = "ETA must be in the future for today's date.";
+      if (s.scheduledArrivalTime && time24ToDate(selDate, s.scheduledArrivalTime) <= now)
+        e.scheduledArrivalTime = "Scheduled arrival time must be in the future for today's date.";
     }
   }
 
-  /* ── ETA must not precede pickup — both are zero-padded 24-hour "HH:MM",
+  /* ── Scheduled Time of Arrival (STA) must not precede pickup — both are zero-padded 24-hour "HH:MM",
      so a plain string compare orders them correctly.
 
      This only applies when pickup and delivery fall on the SAME day. Across
@@ -199,8 +199,8 @@ function scheduleErrors(s: {
      and an arrival at 08:00 on the 21st is perfectly valid, but a raw time
      compare would reject it. Same-day behaviour is unchanged. ── */
   const sameDay = !!s.pickup && !!s.delivery && s.pickup === s.delivery;
-  if (sameDay && s.pickupTime && s.eta && !e.eta && s.eta < s.pickupTime)
-    e.eta = 'ETA cannot be earlier than the pick up time.';
+  if (sameDay && s.pickupTime && s.scheduledArrivalTime && !e.scheduledArrivalTime && s.scheduledArrivalTime < s.pickupTime)
+    e.scheduledArrivalTime = 'Scheduled arrival time cannot be earlier than the pickup time.';
 
   if (s.remarks.length > TEXT_MAX) e.remarks = `Remarks can be at most ${TEXT_MAX} characters.`;
   return e;
@@ -476,7 +476,7 @@ function DetailCard({ title, children }: { title: string; children: React.ReactN
   );
 }
 
-/* One label/value pair. `hero` is for the single most time-critical field (ETA). */
+/* One label/value pair. `hero` is for the single most time-critical field (Scheduled Time of Arrival (STA)). */
 function DetailRow({ icon, label, value, hero = false, compact = false }: {
   icon: React.ReactNode; label: string; value?: string; hero?: boolean; compact?: boolean;
 }) {
@@ -996,7 +996,7 @@ function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClo
                 <DetailRow compact icon={<Calendar className="h-4 w-4" />} label="Pickup Date" value={assignment.pickedUpDate} />
                 <DetailRow compact icon={<Clock className="h-4 w-4" />} label="Pickup Time" value={assignment.pickupTime} />
                 <DetailRow compact icon={<Calendar className="h-4 w-4" />} label="Delivery Date" value={assignment.deliveryDate} />
-                <DetailRow compact icon={<Timer className="h-4 w-4" />} label="ETA" value={assignment.eta} />
+                <DetailRow compact icon={<Timer className="h-4 w-4" />} label="Scheduled Time of Arrival (STA)" value={assignment.scheduledArrivalTime} />
                 <DetailRow compact icon={<Clock className="h-4 w-4" />} label="Assigned At" value={assignment.assignedAt} />
                 {assignment.taskStatus === 'Delivered' && <DetailRow compact icon={<CheckCircle2 className="h-4 w-4" />}
                   label="Delivered At" value={formatOperationalStamp(assignment.unloadingCompletedAt) ?? assignment.statusPhotos?.Delivered?.timestamp ?? '—'} />}
@@ -1355,7 +1355,7 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, availab
     from: routeFrom ?? '', to: original?.deliveryLocation || routeTo || '', destinationArea: original?.destinationArea ?? '',
     company: original?.company ?? '', pickupLocation: original?.pickupLocation ?? '',
     pickup: displayToIso(original?.pickedUpDate ?? ''), delivery: displayToIso(original?.deliveryDate ?? ''),
-    pickupTime: displayToTime24(original?.pickupTime ?? ''), eta: displayToTime24(original?.eta ?? ''),
+    pickupTime: displayToTime24(original?.pickupTime ?? ''), scheduledArrivalTime: displayToTime24(original?.scheduledArrivalTime ?? ''),
     remarks: original?.remarks ?? '', reason: '',
   });
   const [badDates,  setBadDates]  = useState<BadDates>({ pickup: false, delivery: false });
@@ -1394,7 +1394,7 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, availab
     setBadDates(nextBad);
     setF(next);
     setFormError('');
-    setErrors((p) => ({ ...p, pickedUpDate: '', date: '', eta: '', ...dateErrors(next.pickup, next.delivery, nextBad, false) }));
+    setErrors((p) => ({ ...p, pickedUpDate: '', date: '', scheduledArrivalTime: '', ...dateErrors(next.pickup, next.delivery, nextBad, false) }));
   };
 
   /* Drivers not on another active delivery (plus this one's driver); Available trucks (plus this one's truck) */
@@ -1416,7 +1416,7 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, availab
     if (destinationAreaEnabled && !f.destinationArea.trim()) e.destinationArea = 'Enter a destination area.';
     if (!f.company.trim())        e.company        = 'Enter a client name.';
     Object.assign(e, scheduleErrors({
-      pickup: f.pickup, delivery: f.delivery, pickupTime: f.pickupTime, eta: f.eta, remarks: f.remarks, bad: badDates,
+      pickup: f.pickup, delivery: f.delivery, pickupTime: f.pickupTime, scheduledArrivalTime: f.scheduledArrivalTime, remarks: f.remarks, bad: badDates,
     }));
     if (!f.reason.trim())                    e.reason = 'Enter the reason for this change.';
     else if (f.reason.trim().length > TEXT_MAX) e.reason = `Reason can be at most ${TEXT_MAX} characters.`;
@@ -1433,7 +1433,7 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, availab
       destinationArea: f.destinationArea.trim(),
       company: f.company.trim(), pickupLocation: f.pickupLocation.trim(),
       pickupTime: time24ToDisplay(f.pickupTime), pickedUpDate: isoToDisplay(f.pickup),
-      eta: time24ToDisplay(f.eta), deliveryDate: isoToDisplay(f.delivery),
+      scheduledArrivalTime: time24ToDisplay(f.scheduledArrivalTime), deliveryDate: isoToDisplay(f.delivery),
       remarks: f.remarks.trim(),
     };
     const before: Required<AssignmentEdit> = {
@@ -1441,7 +1441,7 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, availab
       destinationArea: base.destinationArea ?? '',
       company: base.company, pickupLocation: base.pickupLocation,
       pickupTime: base.pickupTime, pickedUpDate: base.pickedUpDate,
-      eta: base.eta, deliveryDate: base.deliveryDate, remarks: base.remarks,
+      scheduledArrivalTime: base.scheduledArrivalTime, deliveryDate: base.deliveryDate, remarks: base.remarks,
     };
     const changes: AssignmentEdit & AssignmentLocationEdit = Object.fromEntries(
       (Object.keys(next) as (keyof AssignmentEdit)[]).filter((k) => next[k] !== before[k]).map((k) => [k, next[k]]),
@@ -1598,7 +1598,7 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, availab
             <div>
               <FieldLabel required>Pick Up Time</FieldLabel>
               <TimeField value={f.pickupTime}
-                onChange={(v) => { set('pickupTime', v); setErrors((p) => ({ ...p, eta: '' })); }}
+                onChange={(v) => { set('pickupTime', v); setErrors((p) => ({ ...p, scheduledArrivalTime: '' })); }}
                 hasError={!!errors.pickupTime} />
               {errText('pickupTime')}
             </div>
@@ -1612,9 +1612,9 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, availab
               {errText('date')}
             </div>
             <div>
-              <FieldLabel required>ETA</FieldLabel>
-              <TimeField value={f.eta} onChange={(v) => set('eta', v)} hasError={!!errors.eta} />
-              {errText('eta')}
+              <FieldLabel required>Scheduled Time of Arrival (STA)</FieldLabel>
+              <TimeField value={f.scheduledArrivalTime} onChange={(v) => set('scheduledArrivalTime', v)} hasError={!!errors.scheduledArrivalTime} />
+              {errText('scheduledArrivalTime')}
             </div>
           </div>
 
@@ -1856,7 +1856,7 @@ export default function DriversManagement({
   const [taskPickupLocation, setTaskPickupLocation] = useState('');
   /* Native time inputs → 24-hour "HH:MM" strings */
   const [taskPickupTime,  setTaskPickupTime]  = useState('');
-  const [taskEta,         setTaskEta]         = useState('');
+  const [taskScheduledArrivalTime,         setTaskScheduledArrivalTime]         = useState('');
   const [taskErrors,      setTaskErrors]      = useState<Record<string, string>>({});
   const [taskBadDates,    setTaskBadDates]    = useState<BadDates>({ pickup: false, delivery: false });
   const [taskSaving, setTaskSaving] = useState(false);
@@ -1866,7 +1866,7 @@ export default function DriversManagement({
     originArea: taskFrom, pickupLocation: taskPickupLocation,
     destinationArea: taskDestinationArea, deliveryLocation: taskTo,
     company: taskCompany, pickupDate: taskPickedUpDate, deliveryDate: taskDate,
-    pickupTime: taskPickupTime, eta: taskEta, remarks: taskRemarks,
+    pickupTime: taskPickupTime, scheduledArrivalTime: taskScheduledArrivalTime, remarks: taskRemarks,
     pickupDateInvalid: taskBadDates.pickup, deliveryDateInvalid: taskBadDates.delivery,
   });
 
@@ -1907,7 +1907,7 @@ export default function DriversManagement({
     setTaskFrom(''); setTaskTo(''); setTaskDestinationArea('');
     setTaskCompany(''); setTaskDate(''); setTaskPickedUpDate(''); setTaskRemarks('');
     setTaskPickupLocation('');
-    setTaskPickupTime(''); setTaskEta('');
+    setTaskPickupTime(''); setTaskScheduledArrivalTime('');
     setTaskErrors({}); setTaskBadDates({ pickup: false, delivery: false });
   };
 
@@ -1924,7 +1924,7 @@ export default function DriversManagement({
     const delivery = which === 'delivery' ? v : taskDate;
     setTaskBadDates(nextBad);
     if (which === 'pickup') setTaskPickedUpDate(v); else setTaskDate(v);
-    setTaskErrors((p) => ({ ...p, pickedUpDate: '', date: '', eta: '', ...dateErrors(pickup, delivery, nextBad, false) }));
+    setTaskErrors((p) => ({ ...p, pickedUpDate: '', date: '', scheduledArrivalTime: '', ...dateErrors(pickup, delivery, nextBad, false) }));
   };
 
   /* ── Step 1: Assignment info ── */
@@ -1947,7 +1947,7 @@ export default function DriversManagement({
     if (isViewOnly || taskSavingRef.current) return;
     /* Same rules as the live check, re-run on submit (typed dates skip the calendar's limits) */
     const e = scheduleErrors({
-      pickup: taskPickedUpDate, delivery: taskDate, pickupTime: taskPickupTime, eta: taskEta,
+      pickup: taskPickedUpDate, delivery: taskDate, pickupTime: taskPickupTime, scheduledArrivalTime: taskScheduledArrivalTime,
       remarks: taskRemarks, bad: taskBadDates,
     });
 
@@ -1972,7 +1972,7 @@ export default function DriversManagement({
           deliveryLocation: taskTo.trim(),
           pickupTime: time24ToDisplay(taskPickupTime),
           pickedUpDate: isoToDisplay(taskPickedUpDate),
-          eta: time24ToDisplay(taskEta),
+          scheduledArrivalTime: time24ToDisplay(taskScheduledArrivalTime),
           deliveryDate: isoToDisplay(taskDate),
           remarks: taskRemarks.trim(),
         });
@@ -2799,8 +2799,8 @@ export default function DriversManagement({
                   <div>
                     <FieldLabel required>Pick Up Time</FieldLabel>
                     <TimeField value={taskPickupTime}
-                      /* Also clears any ETA-ordering error, which pickup time feeds into */
-                      onChange={(v) => { setTaskPickupTime(v); setTaskErrors((p) => ({ ...p, pickupTime: '', eta: '' })); }}
+                      /* Also clears any Scheduled Time of Arrival (STA)-ordering error, which pickup time feeds into */
+                      onChange={(v) => { setTaskPickupTime(v); setTaskErrors((p) => ({ ...p, pickupTime: '', scheduledArrivalTime: '' })); }}
                       hasError={!!taskErrors.pickupTime}
                     />
                     {taskErrors.pickupTime && <p className="text-xs text-red-500 mt-1">{taskErrors.pickupTime}</p>}
@@ -2822,13 +2822,13 @@ export default function DriversManagement({
                       : <p className="text-[12px] text-muted-foreground mt-1.5">Target delivery date</p>}
                   </div>
                   <div>
-                    <FieldLabel required>ETA</FieldLabel>
-                    <TimeField value={taskEta}
-                      onChange={(v) => { setTaskEta(v); setTaskErrors((p) => ({ ...p, eta: '' })); }}
-                      hasError={!!taskErrors.eta}
+                    <FieldLabel required>Scheduled Time of Arrival (STA)</FieldLabel>
+                    <TimeField value={taskScheduledArrivalTime}
+                      onChange={(v) => { setTaskScheduledArrivalTime(v); setTaskErrors((p) => ({ ...p, scheduledArrivalTime: '' })); }}
+                      hasError={!!taskErrors.scheduledArrivalTime}
                     />
-                    {taskErrors.eta
-                      ? <p className="text-xs text-red-500 mt-1">{taskErrors.eta}</p>
+                    {taskErrors.scheduledArrivalTime
+                      ? <p className="text-xs text-red-500 mt-1">{taskErrors.scheduledArrivalTime}</p>
                       : <p className="text-[12px] text-muted-foreground mt-1.5">Estimated Time of Arrival</p>}
                   </div>
                 </div>

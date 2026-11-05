@@ -44,7 +44,7 @@ declare
   base   jsonb := jsonb_build_object(
     'destination', 'Makati City → Pasay City', 'destination_area', 'Pasay City', 'company', 'Dispatch test',
     'pickup_location', 'Makati warehouse', 'delivery_location', 'Pasay City',
-    'pickup_time', '09:00 AM', 'picked_up_date', 'Oct 22, 2026', 'eta', '01:00 PM',
+    'pickup_time', '09:00 AM', 'picked_up_date', 'Oct 22, 2026', 'scheduled_arrival_time', '01:00 PM',
     'delivery_date', 'Oct 22, 2026', 'remarks', '  Fragile  ');
   v_id   text;
   v_label text;
@@ -110,8 +110,8 @@ begin
   if err is distinct from 'required_field: destination_area' then raise exception 'DISPATCH FAIL: blank area gave %', coalesce(err, 'success'); end if;
   err := null; begin perform public.dispatch_assignment((base || jsonb_build_object('driver_id', d1, 'truck_id', t1)) || '{"state": "completed"}'); exception when others then err := sqlerrm; end;
   if err is distinct from 'field_not_allowed: state' then raise exception 'DISPATCH FAIL: extra field gave %', coalesce(err, 'success'); end if;
-  err := null; begin perform public.dispatch_assignment((base || jsonb_build_object('driver_id', d1, 'truck_id', t1)) || '{"eta": 5}'); exception when others then err := sqlerrm; end;
-  if err is distinct from 'invalid_value: eta' then raise exception 'DISPATCH FAIL: number value gave %', coalesce(err, 'success'); end if;
+  err := null; begin perform public.dispatch_assignment((base || jsonb_build_object('driver_id', d1, 'truck_id', t1)) || '{"scheduled_arrival_time": 5}'); exception when others then err := sqlerrm; end;
+  if err is distinct from 'invalid_value: scheduled_arrival_time' then raise exception 'DISPATCH FAIL: number value gave %', coalesce(err, 'success'); end if;
   err := null; begin perform public.dispatch_assignment((base || jsonb_build_object('driver_id', d1, 'truck_id', t1)) || jsonb_build_object('remarks', repeat('x', 151))); exception when others then err := sqlerrm; end;
   if err is distinct from 'remarks_too_long' then raise exception 'DISPATCH FAIL: long remarks gave %', coalesce(err, 'success'); end if;
   err := null; begin perform public.dispatch_assignment((base || jsonb_build_object('driver_id', 'DR-DISPTEST-NOPE', 'truck_id', t1))); exception when others then err := sqlerrm; end;

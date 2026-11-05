@@ -418,7 +418,7 @@ function assignmentFromRow(r: Row, docs: Row[], photos: Row[], delays: Row[], is
     pickupLocation: r.pickup_location ?? '', pickupTime: r.pickup_time ?? '', pickedUpDate: r.picked_up_date ?? '',
     /* REQ-005 exact stops — null on older assignments (and before the migration is applied) */
     ...locationFieldsFromRow(r),
-    eta: r.eta ?? '', ata: r.ata ?? '', deliveryDate: r.delivery_date ?? '', remarks: r.remarks ?? '',
+    scheduledArrivalTime: r.scheduled_arrival_time ?? '', ata: r.ata ?? '', deliveryDate: r.delivery_date ?? '', remarks: r.remarks ?? '',
     taskStatus: r.task_status, assignedAt: r.assigned_at ?? '',
     operationalStage: r.operational_stage ?? null,
     pickupArrivedAt: r.pickup_arrived_at ?? null,
@@ -656,7 +656,7 @@ function flatten(d: AdminData): Flat {
       pickup_location: a.pickupLocation ?? '', pickup_time: a.pickupTime ?? '', picked_up_date: a.pickedUpDate ?? '',
       /* REQ-005: only sent when present and valid — rows without exact stops are unchanged */
       ...locationColumnsForRow(a),
-      eta: a.eta ?? '', ata: a.ata ?? '', delivery_date: a.deliveryDate ?? '', remarks: a.remarks ?? '',
+      scheduled_arrival_time: a.scheduledArrivalTime ?? '', ata: a.ata ?? '', delivery_date: a.deliveryDate ?? '', remarks: a.remarks ?? '',
       task_status: a.taskStatus, assigned_at: a.assignedAt ?? '',
       issue_reason: a.issueReason ?? null, driver_acknowledged_at: a.driverAcknowledgedAt ?? null,
       state, completed_at: completedAt ?? null,
@@ -904,7 +904,7 @@ export async function verifyOwnPassword(password: string): Promise<void> {
 /* Editable fields, in the stored (display) formats the rest of the app uses */
 export interface AssignmentEdit {
   driverId?: string; truckId?: string; destination?: string; destinationArea?: string; company?: string; pickupLocation?: string;
-  pickupTime?: string; pickedUpDate?: string; eta?: string; deliveryDate?: string; remarks?: string;
+  pickupTime?: string; pickedUpDate?: string; scheduledArrivalTime?: string; deliveryDate?: string; remarks?: string;
 }
 /* REQ-005 exact stops — kept separate so existing `Required<AssignmentEdit>` form state
    is unaffected. Send latitude + longitude together (numbers, or both null to clear).
@@ -918,7 +918,7 @@ const EDIT_COLUMNS: Record<keyof (AssignmentEdit & AssignmentLocationEdit), stri
   driverId: 'driver_id', truckId: 'truck_id', destination: 'destination',
   destinationArea: 'destination_area', company: 'company',
   pickupLocation: 'pickup_location', pickupTime: 'pickup_time', pickedUpDate: 'picked_up_date',
-  eta: 'eta', deliveryDate: 'delivery_date', remarks: 'remarks',
+  scheduledArrivalTime: 'scheduled_arrival_time', deliveryDate: 'delivery_date', remarks: 'remarks',
   deliveryLocation: 'delivery_location',
   pickupLatitude: 'pickup_latitude', pickupLongitude: 'pickup_longitude',
   deliveryLatitude: 'delivery_latitude', deliveryLongitude: 'delivery_longitude',
@@ -973,12 +973,12 @@ export async function cancelAssignment(id: string, reason: string, password: str
 export interface NewAssignment {
   driverId: string; truckId: string; destination: string; destinationArea: string; company: string;
   pickupLocation: string; deliveryLocation?: string; pickupTime?: string; pickedUpDate?: string;
-  eta?: string; deliveryDate?: string; remarks?: string;
+  scheduledArrivalTime?: string; deliveryDate?: string; remarks?: string;
 }
 const DISPATCH_COLUMNS: Record<keyof NewAssignment, string> = {
   driverId: 'driver_id', truckId: 'truck_id', destination: 'destination', destinationArea: 'destination_area',
   company: 'company', pickupLocation: 'pickup_location', deliveryLocation: 'delivery_location',
-  pickupTime: 'pickup_time', pickedUpDate: 'picked_up_date', eta: 'eta', deliveryDate: 'delivery_date', remarks: 'remarks',
+  pickupTime: 'pickup_time', pickedUpDate: 'picked_up_date', scheduledArrivalTime: 'scheduled_arrival_time', deliveryDate: 'delivery_date', remarks: 'remarks',
 };
 
 export async function dispatchAssignment(input: NewAssignment): Promise<string> {

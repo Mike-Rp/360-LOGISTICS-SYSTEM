@@ -95,7 +95,7 @@ export interface Assignment {
   deliveryLongitude?: number | null;
   pickupTime: string;
   pickedUpDate: string;
-  eta: string;
+  scheduledArrivalTime: string;
   ata: string;
   deliveryDate: string;
   remarks: string;

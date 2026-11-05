@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   Truck, X, RefreshCw, UserCheck, CheckCircle2, Shield, KeyRound, Phone,
   Package, Weight, Check, ChevronDown, ClipboardList,
@@ -107,7 +107,9 @@ function ModalShell({ title, onClose, layer = false, wide = false, children, foo
 /* ═══════════════════════════════════════════════════════
    Register Driver Modal
    ═══════════════════════════════════════════════════════ */
-export function RegisterDriverModal({ drivers = [], onServerChange, onClose, onCreated, layer = false, submissionBlockedReason, onRetryVerification }: {
+const ACCESS_ENDED = 'Your temporary permission has expired or was revoked. You can no longer complete this registration. Please contact your OPM if you still need access.';
+
+export function RegisterDriverModal({ drivers = [], onServerChange, onClose, onCreated, layer = false, submissionBlockedReason, onRetryVerification, temporaryAccessEnded = false, temporaryAccess = false }: {
   /* Existing drivers, used only for the early soft duplicate check — the server
      re-checks live data authoritatively when the driver is actually registered. */
   drivers?: LocalDriver[];
@@ -118,10 +120,15 @@ export function RegisterDriverModal({ drivers = [], onServerChange, onClose, onC
   layer?: boolean;
   submissionBlockedReason?: string;
   onRetryVerification?: () => void;
+  temporaryAccessEnded?: boolean;
+  temporaryAccess?: boolean;
 }) {
   const [surname,      setSurname]      = useState('');
-  const submissionBlockedRef = useRef(submissionBlockedReason);
-  submissionBlockedRef.current = submissionBlockedReason;
+  const [accessEnded, setAccessEnded] = useState(false);
+  const ended = temporaryAccessEnded || accessEnded;
+  const blockedReason = ended ? ACCESS_ENDED : submissionBlockedReason;
+  const submissionBlockedRef = useRef(blockedReason);
+  submissionBlockedRef.current = blockedReason;
   const [firstName,    setFirstName]    = useState('');
   const [phoneNumber,  setPhoneNumber]  = useState('');
   const [phoneError,   setPhoneError]   = useState('');
@@ -130,6 +137,9 @@ export function RegisterDriverModal({ drivers = [], onServerChange, onClose, onC
   const [registered,   setRegistered]   = useState(false);
   const [registering,  setRegistering]  = useState(false);
   const [registerError, setRegisterError] = useState('');
+  const submittingRef = useRef(false);
+  useEffect(() => { if (temporaryAccessEnded) { setAccessEnded(true); setGeneratedPin(''); } }, [temporaryAccessEnded]);
+  useEffect(() => { if (accessEnded) setGeneratedPin(''); }, [accessEnded]);
 
   /* Full name as it will be stored, so the duplicate check compares like with like. */
   const fullName = () => `${firstName.trim()} ${surname.trim()}`;
@@ -209,16 +219,18 @@ export function RegisterDriverModal({ drivers = [], onServerChange, onClose, onC
   };
 
   const handleGeneratePin = () => {
+    if (submissionBlockedRef.current) return;
     if (!validateDriver()) return;
     setGeneratedPin(generatePin());
   };
 
   const handleRegisterDriver = async () => {
-    if (submissionBlockedRef.current) return;
+    if (submissionBlockedRef.current || submittingRef.current) return;
     if (!validateDriver()) return;
     if (!generatedPin) { setNameError('Please generate a PIN first.'); return; }
 
     setRegisterError('');
+    submittingRef.current = true;
     setRegistering(true);
     try {
       let newId = '';
@@ -232,8 +244,10 @@ export function RegisterDriverModal({ drivers = [], onServerChange, onClose, onC
       });
       setRegistered(true);
     } catch (err) {
-      setRegisterError(err instanceof AssignmentActionError ? driverErrorMessage(err.code) : 'Could not register this driver. Please try again.');
+      if (temporaryAccess && err instanceof AssignmentActionError && err.code === 'not_authorized') { setAccessEnded(true); setGeneratedPin(''); }
+      else setRegisterError(err instanceof AssignmentActionError ? driverErrorMessage(err.code) : err instanceof Error && err.message === 'coverage_not_verified' ? 'Temporary access could not be verified. Please retry the coverage check.' : 'Could not register this driver. Please try again.');
     } finally {
+      submittingRef.current = false;
       setRegistering(false);
     }
   };
@@ -304,17 +318,17 @@ export function RegisterDriverModal({ drivers = [], onServerChange, onClose, onC
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
               <div className={`min-w-0 flex-1 px-4 py-3 rounded-xl border bg-muted/20 flex items-center gap-3 ${generatedPin ? 'border-primary/30' : 'border-border'}`}>
                 <KeyRound className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                {generatedPin
+                {generatedPin && !ended
                   ? <span className="font-mono text-lg tracking-[0.35em] font-semibold text-primary">{generatedPin}</span>
                   : <span className="text-sm text-muted-foreground italic">Click to generate</span>}
               </div>
-              <button onClick={handleGeneratePin}
-                className="flex w-full items-center justify-center gap-2 px-4 py-3 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors text-sm font-medium whitespace-nowrap sm:w-auto">
+              <button onClick={handleGeneratePin} disabled={!!blockedReason || registering}
+                className="flex w-full items-center justify-center gap-2 px-4 py-3 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors text-sm font-medium whitespace-nowrap sm:w-auto disabled:opacity-50">
                 <RefreshCw className="w-4 h-4" />
                 {generatedPin ? 'Regenerate' : 'Generate PIN'}
               </button>
             </div>
-            {generatedPin && (
+            {generatedPin && !ended && (
               <p className="text-xs text-amber-600 mt-1.5 flex items-center gap-1">
                 <Shield className="w-3 h-3" /> Share this PIN with the driver privately.
               </p>
@@ -322,14 +336,14 @@ export function RegisterDriverModal({ drivers = [], onServerChange, onClose, onC
           </div>
 
           {registerError && <p role="alert" className="text-xs font-medium text-red-600">{registerError}</p>}
-          {submissionBlockedReason && <p role="status" className="text-sm text-muted-foreground">{submissionBlockedReason}</p>}
-          {submissionBlockedReason && onRetryVerification && <button type="button" onClick={onRetryVerification} className="min-h-10 rounded-lg px-2 text-sm font-medium text-primary underline focus-visible:outline-2 focus-visible:outline-primary">Retry coverage check</button>}
+          {blockedReason && <div role="status" className="text-sm text-muted-foreground">{ended && <strong className="block text-foreground">Temporary Access Ended</strong>}{blockedReason}</div>}
+          {!ended && blockedReason && onRetryVerification && <button type="button" onClick={onRetryVerification} className="min-h-10 rounded-lg px-2 text-sm font-medium text-primary underline focus-visible:outline-2 focus-visible:outline-primary">Retry coverage check</button>}
           <div className="flex gap-3 pt-1">
             <button onClick={onClose} disabled={registering}
               className="flex-1 px-4 py-2.5 border border-border rounded-xl hover:bg-accent transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed">
               Cancel
             </button>
-            <button onClick={handleRegisterDriver} disabled={!generatedPin || registering || !!submissionBlockedReason}
+            <button onClick={handleRegisterDriver} disabled={!generatedPin || registering || !!blockedReason}
               className="flex-1 px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
               <UserCheck className="w-4 h-4" /> {registering ? 'Registering…' : 'Register Driver'}
             </button>
@@ -351,7 +365,7 @@ export function RegisterDriverModal({ drivers = [], onServerChange, onClose, onC
             </p>
             <p className="text-xs text-amber-600">Surname: <strong>{surname}</strong></p>
             <p className="text-xs text-amber-600">First Name: <strong>{firstName}</strong></p>
-            <p className="text-xs text-amber-600">PIN: <strong className="font-mono tracking-widest">{generatedPin}</strong></p>
+            {!ended && <p className="text-xs text-amber-600">PIN: <strong className="font-mono tracking-widest">{generatedPin}</strong></p>}
           </div>
           <button onClick={onClose}
             className="w-full px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors text-sm font-medium">
@@ -368,7 +382,7 @@ export function RegisterDriverModal({ drivers = [], onServerChange, onClose, onC
    ═══════════════════════════════════════════════════════ */
 const TRUCK_STEP_NAMES = ['Plate number', 'Classification', 'Review'] as const;
 
-export function RegisterTruckModal({ trucks, onServerChange, onClose, onCreated, layer = false, submissionBlockedReason, onRetryVerification }: {
+export function RegisterTruckModal({ trucks, onServerChange, onClose, onCreated, layer = false, submissionBlockedReason, onRetryVerification, temporaryAccessEnded = false, temporaryAccess = false }: {
   /* Existing trucks, used only for the early soft duplicate-plate check at step 1 — the
      server re-checks live data authoritatively when the truck is actually registered. */
   trucks: LocalTruck[];
@@ -378,10 +392,17 @@ export function RegisterTruckModal({ trucks, onServerChange, onClose, onCreated,
   layer?: boolean;
   submissionBlockedReason?: string;
   onRetryVerification?: () => void;
+  temporaryAccessEnded?: boolean;
+  temporaryAccess?: boolean;
 }) {
   const [step,                setStep]                = useState(1);
-  const submissionBlockedRef = useRef(submissionBlockedReason);
-  submissionBlockedRef.current = submissionBlockedReason;
+  const [accessEnded, setAccessEnded] = useState(false);
+  const ended = temporaryAccessEnded || accessEnded;
+  const blockedReason = ended ? ACCESS_ENDED : submissionBlockedReason;
+  const submissionBlockedRef = useRef(blockedReason);
+  submissionBlockedRef.current = blockedReason;
+  const submittingRef = useRef(false);
+  useEffect(() => { if (temporaryAccessEnded) setAccessEnded(true); }, [temporaryAccessEnded]);
   const [plateLetters,        setPlateLetters]        = useState('');
   const [plateNumbers,        setPlateNumbers]        = useState('');
   const [plateError,          setPlateError]          = useState('');
@@ -458,10 +479,11 @@ export function RegisterTruckModal({ trucks, onServerChange, onClose, onCreated,
   };
 
   const handleRegisterTruck = async () => {
-    if (submissionBlockedRef.current) return;
+    if (submissionBlockedRef.current || submittingRef.current) return;
     if (!selectedClass) { setClassError('Please select a truck classification.'); setStep(2); return; }
     const plate = `${plateLetters} ${plateNumbers}`;
     setRegisterError('');
+    submittingRef.current = true;
     setRegistering(true);
     try {
       let newId = '';
@@ -472,8 +494,10 @@ export function RegisterTruckModal({ trucks, onServerChange, onClose, onCreated,
       onCreated?.({ id: newId, plateNumber: plate, status: 'Available', classification: truckClassification, capacity: truckCapacity });
       setTruckRegistered(true);
     } catch (err) {
-      setRegisterError(err instanceof AssignmentActionError ? truckErrorMessage(err.code) : 'Could not register this truck. Please try again.');
+      if (temporaryAccess && err instanceof AssignmentActionError && err.code === 'not_authorized') setAccessEnded(true);
+      else setRegisterError(err instanceof AssignmentActionError ? truckErrorMessage(err.code) : err instanceof Error && err.message === 'coverage_not_verified' ? 'Temporary access could not be verified. Please retry the coverage check.' : 'Could not register this truck. Please try again.');
     } finally {
+      submittingRef.current = false;
       setRegistering(false);
     }
   };
@@ -513,8 +537,8 @@ export function RegisterTruckModal({ trucks, onServerChange, onClose, onCreated,
   const wizardFooter = (
     <div>
       {registerError && <p role="alert" className="mb-2 text-xs font-medium text-red-600">{registerError}</p>}
-      {submissionBlockedReason && <p role="status" className="mb-2 text-sm text-muted-foreground">{submissionBlockedReason}</p>}
-      {submissionBlockedReason && onRetryVerification && <button type="button" onClick={onRetryVerification} className="mb-2 min-h-10 rounded-lg px-2 text-sm font-medium text-primary underline focus-visible:outline-2 focus-visible:outline-primary">Retry coverage check</button>}
+      {blockedReason && <div role="status" className="mb-2 text-sm text-muted-foreground">{ended && <strong className="block text-foreground">Temporary Access Ended</strong>}{blockedReason}</div>}
+      {!ended && blockedReason && onRetryVerification && <button type="button" onClick={onRetryVerification} className="mb-2 min-h-10 rounded-lg px-2 text-sm font-medium text-primary underline focus-visible:outline-2 focus-visible:outline-primary">Retry coverage check</button>}
       <div className="flex gap-3">
       <button
         onClick={step === 1 ? onClose : () => setStep((s) => s - 1)}
@@ -525,7 +549,7 @@ export function RegisterTruckModal({ trucks, onServerChange, onClose, onCreated,
       </button>
       <button
         onClick={step === 3 ? handleRegisterTruck : handleNext}
-        disabled={(step === 1 && !plateIsValid) || registering || (step === 3 && !!submissionBlockedReason)}
+        disabled={(step === 1 && !plateIsValid) || registering || (step === 3 && !!blockedReason)}
         className="flex-1 px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
       >
         {step === 3 ? <><Check className="w-4 h-4" /> {registering ? 'Registering…' : 'Register truck'}</> : 'Next'}

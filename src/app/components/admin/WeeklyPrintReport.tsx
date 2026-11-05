@@ -10,7 +10,7 @@ interface WeeklyPrintRow {
   driver: string;
   truck: string;
   route: string;
-  eta: string;
+  scheduledArrivalTime: string;
   ata: string;
   status: string;
 }
@@ -73,18 +73,18 @@ export default function WeeklyPrintReport({ rows, summary, weekStart, weekEnd, g
           <colgroup>
             <col className="wpr-col-date" /><col className="wpr-col-asn" />
             <col className="wpr-col-driver" /><col className="wpr-col-truck" />
-            <col className="wpr-col-route" /><col className="wpr-col-eta" />
+            <col className="wpr-col-route" /><col className="wpr-col-scheduledArrivalTime" />
             <col className="wpr-col-ata" /><col className="wpr-col-status" />
           </colgroup>
           <thead><tr>
             <th>Date</th><th>ASN</th><th>Driver</th><th>Truck #</th>
-            <th>Route</th><th>ETA</th><th>ATA</th><th>Status</th>
+            <th>Route</th><th>STA</th><th>ATA</th><th>Status</th>
           </tr></thead>
           <tbody>
             {rows.length ? rows.map((row, index) => (
               <tr key={`${row.asn}-${index}`}>
                 <td>{row.date}</td><td>{row.asn}</td><td>{row.driver}</td><td>{row.truck}</td>
-                <td>{row.route}</td><td>{row.eta}</td><td>{row.ata}</td>
+                <td>{row.route}</td><td>{row.scheduledArrivalTime}</td><td>{row.ata}</td>
                 <td className={row.status === 'Completed' ? 'wpr-completed' : row.status === 'Delayed' ? 'wpr-delayed' : ''}>{row.status}</td>
               </tr>
             )) : <tr><td colSpan={8}>No delivery records are included.</td></tr>}

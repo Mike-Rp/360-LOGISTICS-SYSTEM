@@ -305,7 +305,7 @@ test('CSR page distinguishes verification failure from confirmed no access', asy
 });
 
 for (const [tab, button, modal] of [['Drivers', 'Register Driver', 'driver-modal'], ['Trucks', 'Register Truck', 'truck-modal']]) {
-  test(`an open ${tab} form pauses submission during verification without changing confirmed-expiry behavior`, async (t) => {
+  test(`an open ${tab} form remains open and blocked when access is unverified or ends`, async (t) => {
     const app = setup(t, 'accounts'); await app.resolve(0, active());
     if (tab === 'Trucks') app.click('Trucks');
     app.click(button);
@@ -319,6 +319,7 @@ for (const [tab, button, modal] of [['Drivers', 'Register Driver', 'driver-modal
     await app.resolve(2, active());
     assert.equal(app.find(modal).props.submissionBlockedReason, undefined);
     app.focus(); await app.resolve(3, empty);
-    assert.equal(app.find(modal), undefined, 'confirmed loss of access keeps the pre-REQ03 behavior');
+    assert.equal(app.find(modal).props.temporaryAccessEnded, true);
+    assert.equal(app.find(modal).props.temporaryAccess, true);
   });
 }

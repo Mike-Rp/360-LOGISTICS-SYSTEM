@@ -189,7 +189,7 @@
   .wpr-col-driver { width: 13%; }
   .wpr-col-truck { width: 10%; }
   .wpr-col-route { width: 28%; }
-  .wpr-col-eta { width: 9%; }
+  .wpr-col-scheduledArrivalTime { width: 9%; }
   .wpr-col-ata { width: 9%; }
   .wpr-col-status { width: 11%; }
 

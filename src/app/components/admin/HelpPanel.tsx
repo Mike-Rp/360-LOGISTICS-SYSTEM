@@ -74,7 +74,7 @@ const TOPICS: Topic[] = [
       { title: 'Go to Dispatch', body: 'Click "Dispatch" in the sidebar — this is the main dispatch board.' },
       { title: 'Click "Dispatch Truck"', body: 'The green button opens a 2-step assignment form.' },
       { title: 'Step 1 — Driver, truck & route', body: 'Choose an available driver, an available truck, then fill in Origin, Destination, Client, and Pickup Location.', tip: 'Only drivers and trucks not currently assigned appear in the dropdowns.' },
-      { title: 'Step 2 — Schedule & notes', body: 'Set Delivery Date, Pickup Date, Pickup Time, ETA, and any remarks.' },
+      { title: 'Step 2 — Schedule & notes', body: 'Set Delivery Date, Pickup Date, Pickup Time, Scheduled Time of Arrival (STA), and any remarks.' },
       { title: 'Confirm', body: 'Click "Dispatch Truck". The driver sees the job on their phone.' },
     ],
   },
@@ -185,7 +185,7 @@ const TOPICS: Topic[] = [
     iconBg: 'bg-orange-100',
     tags: ['driver', 'status', 'photo', 'document'],
     steps: [
-      { title: 'View assigned task', body: 'After login, the current assignment shows at the top: pickup, destination, client, ETA.' },
+      { title: 'View assigned task', body: 'After login, the current assignment shows at the top: pickup, destination, client, Scheduled Time of Arrival (STA).' },
       { title: 'Update status', body: 'Tap "Update Status" and select the next step: Picked Up → In Transit → Delivered. Each step may prompt for a photo.', tip: 'Keep updates timely — admins monitor these in real time.' },
       { title: 'Upload documents', body: 'Go to the Documents section of the task, tap each type, and upload a clear photo of the signed document.', warning: 'Blurry or incomplete photos will be rejected — resubmission is needed.' },
       { title: 'Report a delay or issue', body: 'Use "Report Delay" or "Report Issue". Select a reason and add details — admin is notified immediately.' },

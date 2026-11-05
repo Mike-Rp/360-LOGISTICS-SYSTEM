@@ -302,6 +302,7 @@ export default function AdminDashboard({
       case 'Accounts':
         return (
           <AccountsPanel
+            key={staffProfile?.id ?? adminEmail ?? ''}
             drivers={drivers}   setDrivers={setDrivers}
             trucks={trucks}     setTrucks={setTrucks}
             assignments={assignments}

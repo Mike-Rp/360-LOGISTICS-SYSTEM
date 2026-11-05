@@ -28,7 +28,7 @@ const UTILIZATION_PAGE_SIZE = 10;
 /* ─── Types ───────────────────────────────────────── */
 interface WeeklyRow {
   date: string; asn: string; driver: string; truck: string; route: string;
-  client: string; pickupTime: string; eta: string; ata: string;
+  client: string; pickupTime: string; scheduledArrivalTime: string; ata: string;
   status: 'On Time' | 'Delayed' | 'Completed' | 'Assigned' | 'Picked Up' | 'In Transit';
 }
 interface MonthlyRow {
@@ -144,7 +144,7 @@ function buildWeeklyRows(assignments: Assignment[], completed: CompletedTask[], 
       driver: c.driverName, truck: c.truckPlate,
       route: getAssignmentRoute(c),
       client: c.company,
-      pickupTime: c.pickupTime || '—', eta: c.eta || '—', ata: arrivalTime(c),
+      pickupTime: c.pickupTime || '—', scheduledArrivalTime: c.scheduledArrivalTime || '—', ata: arrivalTime(c),
       status: isDelayed ? 'Delayed' : 'Completed',
     });
   }
@@ -163,7 +163,7 @@ function buildWeeklyRows(assignments: Assignment[], completed: CompletedTask[], 
       driver: a.driverName, truck: a.truckPlate,
       route: getAssignmentRoute(a),
       client: a.company,
-      pickupTime: a.pickupTime || '—', eta: a.eta || '—', ata: arrivalTime(a),
+      pickupTime: a.pickupTime || '—', scheduledArrivalTime: a.scheduledArrivalTime || '—', ata: arrivalTime(a),
       status: isDelayed ? 'Delayed' : (statusMap[a.taskStatus] ?? 'Assigned'),
     });
   }
@@ -547,8 +547,8 @@ function PreviewModal({
   const handleExportCSV = () => {
     if (reportKey === 'weekly') {
       downloadCSV('weekly_report.csv',
-        ['Date','Driver','Truck #','Route','Client','Pickup Time','ETA','ATA','Status'],
-        weeklyRows.map((r) => [r.date,r.driver,r.truck,r.route,r.client,r.pickupTime,r.eta,r.ata,r.status]),
+        ['Date','Driver','Truck #','Route','Client','Pickup Time','STA','ATA','Status'],
+        weeklyRows.map((r) => [r.date,r.driver,r.truck,r.route,r.client,r.pickupTime,r.scheduledArrivalTime,r.ata,r.status]),
       );
     } else if (reportKey === 'monthly') {
       downloadCSV('monthly_report.csv',
@@ -705,7 +705,7 @@ function PreviewModal({
                   </colgroup>
                   <thead className={`${tableHead} sticky top-0 bg-muted/40 border-b border-border z-10`}>
                     <tr>
-                      {['Date','Driver','Truck #','Route','Client','Pickup Time','ETA','ATA','Status'].map((h) => (
+                      {['Date','Driver','Truck #','Route','Client','Pickup Time','STA','ATA','Status'].map((h) => (
                         <th key={h} className="text-left px-2 py-3 text-[11px] leading-tight font-semibold text-muted-foreground tracking-wide break-words">{h}</th>
                       ))}
                     </tr>
@@ -741,8 +741,8 @@ function PreviewModal({
                         <td data-label="Pickup Time" className={tableCell}>
                           <div className="flex min-w-0 items-center gap-1"><Clock className="w-3 h-3 shrink-0 text-muted-foreground" /><span className="min-w-0 break-words xl:whitespace-nowrap">{r.pickupTime}</span></div>
                         </td>
-                        <td data-label="ETA" className={tableCell}>
-                          <div className="flex min-w-0 items-center gap-1"><Timer className="w-3 h-3 shrink-0 text-muted-foreground" /><span className="min-w-0 break-words xl:whitespace-nowrap">{r.eta}</span></div>
+                        <td data-label="STA" className={tableCell}>
+                          <div className="flex min-w-0 items-center gap-1"><Timer className="w-3 h-3 shrink-0 text-muted-foreground" /><span className="min-w-0 break-words xl:whitespace-nowrap">{r.scheduledArrivalTime}</span></div>
                         </td>
                         <td data-label="ATA" className={tableCell}>
                           <div className="flex min-w-0 items-center gap-1"><AlarmClock className="w-3 h-3 shrink-0 text-muted-foreground" /><span className="min-w-0 break-words xl:whitespace-nowrap">{r.ata}</span></div>
@@ -1299,8 +1299,8 @@ export default function Reports({ assignments, completed, cancelled, trucks }: R
     const monthlyRows = buildMonthlyRows(completed);
     if (reportKey === 'weekly') {
       downloadCSV('weekly_report.csv',
-        ['Date','Driver','Truck #','Route','Client','Pickup Time','ETA','ATA','Status'],
-        weeklyRows.map((r) => [r.date,r.driver,r.truck,r.route,r.client,r.pickupTime,r.eta,r.ata,r.status]),
+        ['Date','Driver','Truck #','Route','Client','Pickup Time','STA','ATA','Status'],
+        weeklyRows.map((r) => [r.date,r.driver,r.truck,r.route,r.client,r.pickupTime,r.scheduledArrivalTime,r.ata,r.status]),
       );
     } else if (reportKey === 'monthly') {
       downloadCSV('monthly_report.csv',

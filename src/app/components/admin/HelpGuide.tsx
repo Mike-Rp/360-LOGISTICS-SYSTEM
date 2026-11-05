@@ -121,7 +121,7 @@ const TOPICS: Topic[] = [
       },
       {
         title: 'Step 2 — Set schedule and notes',
-        body: 'Enter the Delivery Date, Pickup Date, Pickup Time, and ETA. Add any special remarks for the driver.',
+        body: 'Enter the Delivery Date, Pickup Date, Pickup Time, and Scheduled Time of Arrival (STA). Add any special remarks for the driver.',
       },
       {
         title: 'Click "Assign Task"',
@@ -272,7 +272,7 @@ const TOPICS: Topic[] = [
     steps: [
       {
         title: 'Log in and view your task',
-        body: 'After logging in, you\'ll see your current assignment at the top of the screen — including pickup location, destination, client, and ETA.',
+        body: 'After logging in, you\'ll see your current assignment at the top of the screen — including pickup location, destination, client, and Scheduled Time of Arrival (STA).',
       },
       {
         title: 'Update your status',

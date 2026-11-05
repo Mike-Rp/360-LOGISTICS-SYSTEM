@@ -14,7 +14,7 @@ import DeliveryTimingBadge from './DeliveryTimingBadge';
 import { getDispatchTimingNotices } from '../../lib/assignmentTiming';
 import { isDashboardDelayedAssignment } from '../../lib/dashboardDelayed';
 import { revealSelectedDeliveryTab } from '../../lib/deliveryTabScroll';
-import { formatOperationalStamp } from '../../lib/assignmentOperational';
+import { formatOperationalStamp, getAdminOperationalProgress } from '../../lib/assignmentOperational';
 import { PaginationFooter, usePagination, useStablePageHeight } from './Pagination';
 import { sortNewestFirst, useLocalAddedHighlight, newRecordHighlight } from '../../lib/recordOrdering';
 import { sortCompletedNewestFirst } from '../../lib/completedOrdering';
@@ -45,6 +45,16 @@ function StatusBadge({ status }: { status: TaskStatus }) {
 }
 
 function AssignmentStatusBadge({ assignment }: { assignment: Assignment }) {
+  const stage = getAdminOperationalProgress(assignment).badge;
+  if (stage) {
+    const color = statusColors[stage as keyof typeof statusColors];
+    return (
+      <span className={`inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-sm font-medium ${color.badge}`}>
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />
+        <span className="min-w-0 break-words">{stage}</span>
+      </span>
+    );
+  }
   const cfg = assignmentDisplayStatusConfig[getAssignmentDisplayStatus(assignment)];
   return (
     <span className={`inline-flex max-w-full items-center gap-1.5 px-2.5 py-1 rounded-full border text-sm font-medium ${cfg.badge}`}>

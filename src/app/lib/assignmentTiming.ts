@@ -1,6 +1,6 @@
 import type { Assignment } from '../data/assignmentTypes';
 
-type TimingAssignment = Pick<Assignment, 'taskStatus' | 'deliveryDate' | 'eta' | 'statusPhotos' | 'unloadingCompletedAt'>;
+type TimingAssignment = Pick<Assignment, 'taskStatus' | 'deliveryDate' | 'scheduledArrivalTime' | 'statusPhotos' | 'unloadingCompletedAt'>;
 type PickupTimingAssignment = Pick<Assignment,
   'taskStatus' | 'pickedUpDate' | 'pickupTime' | 'operationalStage' | 'pickupArrivedAt'
   | 'loadingStartedAt' | 'departedAt' | 'statusPhotos'>;
@@ -188,9 +188,9 @@ export function getDeliveryTimingStatus(assignment: TimingAssignment, now = new 
   if (assignment.taskStatus === 'Cancelled' || assignment.taskStatus === 'Failed / Issue') return null;
   const date = parseDate(assignment.deliveryDate ?? '');
   if (!date) return null;
-  const time = parseTime(assignment.eta ?? '');
+  const time = parseTime(assignment.scheduledArrivalTime ?? '');
   const dateOnly = !time;
-  // Without an ETA, the scheduled date remains on time until the next Manila calendar day.
+  // Without a Scheduled Time of Arrival (STA), the scheduled date remains on time until the next Manila calendar day.
   const deadline = dateOnly
     ? manilaTimestamp(date.year, date.month, date.day + 1, 0, 0)
     : manilaTimestamp(date.year, date.month, date.day, time.hour, time.minute);

@@ -17,7 +17,7 @@ const { isDashboardDelayedAssignment } = load('dashboardDelayed.ts', { './assign
 
 const now = new Date('2026-10-26T02:00:00Z'); // Oct 26, 10 AM Manila
 const assignment = (fields = {}) => ({
-  taskStatus: 'Assigned', deliveryDate: 'Oct 27, 2026', eta: '5:00 PM',
+  taskStatus: 'Assigned', deliveryDate: 'Oct 27, 2026', scheduledArrivalTime: '5:00 PM',
   pickedUpDate: 'Oct 26, 2026', pickupTime: '9:00 AM',
   delayReports: [], statusPhotos: {}, ...fields,
 });

@@ -288,6 +288,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
   const coverageBlock = coverageUnverified
     ? coverage.status === 'error' ? 'Temporary access could not be verified. Retry the coverage check before continuing.' : 'Checking temporary access. Please wait before submitting.'
     : undefined;
+  const registrationAccessEnded = !canManageFleetAccounts && coverage.status === 'success' && !coverage.canRegister;
   const [tab, setTab] = useState<TabView>('Drivers');
   const [driverView, setDriverView] = useState<'active' | 'archived'>('active');
   const [availabilityFilter, setAvailabilityFilter] = useState<AvailabilityFilter>('all');
@@ -1021,9 +1022,11 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
       )}
 
       {/* ════ MODAL: Register Driver ════ */}
-      {showAddDriver && (canRegisterFleet || coverageUnverified) && (
+      {showAddDriver && (
         <RegisterDriverModal
           submissionBlockedReason={coverageBlock}
+          temporaryAccessEnded={registrationAccessEnded}
+          temporaryAccess={!canManageFleetAccounts}
           onRetryVerification={coverage.status === 'error' ? coverage.retry : undefined}
           drivers={drivers}
           onServerChange={onServerChange}
@@ -1033,9 +1036,11 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
       )}
 
       {/* ════ MODAL: Register Truck ════ */}
-      {showAddTruck && (canRegisterFleet || coverageUnverified) && (
+      {showAddTruck && (
         <RegisterTruckModal
           submissionBlockedReason={coverageBlock}
+          temporaryAccessEnded={registrationAccessEnded}
+          temporaryAccess={!canManageFleetAccounts}
           onRetryVerification={coverage.status === 'error' ? coverage.retry : undefined}
           trucks={trucks}
           onServerChange={onServerChange}

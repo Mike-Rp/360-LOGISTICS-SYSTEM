@@ -3024,3 +3024,38 @@ swap on an existing delivery is refused; update replaces note + return; marking 
 period is over by itself; archiving ends the period; the table's own constraints hold for direct writes.
 
 **Not in this version.** Future-dated leave, a driver-app banner, an attendance report by reason.
+
+## [REQ-020] ETA becomes Scheduled Time of Arrival (STA)
+
+**Status: IN PROGRESS (2026-11-05) — migration and tests written locally, not applied; frontend prompt prepared for Codex.**
+
+**Problem.** The system cannot compute an estimated arrival (a distance / maps service is not used, and Google Maps
+would cost too much), and the Mapbox features were removed. The field named "ETA" is typed by the dispatcher, so it is
+a scheduled time, not an estimate. It is also part of the ERD, where `eta` would be misleading.
+
+**Decision.** Rename to **Scheduled Time of Arrival (STA)**: the planned arrival time of day for the delivery, entered
+by the dispatcher; the date stays `delivery_date`; the actual arrival stays `ata`, so reports compare STA with ATA.
+Behaviour is unchanged: the Overdue / Delivered-late checks, the driver's delay prompt, the "cannot be earlier than the
+pickup time" rule and every saved value stay as they are. Column: `assignments.scheduled_arrival_time` (text, not
+null, default `''`), commented in the database for ERD tools.
+
+**Database — `20261105000000_rename_eta_to_scheduled_arrival_time.sql`.** One transaction: safety checks (the old column
+exists, the new name is free, no other function mentions `eta`, `edit_assignment()` / `dispatch_assignment()` are the
+expected versions) → rename → fingerprint of every row's value before and after (the migration aborts if anything
+changed) → re-create `edit_assignment()` and `dispatch_assignment()` with the new name. **Transition:** both functions
+also accept the old key `eta` as `scheduled_arrival_time` (the new key wins if both are sent), so a page that has not
+refreshed keeps working. Past audit entries keep their `eta` key (history is not rewritten); new ones use the new name.
+
+**Tests.** `supabase/tests/scheduled_arrival_time.test.sql` (8 checks): column renamed, no other function mentions
+`eta`, dispatch with the new key / the old key / both, non-text and unknown values refused, edit with the new key / the
+old key / both, no-change / blank / unknown refused, audit row names the new field. `dispatch_complete.test.sql`
+updated for the new key name.
+
+**Frontend (Codex).** Every `eta` / "ETA" becomes `scheduledArrivalTime` / "Scheduled Time of Arrival (STA)" (tables
+and CSV: "STA"): `db.ts` (load, save, dispatch and edit payloads), the Assign and Edit forms and their messages, the
+delivery details, the driver's "Delivery due", Reports / CSV / print, the Help text, saved dispatch drafts, tests.
+
+**Release order.** Apply the migration, run the test, then push the frontend straight after. **Later** (a separate
+migration, after the new build has been live a while): remove the old `eta` alias from both functions.
+
+---

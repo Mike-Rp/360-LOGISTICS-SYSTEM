@@ -141,7 +141,7 @@ const MOCK_DATA: DriverData = {
     destination: 'Industrial Compressor Units × 3', company: 'Apex Manufacturing Ltd.',
     pickupLocation: 'Warehouse A — Bay 4, Industrial Park Rd.',
     deliveryDate: new Date(Date.now() + 86_400_000).toISOString().split('T')[0],
-    pickupTime: '09:00 AM', ata: '02:30 PM', eta: '01:45 PM',
+    pickupTime: '09:00 AM', ata: '02:30 PM', scheduledArrivalTime: '01:45 PM',
     remarks: 'Handle with care. Fragile hydraulic seals inside.',
     taskStatus: 'In Transit' as TaskStatus, delayReports: [], statusPhotos: {}, documents: [],
   } as unknown as Assignment,
@@ -3251,7 +3251,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
                 <DetailRow label={t('task.pickupDate')} value={a.pickedUpDate} />
                 <DetailRow label={t('task.pickupTime')} value={a.pickupTime} />
                 <DetailRow label={t('task.deliveryDate')} value={a.deliveryDate} />
-                <DetailRow label={t('task.deliveryDue')} value={a.ata ?? a.eta} />
+                <DetailRow label={t('task.deliveryDue')} value={a.ata ?? a.scheduledArrivalTime} />
                 <DetailRow label={t('task.instructions')} value={a.remarks} />
               </div>
             </details>

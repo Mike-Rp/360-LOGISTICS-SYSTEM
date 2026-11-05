@@ -9,12 +9,12 @@ const source = ts.transpileModule(readFileSync(join(__dirname, 'dispatchDraft.ts
 }).outputText;
 const moduleUnderTest = { exports: {} };
 new Function('module', 'exports', source)(moduleUnderTest, moduleUnderTest.exports);
-const { hasUnsavedDispatchDetails } = moduleUnderTest.exports;
+const { hasUnsavedDispatchDetails, normalizeDispatchDraft } = moduleUnderTest.exports;
 
 const emptyDraft = () => ({
   driverId: '', truckId: '', originArea: '', pickupLocation: '', destinationArea: '',
   deliveryLocation: '', company: '', pickupDate: '', deliveryDate: '', pickupTime: '',
-  eta: '', remarks: '', pickupDateInvalid: false, deliveryDateInvalid: false,
+  scheduledArrivalTime: '', remarks: '', pickupDateInvalid: false, deliveryDateInvalid: false,
 });
 
 test('opening an empty dispatch form needs no discard confirmation', () => {
@@ -37,4 +37,11 @@ test('restoring edited fields to their initial values clears dirty state', () =>
   draft.driverId = '';
   draft.pickupDate = '';
   assert.equal(hasUnsavedDispatchDetails(draft), false);
+});
+
+test('an old draft keeps its scheduled arrival time when normalized', () => {
+  const { scheduledArrivalTime, ...fields } = emptyDraft();
+  const oldDraft = { ...fields, eta: '14:30' };
+  assert.equal(normalizeDispatchDraft(oldDraft).scheduledArrivalTime, '14:30');
+  assert.equal(hasUnsavedDispatchDetails(oldDraft), true);
 });

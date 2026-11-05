@@ -22,6 +22,23 @@ test('admin stage follows persisted operational progress and keeps terminal stat
   assert.equal(getAdminOperationalProgress(item('Delivered', 'unloaded')).badge, null);
 });
 
+test('shared badge stage matches Dispatch and Deliveries for active progress', () => {
+  const cases = [
+    [item('Assigned'), null],
+    [item('Assigned', 'pickup_arrived'), 'At Pickup'],
+    [item('Assigned', 'loading'), 'Loading'],
+    [item('Picked Up', 'loaded'), 'Loading'],
+    [item('In Transit', 'destination_arrived'), 'Arrived'],
+    [item('In Transit', 'unloading'), 'Unloading'],
+    [item('Delivered', 'unloaded'), null],
+    [item('Cancelled', 'loading'), null],
+  ];
+  for (const [assignment, badge] of cases) {
+    assert.equal(getAdminOperationalProgress(assignment).badge, badge);
+  }
+  assert.equal(getAdminOperationalProgress(item('Assigned')).badge, null);
+});
+
 test('admin view exposes incomplete second status writes rather than relabeling them', () => {
   const departed = getAdminOperationalProgress(item('Picked Up', null, { departedAt: '2026-10-19T00:00:00Z' }));
   assert.equal(departed.badge, null);

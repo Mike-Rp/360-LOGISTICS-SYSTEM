@@ -31,13 +31,13 @@ test('Dashboard schedule uses the Manila day and the earliest future unstarted p
   });
 });
 
-const assignment = (taskStatus, deliveryDate = 'Oct 15, 2026', eta = '2:00 PM', timestamp) => ({
-  taskStatus, deliveryDate, eta,
+const assignment = (taskStatus, deliveryDate = 'Oct 15, 2026', scheduledArrivalTime = '2:00 PM', timestamp) => ({
+  taskStatus, deliveryDate, scheduledArrivalTime,
   statusPhotos: timestamp ? { Delivered: { timestamp } } : {},
 });
 const at = iso => new Date(iso);
 
-test('active workflow statuses warn only after the ETA in Philippine time', () => {
+test('active workflow statuses warn only after the Scheduled Time of Arrival (STA) in Philippine time', () => {
   for (const status of ['Assigned', 'Picked Up', 'In Transit']) {
     assert.equal(getDeliveryTimingStatus(assignment(status), at('2026-10-15T06:00:00Z')), null);
     assert.equal(getDeliveryTimingStatus(assignment(status), at('2026-10-15T08:10:00Z')).label, 'Overdue · 2 hours');
@@ -159,7 +159,7 @@ test('Dispatch and View Shipment share the same fixed Manila pickup result', () 
 });
 
 test('Dispatch prioritizes active delivery overdue over pickup overdue', () => {
-  const item = { ...pickupAssignment('Assigned'), deliveryDate: 'Oct 16, 2026', eta: '2:00 AM' };
+  const item = { ...pickupAssignment('Assigned'), deliveryDate: 'Oct 16, 2026', scheduledArrivalTime: '2:00 AM' };
   const beforeDelivery = getDispatchTimingNotices(item, at('2026-10-15T17:30:00Z'));
   assert.equal(beforeDelivery.delivery, null);
   assert.equal(beforeDelivery.pickup?.kind, 'pickup_overdue');

@@ -10,13 +10,22 @@ export type DispatchDraft = {
   pickupDate: string;
   deliveryDate: string;
   pickupTime: string;
-  eta: string;
+  scheduledArrivalTime: string;
   remarks: string;
   pickupDateInvalid: boolean;
   deliveryDateInvalid: boolean;
 };
 
+type LegacyDispatchDraft = Omit<DispatchDraft, 'scheduledArrivalTime'> & { eta: string };
+
+/** Accept the old saved key without carrying it into current form state. */
+export function normalizeDispatchDraft(draft: DispatchDraft | LegacyDispatchDraft): DispatchDraft {
+  if ('scheduledArrivalTime' in draft) return draft;
+  const { eta, ...fields } = draft;
+  return { ...fields, scheduledArrivalTime: eta };
+}
+
 /** The form starts blank; passive resource refreshes and validation are not edits. */
-export function hasUnsavedDispatchDetails(draft: DispatchDraft): boolean {
-  return Object.values(draft).some(Boolean);
+export function hasUnsavedDispatchDetails(draft: DispatchDraft | LegacyDispatchDraft): boolean {
+  return Object.values(normalizeDispatchDraft(draft)).some(Boolean);
 }
