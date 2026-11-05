@@ -1920,6 +1920,19 @@ the connected Supabase project in this frontend task.
 
 **Status:** Implemented
 
+**2026-11-05 — permission change (approved): OPM may issue reports.** OPM could open all four Reports previews, but
+Print / PDF failed with `not_authorized` because `issue_report()` required `can_write()`, which excludes OPM. The earlier
+"OPM stays view-only" rule is changed for **report issuance only**. Migration
+`supabase/migrations/20261105000002_opm_issue_reports.sql` changes one line of `issue_report()`:
+`if not (public.can_write() or public.is_opm())`. `is_opm()` = current session + an **active** profile with role `opm`,
+read from the database (never from the browser). Unchanged: the signature, validation, random RPT id, server-stamped
+`generated_at` and `generated_by_name` (the real signed-in OPM), response shape, grants, `verify_report()`, both listing
+functions, report contents, RLS. `can_write()` was **not** widened, so OPM still cannot dispatch, edit, cancel or complete
+deliveries. Anonymous callers, drivers, removed (archived) accounts and replaced sessions are still refused. The migration
+first checks that the live `issue_report()` is the expected version and aborts without changes if not. Tests:
+`supabase/tests/opm_issue_reports.test.sql` (8 checks). **Status of this change: applied 2026-11-05 and `opm_issue_reports.test.sql` passed 8/8; no
+frontend change needed** (the Print / PDF button already calls `issue_report()`). Live Print / PDF test as OPM pending.
+
 **Approval:** Approved 2026-10-23 — design decisions made explicitly before
 implementation: Weekly period = current ISO calendar week (Mon-Sun);
 verification is metadata-only (type/period/generator/generated-at/row count,
@@ -1940,14 +1953,13 @@ immutable and is the sole source of truth for its own page).
   included assignment IDs, computed client-side from the exact rows the PDF
   rendered; never live-compared against anything). RLS has no SELECT policy
   for anyone — every read goes through the two RPCs below.
-- `issue_report(...)`: admin/CSR only (`can_write()`; OPM stays view-only per
-  REQ-004). Generates the ID, inserts the row, returns it.
+- `issue_report(...)`: admin/CSR (`can_write()`) **and, since 2026-11-05, active OPM
+  (`is_opm()`)** — see the follow-up below. Generates the ID, inserts the row, returns it.
 - `verify_report(id)`: **public** — granted to `anon`, no session required,
   since the QR code must be scannable by anyone. Returns only the safe
   fields.
-- `list_issued_reports(limit)`: staff-only (`is_staff()` — read access, not
-  `can_write()`, so OPM can view history even though only CSR/admin can
-  generate) — backs the admin-facing "Recent Reports" list.
+- `list_issued_reports(limit)`: staff-only (`is_staff()` — read access, so OPM can
+  view history) — backs the admin-facing "Recent Reports" list.
 
 All 4 of Reports.tsx's report types (weekly, monthly, delay, utilization)
 share this one mechanism, not just the 2 the original request named — scoping
@@ -3057,5 +3069,42 @@ delivery details, the driver's "Delivery due", Reports / CSV / print, the Help t
 
 **Release order.** Apply the migration, run the test, then push the frontend straight after. **Later** (a separate
 migration, after the new build has been live a while): remove the old `eta` alias from both functions.
+
+---
+
+## [REQ-021] Recent Reports — real pagination (page size + offset + total)
+
+**Status: BACKEND IMPLEMENTED (2026-11-05) — migration `20261105000001` applied and `list_issued_reports_page.test.sql` passed 10/10; frontend still pending (Reports.tsx still uses `list_issued_reports(20)`).**
+
+**Problem.** Reports → Recent Reports calls `list_issued_reports(p_limit)`, which returns at most 100 rows with no
+offset and no total. The table cannot show real page numbers and can never reach report #101 or older.
+
+**Database — `20261105000001_list_issued_reports_page.sql`** (additive: one function, one index; `list_issued_reports()`,
+`issue_report()` and `verify_report()` are untouched).
+- `list_issued_reports_page(p_limit int default 10, p_offset int default 0) returns jsonb`
+  → `{ "total": n, "limit": n, "offset": n, "reports": [ { "id", "reportType", "generatedByName", "generatedAt",
+  "periodStart", "periodEnd", "rowCount" } ] }`. Field names match `verify_report()` and the frontend's
+  `IssuedReportSummary`; `row_digest` and `generated_by_user_id` are not returned.
+- The whole history is ordered `generated_at DESC, id DESC` and the page is cut from it (the id breaks ties, so
+  reports issued in the same instant never repeat or skip between pages). `total` and `reports` come from one
+  statement, so they always agree. Index `issued_reports_generated_at_id_idx` matches that order.
+- Empty history → `total 0, reports []`. Offset past the last page → the real total with `reports []`. Limit is
+  corrected to 1–100 (default 10) and offset to ≥ 0 (null / negative → 0); never an error. Any offset works, including
+  beyond 100.
+- Access: `is_staff()` only (OPM can view), same as `list_issued_reports()`; `anon` and non-staff are refused. The table
+  still has no direct SELECT and RLS is unchanged.
+
+**Tests.** `supabase/tests/list_issued_reports_page.test.sql` (10 checks): permissions; unauthorized callers (anon,
+driver, replaced staff session, no session); zero reports; exactly 10; 11; 250 with first / middle / last pages and
+offsets past 100 (page at offset 120 checked by id); equal `generated_at`; exact totals; limit / offset correction;
+field set; the existing functions still work. The test empties `issued_reports` inside its own transaction and the
+final exception + rollback restores every real report — run the whole file at once.
+
+**Frontend (not part of this task).** `db.ts` `listIssuedReportsPage(limit, offset)` calling
+`rpc('list_issued_reports_page', { p_limit, p_offset })`; Reports.tsx pages with `total`. Until then the page keeps
+working on the old function.
+
+**Release order.** Apply the migration, run the test, then switch the frontend. Nothing breaks if the migration is
+applied first.
 
 ---
