@@ -130,9 +130,15 @@ export default function Header({
     setNotifications((p) => p.map((n) => (isOperationManager || n.type !== 'password_reset_requested') ? { ...n, read: true } : n));
 
   return (
-    <header className="relative bg-white border-b border-border px-4 sm:px-6 pb-3.5 pt-[calc(0.875rem+env(safe-area-inset-top))] md:py-3.5">
-      <div className="flex min-w-0 items-center justify-end gap-2 sm:gap-3">
+    <header className="relative bg-white border-b border-border px-1 min-[390px]:px-2 sm:px-6 pb-3.5 pt-[calc(0.875rem+env(safe-area-inset-top))] md:py-3.5">
+      <div className="flex min-w-0 items-center gap-0.5 min-[390px]:gap-1 sm:gap-3 md:justify-end">
         {mobileNavigation}
+
+        <div title={`${fullDate} · Asia/Manila (Philippine Time)`} aria-label={`Today in the Philippines: ${fullDate}`}
+          className="flex h-10 min-w-0 flex-1 items-center gap-0.5 whitespace-nowrap rounded-full border border-border bg-white px-1.5 text-xs font-semibold text-foreground shadow-sm min-[360px]:text-[13px] min-[390px]:gap-1 min-[390px]:px-2 md:hidden">
+          <CalendarDays aria-hidden="true" className="h-3.5 w-3.5 shrink-0 min-[390px]:h-4 min-[390px]:w-4" />
+          <span className="min-w-0 overflow-x-auto whitespace-nowrap">{fullDate}</span>
+        </div>
 
         <div title={`${fullDate} · Asia/Manila (Philippine Time)`} aria-label={`Today in the Philippines: ${fullDate}`}
           className="hidden h-9 min-w-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-border bg-white px-2.5 text-sm font-semibold text-foreground shadow-sm sm:px-3 md:flex">
@@ -154,7 +160,7 @@ export default function Header({
             </div>
             <button type="button" onClick={() => setSearchOpen((open) => !open)}
               aria-label={searchOpen ? 'Close search' : 'Open search'} aria-expanded={searchOpen}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border bg-white text-muted-foreground shadow-sm hover:bg-accent sm:h-9 sm:w-9 lg:hidden">
+              className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-border bg-white text-muted-foreground shadow-sm hover:bg-accent md:flex lg:hidden">
               <Search className="h-4 w-4" />
             </button>
           </>
@@ -167,7 +173,7 @@ export default function Header({
               onClick={() => setAccountOpen(false)}
               title="Notifications"
               aria-label="Notifications"
-              className="relative w-9 h-9 shrink-0 flex items-center justify-center rounded-full hover:bg-accent transition-colors"
+              className="relative flex h-10 w-8 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-accent min-[390px]:w-9 md:h-9"
             >
               <Bell className="w-5 h-5 text-muted-foreground" />
               {unreadCount > 0 && (
@@ -279,7 +285,7 @@ export default function Header({
             ref={accountBtnRef}
             onClick={() => { setAccountOpen((v) => !v); setBellOpen(false); }}
             aria-label={`Open profile menu for ${adminName ?? 'Admin User'}`} aria-expanded={accountOpen}
-            className="flex h-10 w-10 min-w-0 shrink-0 items-center justify-center rounded-full border border-border transition-colors hover:bg-accent md:h-auto md:w-auto md:max-w-none md:gap-2.5 md:px-3 md:py-1.5"
+            className="flex h-10 w-8 min-w-0 shrink-0 items-center justify-center rounded-full border border-border transition-colors hover:bg-accent min-[390px]:w-9 md:h-auto md:w-auto md:max-w-none md:gap-2.5 md:px-3 md:py-1.5"
           >
             <div className="w-7 h-7 bg-black rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden">
               {avatarUrl ? <img src={avatarUrl} alt="" className="h-full w-full object-cover" /> : <User className="w-4 h-4 text-white" />}
@@ -309,6 +315,13 @@ export default function Header({
 
               {/* Menu rows */}
               <div className="py-1.5">
+                {searchPlaceholder && (
+                  <button type="button" onClick={() => { setSearchOpen(true); setAccountOpen(false); }}
+                    className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-accent/50 md:hidden">
+                    <Search className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                    <span className="text-sm text-foreground">Search</span>
+                  </button>
+                )}
                 {isOperationManager && onOpenWorkspaceSettings && (
                   <button
                     onClick={() => { onOpenWorkspaceSettings(); setAccountOpen(false); }}
@@ -347,13 +360,6 @@ export default function Header({
           )}
         </div>
 
-      </div>
-      <div className="mt-2 flex md:hidden">
-        <div className="inline-flex min-h-9 items-center gap-1.5 whitespace-nowrap rounded-full border border-border bg-white px-2.5 text-sm font-semibold text-foreground shadow-sm"
-          title={`${fullDate} · Asia/Manila (Philippine Time)`} aria-label={`Today in the Philippines: ${fullDate}`}>
-          <CalendarDays aria-hidden="true" className="h-4 w-4 shrink-0" />
-          <span>{fullDate}</span>
-        </div>
       </div>
       {searchPlaceholder && searchOpen && (
         <div className="mt-3 min-w-0 border-t border-border bg-white pt-3 lg:hidden">

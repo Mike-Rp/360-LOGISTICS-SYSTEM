@@ -16,13 +16,13 @@ interface SidebarProps {
 export function MobileTopBar({ onOpenMenu, onDashboard, mobileOpen }: {
   onOpenMenu: () => void; onDashboard: () => void; mobileOpen: boolean;
 }) {
-  return <div className="mr-auto flex min-w-0 shrink-0 items-center gap-2 md:hidden">
+  return <div className="flex shrink-0 items-center gap-0.5 min-[390px]:gap-1 md:hidden">
     <button type="button" onClick={onOpenMenu} aria-label="Open menu" aria-expanded={mobileOpen}
-      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground hover:text-foreground">
+      className="flex h-10 w-8 shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground hover:text-foreground min-[390px]:w-9">
       <Menu className="h-5 w-5" />
     </button>
     <a href={adminHref('Dashboard')} onClick={(event) => followAdminLink(event, onDashboard)} aria-label="Go to Dashboard"
-      className="flex items-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40">
+      className="flex h-10 shrink-0 items-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40">
       <img src={imgLogo} alt="360 Logistics" className="h-5 w-auto" />
     </a>
   </div>;
