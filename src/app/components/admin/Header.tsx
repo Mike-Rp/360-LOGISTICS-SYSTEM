@@ -26,6 +26,7 @@ interface Props {
   avatarUrl?: string;
   onOpenWorkspaceSettings?: () => void;
   searchPlaceholder?: string;
+  searchContext?: string;
   searchValue: string;
   onSearchChange: (value: string) => void;
   mobileNavigation?: React.ReactNode;
@@ -57,7 +58,7 @@ export default function Header({
   notifications, onReviewResetRequest,
   setNotifications, onOpenNotification, onLogout, onOpenSettings, onOpenHelp,
   isOperationManager, adminRole, adminEmail, adminName, avatarUrl, onOpenWorkspaceSettings,
-  searchPlaceholder, searchValue, onSearchChange, mobileNavigation,
+  searchPlaceholder, searchContext, searchValue, onSearchChange, mobileNavigation,
 }: Props) {
   const [bellOpen,    setBellOpen]    = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
@@ -96,7 +97,7 @@ export default function Header({
     if (entranceTimer.current !== null) window.clearTimeout(entranceTimer.current);
   }, []);
 
-  useEffect(() => setSearchOpen(false), [searchPlaceholder]);
+  useEffect(() => setSearchOpen(false), [searchContext]);
   useEffect(() => { if (searchOpen) mobileSearchRef.current?.focus(); }, [searchOpen]);
   const [now, setNow] = useState(() => new Date());
 

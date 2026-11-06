@@ -28,6 +28,7 @@ import ASNWithCopy from './ASNWithCopy';
 import type { ActionFeedbackToast } from '../../lib/notificationEvents';
 import { parsePhilippineMobile } from '../../lib/philippineMobile';
 import { formatPhilippineTimestamp } from '../../lib/philippineTime';
+import { matchesDriverSearch, matchesTruckSearch, normalizeFleetSearch } from '../../lib/fleetAccountSearch';
 
 /* Plain-language text for the errors the archive / PIN database functions can return */
 const accountActionError = (err: unknown): string => {
@@ -262,6 +263,8 @@ interface Props {
   archivedDrivers?: LocalDriver[];
   archivedTrucks?: LocalTruck[];
   search: string;
+  tab: 'Drivers' | 'Trucks';
+  onTabChange: (tab: 'Drivers' | 'Trucks') => void;
   /* REQ-018: what a CSR covering for the OPM may do right now (nothing for everyone else). */
   coverage?: FleetCoverage;
 }
@@ -276,7 +279,7 @@ const ROLE_LABEL: Record<string, string> = {
 
 type TabView = 'Drivers' | 'Trucks';
 
-export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, assignments = [], canManageFleetAccounts, onResetAll, savingToDb, onLogActivity, onServerChange, onActionFeedback, archivedDrivers = [], archivedTrucks = [], search, coverage = NO_COVERAGE }: Props) {
+export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, assignments = [], canManageFleetAccounts, onResetAll, savingToDb, onLogActivity, onServerChange, onActionFeedback, archivedDrivers = [], archivedTrucks = [], search, tab, onTabChange, coverage = NO_COVERAGE }: Props) {
   /* The OPM does everything. A covering CSR gets only the pieces the OPM granted — never the PIN
      column, never archive. The database re-checks the window on every call. */
   const canResetPins = canManageFleetAccounts || coverage.canResetPin;
@@ -289,7 +292,6 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
     ? coverage.status === 'error' ? 'Temporary access could not be verified. Retry the coverage check before continuing.' : 'Checking temporary access. Please wait before submitting.'
     : undefined;
   const registrationAccessEnded = !canManageFleetAccounts && coverage.status === 'success' && !coverage.canRegister;
-  const [tab, setTab] = useState<TabView>('Drivers');
   const [driverView, setDriverView] = useState<'active' | 'archived'>('active');
   const [availabilityFilter, setAvailabilityFilter] = useState<AvailabilityFilter>('all');
   const [truckView,  setTruckView]  = useState<'active' | 'archived'>('active');
@@ -298,8 +300,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
   const truckClassifications = [...new Set([...trucks, ...archivedTrucks]
     .map(truck => truck.classification?.trim()).filter((value): value is string => !!value))]
     .sort((a, b) => a.localeCompare(b));
-  const query = search.trim().toLowerCase();
-  const matches = (fields: (string | undefined)[]) => !query || fields.some((field) => field?.toLowerCase().includes(query));
+  const query = normalizeFleetSearch(search);
   const availableCount = drivers.filter((driver) => driverState(driver) === 'available').length;
   const onDeliveryCount = drivers.filter((driver) => driverState(driver) === 'onDelivery').length;
   const unavailableDriverCount = drivers.filter((driver) => driverState(driver) === 'unavailable').length;
@@ -307,17 +308,17 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
   const onDeliveryTruckCount = trucks.filter((truck) => truckState(truck) === 'onDelivery').length;
   const maintenanceTruckCount = trucks.filter((truck) => truckState(truck) === 'unavailable').length;
   const visibleDrivers = sortNewestFirst(tab === 'Drivers' && driverView === 'active' ? drivers.filter((driver) =>
-    matches([driver.name, driver.id, driver.phone]) &&
+    matchesDriverSearch(driver, query) &&
     (availabilityFilter === 'all' || driverState(driver) === availabilityFilter)
   ) : drivers, (driver) => driver.id, 'driver');
-  const visibleArchivedDrivers = sortNewestFirst(tab === 'Drivers' && driverView === 'archived' ? archivedDrivers.filter((driver) => matches([driver.name, driver.id, driver.phone])) : archivedDrivers, (driver) => driver.id, 'driver');
+  const visibleArchivedDrivers = sortNewestFirst(tab === 'Drivers' && driverView === 'archived' ? archivedDrivers.filter((driver) => matchesDriverSearch(driver, query)) : archivedDrivers, (driver) => driver.id, 'driver');
   const visibleTrucks = tab === 'Trucks' && truckView === 'active' ? trucks.filter((truck) =>
-    matches([truck.plateNumber, truck.id, truck.classification, truck.capacity]) &&
+    matchesTruckSearch(truck, query) &&
     (!truckClassificationFilter || truck.classification?.trim() === truckClassificationFilter) &&
     (truckStatusFilter === 'all' || truckState(truck) === truckStatusFilter)
   ) : trucks;
   const visibleArchivedTrucks = tab === 'Trucks' && truckView === 'archived' ? archivedTrucks.filter((truck) =>
-    matches([truck.plateNumber, truck.id, truck.classification, truck.capacity]) &&
+    matchesTruckSearch(truck, query) &&
     (!truckClassificationFilter || truck.classification?.trim() === truckClassificationFilter)) : archivedTrucks;
   const activeDriversPage = usePagination(visibleDrivers);
   const archivedDriversPage = usePagination(visibleArchivedDrivers);
@@ -449,7 +450,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
           <div role="group" aria-label="Drivers or trucks" className="relative grid w-full grid-cols-2 items-center rounded-xl border border-border bg-muted/40 p-1 sm:w-auto">
             <span aria-hidden="true" className={`pointer-events-none absolute inset-y-1 left-1 w-[calc(50%_-_4px)] rounded-lg border border-primary bg-primary shadow-sm transition-transform duration-300 ease-out motion-reduce:transition-none ${tab === 'Trucks' ? 'translate-x-full' : 'translate-x-0'}`} />
             {(['Drivers', 'Trucks'] as TabView[]).map((t) => (
-              <button key={t} type="button" aria-pressed={tab === t} onClick={() => { setTab(t); resetPages(); }}
+              <button key={t} type="button" aria-pressed={tab === t} onClick={() => { onTabChange(t); resetPages(); }}
                 className={`relative z-10 flex min-w-0 items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary motion-reduce:transition-none ${
                   tab === t
                     ? 'text-primary-foreground'
@@ -515,7 +516,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
             visibleArchivedDrivers.length === 0 ? (
               <div className="bg-white rounded-2xl border border-dashed border-border p-12 text-center">
                 <Archive className="w-10 h-10 mx-auto mb-3 text-muted-foreground/40" />
-                <p className="font-medium text-foreground">{query ? 'No accounts found' : 'No archived drivers'}</p>
+                <p className="font-medium text-foreground">{query ? 'No archived drivers match your search.' : 'No archived drivers'}</p>
                 <p className="text-sm text-muted-foreground mt-1">{query ? 'Try a different search term.' : 'Archived drivers appear here with the date they were archived.'}</p>
               </div>
             ) : (
@@ -553,7 +554,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
               <div className="w-16 h-16 bg-muted/50 rounded-full flex items-center justify-center mx-auto mb-4">
                 <Users className="w-8 h-8 text-muted-foreground/40" />
               </div>
-              <p className="font-medium text-foreground mb-1">{availabilityFilter === 'available' ? (query ? 'No available drivers match your search.' : 'No available drivers found.') : availabilityFilter === 'onDelivery' ? (query ? 'No drivers on delivery match your search.' : 'No drivers are currently on delivery.') : availabilityFilter === 'unavailable' ? (query ? 'No unavailable drivers match your search.' : 'No drivers are marked unavailable.') : query ? 'No accounts found' : 'No Drivers Registered Yet'}</p>
+              <p className="font-medium text-foreground mb-1">{availabilityFilter === 'available' ? (query ? 'No available drivers match your search.' : 'No available drivers found.') : availabilityFilter === 'onDelivery' ? (query ? 'No drivers on delivery match your search.' : 'No drivers are currently on delivery.') : availabilityFilter === 'unavailable' ? (query ? 'No unavailable drivers match your search.' : 'No drivers are marked unavailable.') : query ? 'No drivers match your search.' : 'No Drivers Registered Yet'}</p>
               <p className="text-sm text-muted-foreground mb-5">{query ? 'Try a different search term.' : availabilityFilter === 'all' ? canRegisterFleet ? 'Register a driver to generate their login PIN.' : 'Drivers will appear here when registered by OPM.' : 'Choose All to see every active driver.'}</p>
               {!query && availabilityFilter === 'all' && canRegisterFleet && (
                 <button onClick={() => setShowAddDriver(true)}
@@ -776,7 +777,7 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
               <div className="w-16 h-16 bg-muted/50 rounded-full flex items-center justify-center mx-auto mb-4">
                 <Truck className="w-8 h-8 text-muted-foreground/40" />
               </div>
-              <p className="font-medium text-foreground mb-1">{truckClassificationFilter ? 'No trucks match this classification.' : truckStatusFilter === 'available' ? (query ? 'No available trucks match your search.' : 'No available trucks found.') : truckStatusFilter === 'onDelivery' ? (query ? 'No trucks on delivery match your search.' : 'No trucks are currently on delivery.') : truckStatusFilter === 'unavailable' ? (query ? 'No trucks under maintenance match your search.' : 'No trucks are under maintenance.') : query ? 'No accounts found' : 'No Trucks Registered Yet'}</p>
+              <p className="font-medium text-foreground mb-1">{truckClassificationFilter ? 'No trucks match this classification.' : truckStatusFilter === 'available' ? (query ? 'No available trucks match your search.' : 'No available trucks found.') : truckStatusFilter === 'onDelivery' ? (query ? 'No trucks on delivery match your search.' : 'No trucks are currently on delivery.') : truckStatusFilter === 'unavailable' ? (query ? 'No trucks under maintenance match your search.' : 'No trucks are under maintenance.') : query ? 'No trucks match your search.' : 'No Trucks Registered Yet'}</p>
               <p className="text-sm text-muted-foreground mb-5">{query || truckClassificationFilter ? 'Try a different search term or filter.' : truckStatusFilter === 'all' ? canRegisterFleet ? 'Register trucks so they can be assigned to deliveries.' : 'Trucks will appear here when registered by OPM.' : 'Choose All to see every active truck.'}</p>
               {!query && !truckClassificationFilter && truckStatusFilter === 'all' && canRegisterFleet && (
                 <button onClick={() => setShowAddTruck(true)}

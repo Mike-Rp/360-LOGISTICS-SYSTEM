@@ -43,7 +43,6 @@ const SEARCH_PLACEHOLDERS: Partial<Record<NavItem, string>> = {
   Monitor: 'Search truck plate, driver, or route...',
   Deliveries: 'Search deliveries...',
   Documents: 'Search documents...',
-  Accounts: 'Search accounts...',
 };
 
 /* Dashboard redesign switch — true = new dashboard (dashboard/DashboardHome.tsx),
@@ -114,6 +113,7 @@ export default function AdminDashboard({
   }, []);
   const [searchInput, setSearchInput] = useState({ page: activeNav, value: '' });
   const [searchQuery, setSearchQuery] = useState({ page: activeNav, value: '' });
+  const [accountsTab, setAccountsTab] = useState<'Drivers' | 'Trucks'>('Drivers');
   const [notificationTarget, setNotificationTarget] = useState<NotificationTarget | null>(targetFromUrl);
   const currentSearchInput = searchInput.page === activeNav ? searchInput.value : '';
   const currentSearchQuery = searchQuery.page === activeNav ? searchQuery.value : '';
@@ -315,6 +315,12 @@ export default function AdminDashboard({
             archivedDrivers={archivedDrivers}
             archivedTrucks={archivedTrucks}
             search={currentSearchQuery}
+            tab={accountsTab}
+            onTabChange={(nextTab) => {
+              if (nextTab === accountsTab) return;
+              setAccountsTab(nextTab);
+              changeSearch('');
+            }}
             coverage={fleetCoverage}
           />
         );
@@ -346,7 +352,10 @@ export default function AdminDashboard({
           adminName={adminName}
           avatarUrl={avatarUrl}
           onOpenWorkspaceSettings={() => { setResetRequestTarget(null); setWorkspaceOpen(true); }}
-          searchPlaceholder={SEARCH_PLACEHOLDERS[activeNav]}
+          searchPlaceholder={activeNav === 'Accounts'
+            ? accountsTab === 'Drivers' ? 'Search drivers or phone numbers...' : 'Search plate numbers...'
+            : SEARCH_PLACEHOLDERS[activeNav]}
+          searchContext={activeNav}
           searchValue={currentSearchInput}
           onSearchChange={changeSearch}
         />
