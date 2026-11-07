@@ -91,6 +91,9 @@ test('four styled workbooks round-trip as real XLSX with readable metadata and d
     await workbook.xlsx.load(Buffer.from(bytes));
     const sheet = workbook.getWorksheet('Report');
     assert.equal(sheet.getCell('A1').value, '360 LOGISTICS SYSTEM');
+    assert.equal(sheet.getCell('A1').fill.fgColor.argb, 'FF065F46');
+    assert.equal(sheet.getCell('A2').font.color.argb, 'FFFFFFFF');
+    assert.equal(sheet.getCell('A2').fill.fgColor.argb, 'FF065F46');
     assert.equal(sheet.getCell('B5').value.toISOString(), '2026-11-05T16:45:22.000Z');
     assert.match(sheet.getCell('B5').numFmt, /PHT/);
     assert.equal(sheet.getCell('B6').value, 'Test OPM');
@@ -98,7 +101,21 @@ test('four styled workbooks round-trip as real XLSX with readable metadata and d
     assert.equal(sheet.getCell('A10').value instanceof Date ? 'date' : sheet.getCell('A10').value, type === 'monthly' ? 'date' : row[0]);
     assert.equal(sheet.getColumn(2).width, columns[1].width);
     assert.equal(sheet.getRow(8).height, 32);
+    assert.equal(sheet.getCell('A8').fill.fgColor.argb, 'FFE4F3EC');
     assert.equal(sheet.views[0].state, 'frozen');
+    assert.equal(sheet.autoFilter, 'A8:C8');
+    assert.equal(sheet.getCell('A4').border.bottom.color.argb, 'FFDDE5E2');
+    assert.equal(sheet.getCell('B5').border.bottom.style, 'hair');
+    assert.equal(sheet.getCell('A8').border.left.color.argb, 'FFB8C9C2');
+    assert.equal(sheet.getCell('A8').border.bottom.color.argb, 'FF7DB39B');
+    assert.equal(sheet.getCell('B8').border.right.style, 'hair');
+    assert.equal(sheet.getCell('C8').border.right.color.argb, 'FFB8C9C2');
+    assert.equal(sheet.getCell('A9').border.left.style, 'thin');
+    assert.equal(sheet.getCell('A9').border.bottom.color.argb, 'FFDDE5E2');
+    assert.equal(sheet.getCell('B9').border.right.color.argb, 'FFDDE5E2');
+    assert.equal(sheet.getCell('C10').border.right.color.argb, 'FFB8C9C2');
+    assert.equal(sheet.getCell('C10').border.bottom.color.argb, 'FFB8C9C2');
+    assert.equal(sheet.getCell('A10').fill.fgColor.argb, 'FFF6F8F7');
     assert.equal(sheet.getCell('A9').value instanceof Date ? 'date' : sheet.getCell('A9').value, type === 'monthly' ? 'date' : row[0]);
     if (type === 'monthly') {
       assert.equal(sheet.getCell('B9').value, 12);
@@ -111,6 +128,27 @@ test('four styled workbooks round-trip as real XLSX with readable metadata and d
       assert.equal(sheet.getCell('B9').type, ExcelJS.ValueType.String);
     }
   }
+});
+
+test('long names and routes wrap in the existing workbook without losing characters', async () => {
+  const driver = 'María del Rosario Niño Santos';
+  const route = 'Quezon City → Makati City → Pasay City → Parañaque City → Las Piñas City';
+  const bytes = await report.createReportWorkbook({
+    type: 'weekly', generatedAt: new Date('2026-11-05T08:45:22Z'),
+    sheets: [{ name: 'Weekly Performance', columns: [
+      { header: 'Driver', width: 32, wrap: true }, { header: 'Route', width: 46, wrap: true },
+    ], rows: [[driver, route]] }],
+  });
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(Buffer.from(bytes));
+  const sheet = workbook.worksheets[0];
+  assert.equal(sheet.getCell('A9').value, driver);
+  assert.equal(sheet.getCell('B9').value, route);
+  assert.equal(sheet.getCell('A9').alignment.wrapText, true);
+  assert.equal(sheet.getCell('B9').alignment.wrapText, true);
+  assert.equal(sheet.getColumn(1).width, 32);
+  assert.equal(sheet.getColumn(2).width, 46);
+  assert.ok(sheet.getRow(9).height > 23);
 });
 
 test('Reports export mapping produces complete CSV and XLSX rows for every report type', async () => {

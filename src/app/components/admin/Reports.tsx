@@ -386,9 +386,9 @@ function reportExportSheets(
   if (key === 'weekly') return [{
     name: 'Weekly Performance',
     columns: [
-      { header: 'Date', width: 18, kind: 'date' }, { header: 'Driver', width: 28 },
-      { header: 'Truck #', width: 17 }, { header: 'Route', width: 42, wrap: true },
-      { header: 'Client', width: 30, wrap: true }, { header: 'Pickup Time', width: 17, kind: 'time' },
+      { header: 'Date', width: 18, kind: 'date' }, { header: 'Driver', width: 32, wrap: true },
+      { header: 'Truck #', width: 17 }, { header: 'Route', width: 46, wrap: true },
+      { header: 'Client', width: 34, wrap: true }, { header: 'Pickup Time', width: 17, kind: 'time' },
       { header: 'STA', width: 16, kind: 'time' }, { header: 'ATA', width: 16, kind: 'time' },
       { header: 'Status', width: 18 },
     ],
@@ -406,11 +406,11 @@ function reportExportSheets(
   if (key === 'delay') return [{
     name: 'Delay and Issues',
     columns: [
-      { header: 'Date', width: 18, kind: 'date' }, { header: 'Driver', width: 26 },
-      { header: 'Truck #', width: 18 }, { header: 'Route', width: 42, wrap: true },
-      { header: 'Client', width: 28, wrap: true }, { header: 'Scheduled', width: 17, kind: 'time' },
-      { header: 'Reported At', width: 18, kind: 'time' }, { header: 'Issue Type', width: 22, wrap: true },
-      { header: 'Reason', width: 54, wrap: true }, { header: 'Status', width: 17 },
+      { header: 'Date', width: 18, kind: 'date' }, { header: 'Driver', width: 32, wrap: true },
+      { header: 'Truck #', width: 18 }, { header: 'Route', width: 46, wrap: true },
+      { header: 'Client', width: 34, wrap: true }, { header: 'Scheduled', width: 17, kind: 'time' },
+      { header: 'Reported At', width: 18, kind: 'time' }, { header: 'Issue Type', width: 26, wrap: true },
+      { header: 'Reason', width: 60, wrap: true }, { header: 'Status', width: 17 },
     ],
     rows: delays.map((r) => [exportDay(r.dateStamp, r.date), r.driver, r.truck, r.route, r.client, r.scheduledTime, exportTime(r.reportedStamp, r.reportedAt), r.type, r.reason, r.status]),
   }];
@@ -419,7 +419,7 @@ function reportExportSheets(
     columns: [
       { header: 'Plate Number', width: 21 }, { header: 'Classification', width: 28, wrap: true },
       { header: 'Times Assigned', width: 19, kind: 'number' }, { header: 'Completed Trips', width: 19, kind: 'number' },
-      { header: 'Cancelled Assignments', width: 24, kind: 'number' }, { header: 'Last Driver', width: 30, wrap: true },
+      { header: 'Cancelled Assignments', width: 24, kind: 'number' }, { header: 'Last Driver', width: 34, wrap: true },
       { header: 'Last Used Date', width: 20, kind: 'date' },
     ],
     rows: trucks.map((r) => [r.plate, r.classification, r.timesAssigned, r.completedTrips, r.cancelledAssignments, r.lastDriver, exportDay(r.lastUsedStamp, r.lastUsedDate)]),
@@ -427,7 +427,7 @@ function reportExportSheets(
   if (fleet === 'drivers') return [{
     name: 'Driver Utilization',
     columns: [
-      { header: 'Driver Name', width: 30, wrap: true }, { header: 'Times Assigned', width: 19, kind: 'number' },
+      { header: 'Driver Name', width: 34, wrap: true }, { header: 'Times Assigned', width: 19, kind: 'number' },
       { header: 'Completed Deliveries', width: 24, kind: 'number' }, { header: 'Cancelled Assignments', width: 24, kind: 'number' },
       { header: 'Last Truck Used', width: 22 }, { header: 'Last Delivery Date', width: 21, kind: 'date' },
     ],
@@ -436,10 +436,10 @@ function reportExportSheets(
   return [{
     name: 'Fleet and Drivers',
     columns: [
-      { header: 'Section', width: 15 }, { header: 'Name / Plate', width: 30, wrap: true },
+      { header: 'Section', width: 15 }, { header: 'Name / Plate', width: 34, wrap: true },
       { header: 'Classification', width: 28, wrap: true }, { header: 'Times Assigned', width: 19, kind: 'number' },
       { header: 'Completed', width: 17, kind: 'number' }, { header: 'Cancelled Assignments', width: 24, kind: 'number' },
-      { header: 'Last Driver / Truck', width: 30, wrap: true }, { header: 'Last Date', width: 20, kind: 'date' },
+      { header: 'Last Driver / Truck', width: 34, wrap: true }, { header: 'Last Date', width: 20, kind: 'date' },
     ],
     rows: [
       ...trucks.map((r) => ['Truck', r.plate, r.classification, r.timesAssigned, r.completedTrips, r.cancelledAssignments, r.lastDriver, exportDay(r.lastUsedStamp, r.lastUsedDate)]),
@@ -1418,7 +1418,7 @@ export default function Reports({ assignments, completed, cancelled, trucks }: R
 
   const [cardExportBusy, setCardExportBusy] = useState<ReportKey | null>(null);
   const [cardExportError, setCardExportError] = useState('');
-  const handleExport = async (reportKey: ReportKey, format: 'csv' | 'xlsx') => {
+  const handleExport = async (reportKey: ReportKey) => {
     if (cardExportBusy) return;
     setCardExportBusy(reportKey);
     setCardExportError('');
@@ -1435,7 +1435,7 @@ export default function Reports({ assignments, completed, cancelled, trucks }: R
         generatedAt: new Date(),
         sheets: reportExportSheets(reportKey, 'combined', weeklyRows, monthlyRows, dRows,
           buildTruckUtilRows(assignments, completed, cancelled, trucks), buildDriverUtilRows(assignments, completed, cancelled)),
-      }, format);
+      }, 'xlsx');
     } catch (error) {
       setCardExportError(error instanceof Error ? error.message : 'Could not export report.');
     } finally { setCardExportBusy(null); }
@@ -1520,13 +1520,9 @@ export default function Reports({ assignments, completed, cancelled, trucks }: R
                 >
                   <Eye className="h-3.5 w-3.5" /> Preview
                 </button>
-                <button onClick={() => void handleExport(key, 'xlsx')} disabled={cardExportBusy !== null}
+                <button onClick={() => void handleExport(key)} disabled={cardExportBusy !== null}
                   className="flex h-10 items-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-medium text-white transition-colors hover:bg-primary/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-60">
                   <FileDown className="h-3.5 w-3.5" /> {cardExportBusy === key ? 'Exporting…' : 'Export Excel (.xlsx)'}
-                </button>
-                <button onClick={() => void handleExport(key, 'csv')} disabled={cardExportBusy !== null}
-                  className="flex h-10 items-center gap-1.5 rounded-lg border border-border bg-white px-3 text-sm font-medium text-foreground transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-60">
-                  <FileDown className="h-3.5 w-3.5" /> Export CSV (.csv)
                 </button>
               </div>
             </div>
