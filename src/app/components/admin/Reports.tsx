@@ -33,6 +33,8 @@ interface WeeklyRow {
   date: string; dateStamp: string; asn: string; driver: string; truck: string; route: string;
   client: string; pickupTime: string; scheduledArrivalTime: string; ata: string;
   status: 'On Time' | 'Delayed' | 'Completed' | 'Assigned' | 'Picked Up' | 'In Transit';
+  /* true = a completed delivery, false = still active. A 'Delayed' row can be either, so the summary counts this, not the status. */
+  finished: boolean;
 }
 interface MonthlyRow {
   week: string; period: string; total: number;
@@ -165,6 +167,7 @@ function buildWeeklyRows(assignments: Assignment[], completed: CompletedTask[], 
       client: c.company,
       pickupTime: c.pickupTime || '—', scheduledArrivalTime: c.scheduledArrivalTime || '—', ata: arrivalTime(c),
       status: isDelayed ? 'Delayed' : 'Completed',
+      finished: true,
     });
   }
 
@@ -185,6 +188,7 @@ function buildWeeklyRows(assignments: Assignment[], completed: CompletedTask[], 
       client: a.company,
       pickupTime: a.pickupTime || '—', scheduledArrivalTime: a.scheduledArrivalTime || '—', ata: arrivalTime(a),
       status: isDelayed ? 'Delayed' : (statusMap[a.taskStatus] ?? 'Assigned'),
+      finished: false,
     });
   }
 
@@ -448,6 +452,18 @@ function reportExportSheets(
   }];
 }
 
+/* REQ-007: record a report — printed OR exported — and get its persistent, publicly verifiable Report ID. */
+async function issueReportRecord(
+  type: ReportKey,
+  input: { periodStart: string | null; periodEnd: string | null; rowCount: number; digestSource: string },
+  format: 'pdf' | 'excel' = 'pdf',
+) {
+  const rowDigest = await sha256Hex(input.digestSource);
+  return issueReport({ reportType: type, periodStart: input.periodStart, periodEnd: input.periodEnd, rowCount: input.rowCount, rowDigest, format });
+}
+
+const reportVerifyUrl = (id: string) => `${window.location.origin}/verify-report?id=${encodeURIComponent(id)}`;
+
 async function exportReport(report: ReportExport): Promise<void> {
   const session = await restoreSession().catch(() => null);
   if (session?.kind === 'staff') report.generatedBy = session.staff.name || session.staff.email;
@@ -599,11 +615,14 @@ function PreviewModal({
   }[reportKey];
 
   /* Summary stats */
+  /* All four numbers describe the SAME week as the table below them (they used to count every completed and
+     active delivery in the system, so the summary could say 21 completed above a table of 6). Completed includes
+     the ones that were delayed — same as the monthly report. */
   const weeklySummary = {
-    total:   weeklyRows.length,
-    completed: completed.length,
-    delayed: weeklyRows.filter((r) => r.status === 'Delayed').length,
-    active:  assignments.length,
+    total:     weeklyRows.length,
+    completed: weeklyRows.filter((r) => r.finished).length,
+    delayed:   weeklyRows.filter((r) => r.status === 'Delayed').length,
+    active:    weeklyRows.filter((r) => !r.finished).length,
   };
   const delaySummary = {
     total:    delayRows.length,
@@ -642,6 +661,34 @@ function PreviewModal({
     { label:'Cancelled Assignments', value: driverUtilSummary.cancelled, icon: X,       printColor:'text-slate-600', printBackground:'bg-slate-50' },
   ];
 
+  /* REQ-007: what is recorded when this report is issued — the same for a printed PDF and an Excel file. */
+  const buildIssueInput = () => {
+    if (reportKey === 'monthly' && !selectedMonth) throw new Error('No selected reporting month');
+    let periodStart: string | null = null;
+    let periodEnd: string | null = null;
+    let rowCount = 0;
+    let digestSource = '';
+    if (reportKey === 'weekly') {
+      periodStart = toIsoDate(weekBounds.start);
+      periodEnd = toIsoDate(weekBounds.end);
+      rowCount = weeklyRows.length;
+      digestSource = weeklyRows.map((r) => r.asn).sort().join(',');
+    } else if (reportKey === 'monthly' && selectedMonth) {
+      periodStart = `${selectedMonth.key}-01`;
+      const [y, m] = selectedMonth.key.split('-').map(Number);
+      periodEnd = toIsoDate(new Date(y, m, 0));
+      rowCount = selectedMonth.total;
+      digestSource = JSON.stringify(selectedMonth);
+    } else if (reportKey === 'delay') {
+      rowCount = delayRows.length;
+      digestSource = delayRows.map((r) => `${r.asn}:${r.type}:${r.reportedStamp}`).sort().join(',');
+    } else {
+      rowCount = utilTab === 'trucks' ? truckUtilRows.length : driverUtilRows.length;
+      digestSource = (utilTab === 'trucks' ? truckUtilRows.map((r) => r.plate) : driverUtilRows.map((r) => r.key)).sort().join(',');
+    }
+    return { periodStart, periodEnd, rowCount, digestSource };
+  };
+
   const [exportBusy, setExportBusy] = useState(false);
   const [exportError, setExportError] = useState('');
   const handleExportFile = async () => {
@@ -649,15 +696,21 @@ function PreviewModal({
     setExportBusy(true);
     setExportError('');
     try {
+      const session = await restoreSession();
+      if (session?.kind !== 'staff') throw new Error('No active staff session');
+      // REQ-007: an Excel file is recorded and given a Report ID exactly like a printed PDF, BEFORE the
+      // file is created — so every report that leaves the system shows up in Recent Reports.
+      const issued = await issueReportRecord(reportKey, buildIssueInput(), 'excel');
       const period = reportKey === 'weekly' ? `${toIsoDate(weekBounds.start)} to ${toIsoDate(weekBounds.end)}`
         : reportKey === 'monthly' ? 'Completed delivery months'
         : reportKey === 'delay' ? 'All recorded delays and issues' : 'Historical assignments';
       await exportReport({
-        type: reportKey, period, generatedAt: new Date(),
+        type: reportKey, period, generatedAt: new Date(issued.generatedAt),
+        reportId: issued.id, verifyUrl: reportVerifyUrl(issued.id),
         sheets: reportExportSheets(reportKey, utilTab, weeklyRows, monthlyRows, delayRows, truckUtilRows, driverUtilRows),
       });
     } catch (error) {
-      setExportError(error instanceof Error ? error.message : 'Could not export report.');
+      setExportError(error instanceof Error && error.message ? error.message : 'Unable to record and export the report. Please try again.');
     } finally { setExportBusy(false); }
   };
 
@@ -670,30 +723,7 @@ function PreviewModal({
 
       // REQ-007: issue the persistent, publicly-verifiable Report ID BEFORE printing —
       // the QR is only created once a record has actually been issued.
-      let periodStart: string | null = null;
-      let periodEnd: string | null = null;
-      let rowCount = 0;
-      let digestSource = '';
-      if (reportKey === 'weekly') {
-        periodStart = toIsoDate(weekBounds.start);
-        periodEnd = toIsoDate(weekBounds.end);
-        rowCount = weeklyRows.length;
-        digestSource = weeklyRows.map((r) => r.asn).sort().join(',');
-      } else if (reportKey === 'monthly' && selectedMonth) {
-        periodStart = `${selectedMonth.key}-01`;
-        const [y, m] = selectedMonth.key.split('-').map(Number);
-        periodEnd = toIsoDate(new Date(y, m, 0));
-        rowCount = selectedMonth.total;
-        digestSource = JSON.stringify(selectedMonth);
-      } else if (reportKey === 'delay') {
-        rowCount = delayRows.length;
-        digestSource = delayRows.map((r) => `${r.asn}:${r.type}:${r.reportedStamp}`).sort().join(',');
-      } else {
-        rowCount = utilTab === 'trucks' ? truckUtilRows.length : driverUtilRows.length;
-        digestSource = (utilTab === 'trucks' ? truckUtilRows.map((r) => r.plate) : driverUtilRows.map((r) => r.key)).sort().join(',');
-      }
-      const rowDigest = await sha256Hex(digestSource);
-      const issued = await issueReport({ reportType: reportKey, periodStart, periodEnd, rowCount, rowDigest });
+      const issued = await issueReportRecord(reportKey, buildIssueInput());
       const verifyUrl = `${window.location.origin}/verify-report?id=${encodeURIComponent(issued.id)}`;
       const qrDataUrl = await QRCode.toDataURL(verifyUrl, { margin: 1, width: 240 });
       // window.print() can snapshot the page before a freshly-set data: URL image has
@@ -1422,15 +1452,31 @@ export default function Reports({ assignments, completed, cancelled, trucks }: R
       const weeklyRows  = buildWeeklyRows(assignments, completed, week);
       const dRows       = buildDelayRows(assignments, completed);
       const monthlyRows = buildMonthlyRows(completed);
+      const truckRows   = buildTruckUtilRows(assignments, completed, cancelled, trucks);
+      const driverRows  = buildDriverUtilRows(assignments, completed, cancelled);
+      // REQ-007: recorded and given a Report ID before the file is created, like a printed PDF
+      const issued = await issueReportRecord(reportKey,
+        reportKey === 'weekly'
+          ? { periodStart: toIsoDate(week.start), periodEnd: toIsoDate(week.end), rowCount: weeklyRows.length, digestSource: weeklyRows.map((r) => r.asn).sort().join(',') }
+          : reportKey === 'monthly'
+            ? { periodStart: null, periodEnd: null, rowCount: monthlyRows.length, digestSource: JSON.stringify(monthlyRows) }
+            : reportKey === 'delay'
+              ? { periodStart: null, periodEnd: null, rowCount: dRows.length, digestSource: dRows.map((r) => `${r.asn}:${r.type}:${r.reportedStamp}`).sort().join(',') }
+              : { periodStart: null, periodEnd: null, rowCount: truckRows.length + driverRows.length,
+                  digestSource: [...truckRows.map((r) => r.plate), ...driverRows.map((r) => r.key)].sort().join(',') },
+        'excel');
       await exportReport({
         type: reportKey,
         period: reportKey === 'weekly' ? `${toIsoDate(week.start)} to ${toIsoDate(week.end)}`
           : reportKey === 'monthly' ? 'Completed delivery months'
           : reportKey === 'delay' ? 'All recorded delays and issues' : 'Historical assignments',
-        generatedAt: new Date(),
-        sheets: reportExportSheets(reportKey, 'combined', weeklyRows, monthlyRows, dRows,
-          buildTruckUtilRows(assignments, completed, cancelled, trucks), buildDriverUtilRows(assignments, completed, cancelled)),
+        generatedAt: new Date(issued.generatedAt),
+        reportId: issued.id, verifyUrl: reportVerifyUrl(issued.id),
+        sheets: reportExportSheets(reportKey, 'combined', weeklyRows, monthlyRows, dRows, truckRows, driverRows),
       });
+      // the new report belongs at the top of page one of the history
+      setIssuedReportsPage(1);
+      setIssuedReportsRefresh((value) => value + 1);
     } catch (error) {
       setCardExportError(error instanceof Error ? error.message : 'Could not export report.');
     } finally { setCardExportBusy(null); }
@@ -1679,7 +1725,12 @@ export default function Reports({ assignments, completed, cancelled, trucks }: R
               {issuedReports.map((r) => (
                 <div key={r.id} className="grid grid-cols-1 gap-1 px-4 py-3 text-sm lg:grid-cols-6 lg:items-center lg:gap-3">
                   <span className="break-all font-mono text-xs font-medium text-foreground">{r.id}</span>
-                  <span className="text-muted-foreground">{REPORT_TYPE_LABEL[r.reportType] ?? r.reportType}</span>
+                  <span className="text-muted-foreground">
+                    {REPORT_TYPE_LABEL[r.reportType] ?? r.reportType}
+                    <span className={`ml-2 inline-flex items-center rounded-md border px-1.5 py-0.5 text-xs font-medium ${r.format === 'excel' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
+                      {r.format === 'excel' ? 'Excel' : 'PDF'}
+                    </span>
+                  </span>
                   <span className="text-muted-foreground">{fmtPeriod(r.periodStart, r.periodEnd)}</span>
                   <span className="text-muted-foreground">{fmtGeneratedAt(r.generatedAt)}</span>
                   <span className="text-muted-foreground">{r.generatedByName}</span>
