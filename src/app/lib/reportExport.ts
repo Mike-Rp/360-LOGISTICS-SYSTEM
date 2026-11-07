@@ -8,6 +8,9 @@ export type ReportExport = {
   period?: string;
   generatedBy?: string;
   generatedAt: Date;
+  /* REQ-007: the persistent Report ID this file was recorded under, and the public page that verifies it. */
+  reportId?: string;
+  verifyUrl?: string;
   sheets: ReportSheet[];
 };
 
@@ -20,8 +23,8 @@ const REPORT_TITLES: Record<PrintableReportType, string> = {
 
 const exportCounts = new Map<string, number>();
 
-export function reportExportFilename(type: PrintableReportType, at: Date): string {
-  const base = reportPdfPrintTitle(type, at);
+export function reportExportFilename(type: PrintableReportType, at: Date, reportId?: string): string {
+  const base = reportPdfPrintTitle(type, at, reportId);
   const key = `${base}.xlsx`;
   const count = (exportCounts.get(key) ?? 0) + 1;
   exportCounts.set(key, count);
@@ -128,6 +131,17 @@ export async function createReportWorkbook(report: ReportExport): Promise<ArrayB
       row.height = 21;
     });
     ws.getRow(7).height = 12;
+    if (report.reportId) {
+      // Uses the spacer row under the details, so the table (and every cell address below) stays where it was.
+      const row = ws.getRow(7);
+      row.getCell(1).value = 'Report ID';
+      row.getCell(1).font = { name: 'Aptos', size: 10, bold: true, color: { argb: 'FF64748B' } };
+      row.getCell(2).value = report.verifyUrl ? { text: report.reportId, hyperlink: report.verifyUrl } : report.reportId;
+      row.getCell(2).font = { name: 'Aptos', size: 10, bold: true, color: { argb: report.verifyUrl ? 'FF0F766E' : 'FF1A2B3C' }, underline: !!report.verifyUrl };
+      row.getCell(1).border = { bottom: cellLine };
+      row.getCell(2).border = { bottom: cellLine };
+      row.height = 21;
+    }
     const header = ws.getRow(8);
     sheet.columns.forEach((column, index) => {
       const cell = header.getCell(index + 1);
@@ -178,5 +192,5 @@ export async function createReportWorkbook(report: ReportExport): Promise<ArrayB
 
 export async function downloadReportExcel(report: ReportExport): Promise<void> {
   const buffer = await createReportWorkbook(report);
-  downloadReportBlob(new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), reportExportFilename(report.type, report.generatedAt));
+  downloadReportBlob(new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), reportExportFilename(report.type, report.generatedAt, report.reportId));
 }
