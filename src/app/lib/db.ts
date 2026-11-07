@@ -1469,6 +1469,24 @@ export interface IssuedReportSummary {
   periodStart: string | null; periodEnd: string | null; rowCount: number;
 }
 
+export interface IssuedReportsPage {
+  total: number; limit: number; offset: number; reports: IssuedReportSummary[];
+}
+
+/** Staff-only server page; the RPC returns camelCase report fields. */
+export async function listIssuedReportsPage(limit: number, offset: number): Promise<IssuedReportsPage> {
+  const { data, error } = await supabase.rpc('list_issued_reports_page', { p_limit: limit, p_offset: offset });
+  if (error) throw error;
+  if (!data || typeof data !== 'object' || Array.isArray(data)
+    || typeof data.total !== 'number' || !Number.isFinite(data.total) || data.total < 0
+    || !Number.isInteger(data.total) || !Array.isArray(data.reports)
+    || typeof data.limit !== 'number' || !Number.isInteger(data.limit) || data.limit < 1
+    || typeof data.offset !== 'number' || !Number.isInteger(data.offset) || data.offset < 0) {
+    throw new Error('Invalid report history response. Please try again.');
+  }
+  return data as IssuedReportsPage;
+}
+
 /** Staff only (is_staff() — read access, same as other staff-visible history). */
 export async function listIssuedReports(limit = 20): Promise<IssuedReportSummary[]> {
   const { data, error } = await supabase.rpc('list_issued_reports', { p_limit: limit });

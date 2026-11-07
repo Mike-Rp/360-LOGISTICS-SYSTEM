@@ -11,10 +11,12 @@ import { parseStoredTimestamp } from '../../data/assignmentTypes';
 import { splitDisplayDateTime } from '../../lib/displayDateTime';
 import { getAssignmentRoute } from '../../data/assignmentRoute';
 import { statusColors } from '../../data/statusColors';
-import { PaginationFooter, usePagination } from './Pagination';
+import { PAGE_SIZE, PaginationFooter, usePagination } from './Pagination';
 import QRCode from 'qrcode';
-import { restoreSession, issueReport, listIssuedReports, type IssuedReportSummary } from '../../lib/db';
+import { restoreSession, issueReport, listIssuedReportsPage, type IssuedReportSummary } from '../../lib/db';
+import { clampReportPage, reportPageOffset } from '../../lib/reportHistoryPaging';
 import { reportPdfPrintTitle } from '../../lib/reportPdfFilename';
+import { downloadReportCsv, downloadReportExcel, type ReportExport, type ReportSheet } from '../../lib/reportExport';
 import { REPORT_TYPE_LABEL } from '../../lib/reportTypes';
 import WeeklyPrintReport from './WeeklyPrintReport';
 import MonthlyPrintReport from './MonthlyPrintReport';
@@ -28,7 +30,7 @@ const UTILIZATION_PAGE_SIZE = 10;
 
 /* ─── Types ───────────────────────────────────────── */
 interface WeeklyRow {
-  date: string; asn: string; driver: string; truck: string; route: string;
+  date: string; dateStamp: string; asn: string; driver: string; truck: string; route: string;
   client: string; pickupTime: string; scheduledArrivalTime: string; ata: string;
   status: 'On Time' | 'Delayed' | 'Completed' | 'Assigned' | 'Picked Up' | 'In Transit';
 }
@@ -37,18 +39,18 @@ interface MonthlyRow {
   onTime: number; delayed: number; cancelled: number; rate: string;
 }
 interface DelayRow {
-  date: string; asn: string; driver: string; truck: string; route: string;
+  date: string; dateStamp: string; asn: string; driver: string; truck: string; route: string;
   client: string; scheduledTime: string; reportedAt: string; reportedStamp: string;
   reason: string; type: string; status: 'Resolved' | 'Ongoing';
 }
 interface TruckUtilRow {
   plate: string; classification: string; timesAssigned: number;
   completedTrips: number; cancelledAssignments: number;
-  lastDriver: string; lastUsedDate: string;
+  lastDriver: string; lastUsedDate: string; lastUsedStamp: string;
 }
 interface DriverUtilRow {
   key: string; name: string; timesAssigned: number; completedDeliveries: number;
-  cancelledAssignments: number; lastTruck: string; lastRoute: string; lastDeliveryDate: string;
+  cancelledAssignments: number; lastTruck: string; lastRoute: string; lastDeliveryDate: string; lastDeliveryStamp: string;
 }
 type ReportKey = 'weekly' | 'monthly' | 'delay' | 'utilization';
 type UtilTab = 'trucks' | 'drivers';
@@ -78,6 +80,21 @@ function fmtTime(iso: string) {
   try {
     return new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
   } catch { return iso; }
+}
+
+function exportDay(stamp: string, fallback: string): string {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(stamp)) return stamp;
+  const parsed = stamp ? parseStoredTimestamp(stamp) : null;
+  if (!parsed) return fallback;
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(parsed).map((part) => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function exportTime(stamp: string, fallback: string): string {
+  const parsed = stamp ? parseStoredTimestamp(stamp) : null;
+  return parsed ? new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', hour: 'numeric', minute: '2-digit', hour12: true }).format(parsed) : fallback;
 }
 
 /* REQ-007: issued_reports.report_period_start/end are plain YYYY-MM-DD with no time
@@ -141,6 +158,7 @@ function buildWeeklyRows(assignments: Assignment[], completed: CompletedTask[], 
     const isDelayed = (c.delayReports?.length ?? 0) > 0;
     rows.push({
       date: c.completedAt ? fmtDate(c.completedAt) : c.deliveryDate,
+      dateStamp: c.completedAt || c.deliveryDate,
       asn: c.id,
       driver: c.driverName, truck: c.truckPlate,
       route: getAssignmentRoute(c),
@@ -160,6 +178,7 @@ function buildWeeklyRows(assignments: Assignment[], completed: CompletedTask[], 
     };
     rows.push({
       date: a.deliveryDate,
+      dateStamp: a.deliveryDate,
       asn: a.id,
       driver: a.driverName, truck: a.truckPlate,
       route: getAssignmentRoute(a),
@@ -181,6 +200,7 @@ function buildDelayRows(assignments: Assignment[], completed: CompletedTask[]): 
     for (const dr of a.delayReports) {
       rows.push({
         date: dr.reportedAt ? fmtDate(dr.reportedAt) : a.deliveryDate,
+        dateStamp: dr.reportedAt || a.deliveryDate,
         asn: a.id,
         driver: a.driverName, truck: a.truckPlate,
         route: getAssignmentRoute(a),
@@ -275,7 +295,7 @@ function buildTruckUtilRows(
   const classByPlate = new Map(trucks.map((t) => [t.plateNumber, t.classification?.trim() || '—']));
   const byPlate = new Map<string, {
     classification: string; timesAssigned: number; completedTrips: number; cancelledAssignments: number;
-    lastDriver: string; lastUsedDate: string; lastUsedSort: number;
+    lastDriver: string; lastUsedDate: string; lastUsedStamp: string; lastUsedSort: number;
   }>();
 
   const touch = (plate: string, driver: string, dateValue: string, kind: 'completed' | 'cancelled' | 'other') => {
@@ -284,7 +304,7 @@ function buildTruckUtilRows(
     if (!row) {
       row = {
         classification: classByPlate.get(plate) ?? '—', timesAssigned: 0, completedTrips: 0,
-        cancelledAssignments: 0, lastDriver: '—', lastUsedDate: '—', lastUsedSort: -1,
+        cancelledAssignments: 0, lastDriver: '—', lastUsedDate: '—', lastUsedStamp: '', lastUsedSort: -1,
       };
       byPlate.set(plate, row);
     }
@@ -296,6 +316,7 @@ function buildTruckUtilRows(
       row.lastUsedSort = sortValue;
       row.lastDriver = driver.trim() || '—';
       row.lastUsedDate = dateValue ? fmtDate(dateValue) : '—';
+      row.lastUsedStamp = dateValue;
     }
   };
 
@@ -307,7 +328,7 @@ function buildTruckUtilRows(
     .map(([plate, r]) => ({
       plate, classification: r.classification, timesAssigned: r.timesAssigned,
       completedTrips: r.completedTrips, cancelledAssignments: r.cancelledAssignments,
-      lastDriver: r.lastDriver, lastUsedDate: r.lastUsedDate,
+      lastDriver: r.lastDriver, lastUsedDate: r.lastUsedDate, lastUsedStamp: r.lastUsedStamp,
     }))
     .sort((a, b) => b.timesAssigned - a.timesAssigned || a.plate.localeCompare(b.plate));
 }
@@ -318,7 +339,7 @@ function buildDriverUtilRows(assignments: Assignment[], completed: CompletedTask
   const byDriver = new Map<string, {
     name: string;
     timesAssigned: number; completedDeliveries: number; cancelledAssignments: number;
-    lastTruck: string; lastRoute: string; lastDeliveryDate: string; lastUsedSort: number;
+    lastTruck: string; lastRoute: string; lastDeliveryDate: string; lastDeliveryStamp: string; lastUsedSort: number;
   }>();
 
   const touch = (driverId: string, name: string, truck: string, route: string, dateValue: string, kind: 'completed' | 'cancelled' | 'other') => {
@@ -327,7 +348,7 @@ function buildDriverUtilRows(assignments: Assignment[], completed: CompletedTask
     const key = persistedId ? `id:${persistedId}` : `name:${name.trim().toLocaleLowerCase()}`;
     let row = byDriver.get(key);
     if (!row) {
-      row = { name, timesAssigned: 0, completedDeliveries: 0, cancelledAssignments: 0, lastTruck: '—', lastRoute: '—', lastDeliveryDate: '—', lastUsedSort: -1 };
+      row = { name, timesAssigned: 0, completedDeliveries: 0, cancelledAssignments: 0, lastTruck: '—', lastRoute: '—', lastDeliveryDate: '—', lastDeliveryStamp: '', lastUsedSort: -1 };
       byDriver.set(key, row);
     }
     row.timesAssigned += 1;
@@ -340,6 +361,7 @@ function buildDriverUtilRows(assignments: Assignment[], completed: CompletedTask
       row.lastTruck = truck.trim() || '—';
       row.lastRoute = route;
       row.lastDeliveryDate = dateValue ? fmtDate(dateValue) : '—';
+      row.lastDeliveryStamp = dateValue;
     }
   };
 
@@ -350,18 +372,87 @@ function buildDriverUtilRows(assignments: Assignment[], completed: CompletedTask
   return [...byDriver.entries()]
     .map(([key, r]) => ({
       key, name: r.name, timesAssigned: r.timesAssigned, completedDeliveries: r.completedDeliveries,
-      cancelledAssignments: r.cancelledAssignments, lastTruck: r.lastTruck, lastRoute: r.lastRoute, lastDeliveryDate: r.lastDeliveryDate,
+      cancelledAssignments: r.cancelledAssignments, lastTruck: r.lastTruck, lastRoute: r.lastRoute, lastDeliveryDate: r.lastDeliveryDate, lastDeliveryStamp: r.lastDeliveryStamp,
     }))
     .sort((a, b) => b.timesAssigned - a.timesAssigned || a.name.localeCompare(b.name) || a.key.localeCompare(b.key));
 }
 
-/* ─── CSV Export Helper ───────────────────────────── */
-function downloadCSV(filename: string, headers: string[], rows: string[][]) {
-  const csv = [headers, ...rows].map((r) => r.map((c) => `"${c}"`).join(',')).join('\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url  = URL.createObjectURL(blob);
-  const a    = Object.assign(document.createElement('a'), { href: url, download: filename });
-  a.click(); URL.revokeObjectURL(url);
+/* One set of columns and rows feeds both CSV and Excel; preview exports keep
+   their existing scope (including the selected fleet tab). */
+function reportExportSheets(
+  key: ReportKey, fleet: UtilTab | 'combined', weekly: WeeklyRow[], monthly: MonthlyRow[],
+  delays: DelayRow[], trucks: TruckUtilRow[], drivers: DriverUtilRow[],
+): ReportSheet[] {
+  if (key === 'weekly') return [{
+    name: 'Weekly Performance',
+    columns: [
+      { header: 'Date', width: 18, kind: 'date' }, { header: 'Driver', width: 28 },
+      { header: 'Truck #', width: 17 }, { header: 'Route', width: 42, wrap: true },
+      { header: 'Client', width: 30, wrap: true }, { header: 'Pickup Time', width: 17, kind: 'time' },
+      { header: 'STA', width: 16, kind: 'time' }, { header: 'ATA', width: 16, kind: 'time' },
+      { header: 'Status', width: 18 },
+    ],
+    rows: weekly.map((r) => [exportDay(r.dateStamp, r.date), r.driver, r.truck, r.route, r.client, r.pickupTime, r.scheduledArrivalTime, r.ata, r.status]),
+  }];
+  if (key === 'monthly') return [{
+    name: 'Monthly Summary',
+    columns: [
+      { header: 'Month', width: 24, kind: 'month' }, { header: 'Total', width: 14, kind: 'number' },
+      { header: 'On-Time', width: 14, kind: 'number' }, { header: 'Delayed', width: 14, kind: 'number' },
+      { header: 'Cancelled', width: 16, kind: 'number' }, { header: 'Rate', width: 14, kind: 'percent' },
+    ],
+    rows: monthly.map((r) => [r.week, r.total, r.onTime, r.delayed, r.cancelled, r.rate]),
+  }];
+  if (key === 'delay') return [{
+    name: 'Delay and Issues',
+    columns: [
+      { header: 'Date', width: 18, kind: 'date' }, { header: 'Driver', width: 26 },
+      { header: 'Truck #', width: 18 }, { header: 'Route', width: 42, wrap: true },
+      { header: 'Client', width: 28, wrap: true }, { header: 'Scheduled', width: 17, kind: 'time' },
+      { header: 'Reported At', width: 18, kind: 'time' }, { header: 'Issue Type', width: 22, wrap: true },
+      { header: 'Reason', width: 54, wrap: true }, { header: 'Status', width: 17 },
+    ],
+    rows: delays.map((r) => [exportDay(r.dateStamp, r.date), r.driver, r.truck, r.route, r.client, r.scheduledTime, exportTime(r.reportedStamp, r.reportedAt), r.type, r.reason, r.status]),
+  }];
+  if (fleet === 'trucks') return [{
+    name: 'Truck Utilization',
+    columns: [
+      { header: 'Plate Number', width: 21 }, { header: 'Classification', width: 28, wrap: true },
+      { header: 'Times Assigned', width: 19, kind: 'number' }, { header: 'Completed Trips', width: 19, kind: 'number' },
+      { header: 'Cancelled Assignments', width: 24, kind: 'number' }, { header: 'Last Driver', width: 30, wrap: true },
+      { header: 'Last Used Date', width: 20, kind: 'date' },
+    ],
+    rows: trucks.map((r) => [r.plate, r.classification, r.timesAssigned, r.completedTrips, r.cancelledAssignments, r.lastDriver, exportDay(r.lastUsedStamp, r.lastUsedDate)]),
+  }];
+  if (fleet === 'drivers') return [{
+    name: 'Driver Utilization',
+    columns: [
+      { header: 'Driver Name', width: 30, wrap: true }, { header: 'Times Assigned', width: 19, kind: 'number' },
+      { header: 'Completed Deliveries', width: 24, kind: 'number' }, { header: 'Cancelled Assignments', width: 24, kind: 'number' },
+      { header: 'Last Truck Used', width: 22 }, { header: 'Last Delivery Date', width: 21, kind: 'date' },
+    ],
+    rows: drivers.map((r) => [r.name, r.timesAssigned, r.completedDeliveries, r.cancelledAssignments, r.lastTruck, exportDay(r.lastDeliveryStamp, r.lastDeliveryDate)]),
+  }];
+  return [{
+    name: 'Fleet and Drivers',
+    columns: [
+      { header: 'Section', width: 15 }, { header: 'Name / Plate', width: 30, wrap: true },
+      { header: 'Classification', width: 28, wrap: true }, { header: 'Times Assigned', width: 19, kind: 'number' },
+      { header: 'Completed', width: 17, kind: 'number' }, { header: 'Cancelled Assignments', width: 24, kind: 'number' },
+      { header: 'Last Driver / Truck', width: 30, wrap: true }, { header: 'Last Date', width: 20, kind: 'date' },
+    ],
+    rows: [
+      ...trucks.map((r) => ['Truck', r.plate, r.classification, r.timesAssigned, r.completedTrips, r.cancelledAssignments, r.lastDriver, exportDay(r.lastUsedStamp, r.lastUsedDate)]),
+      ...drivers.map((r) => ['Driver', r.name, '—', r.timesAssigned, r.completedDeliveries, r.cancelledAssignments, r.lastTruck, exportDay(r.lastDeliveryStamp, r.lastDeliveryDate)]),
+    ],
+  }];
+}
+
+async function exportReport(report: ReportExport, format: 'csv' | 'xlsx'): Promise<void> {
+  if (format === 'csv') { downloadReportCsv(report); return; }
+  const session = await restoreSession().catch(() => null);
+  if (session?.kind === 'staff') report.generatedBy = session.staff.name || session.staff.email;
+  await downloadReportExcel(report);
 }
 
 /* ─── Delay Type Badge ────────────────────────────── */
@@ -552,34 +643,23 @@ function PreviewModal({
     { label:'Cancelled Assignments', value: driverUtilSummary.cancelled, icon: X,       printColor:'text-slate-600', printBackground:'bg-slate-50' },
   ];
 
-  /* CSV Export */
-  const handleExportCSV = () => {
-    if (reportKey === 'weekly') {
-      downloadCSV('weekly_report.csv',
-        ['Date','Driver','Truck #','Route','Client','Pickup Time','STA','ATA','Status'],
-        weeklyRows.map((r) => [r.date,r.driver,r.truck,r.route,r.client,r.pickupTime,r.scheduledArrivalTime,r.ata,r.status]),
-      );
-    } else if (reportKey === 'monthly') {
-      downloadCSV('monthly_report.csv',
-        ['Month','Total','On-Time','Delayed','Cancelled','Rate'],
-        monthlyRows.map((r) => [r.week,String(r.total),String(r.onTime),String(r.delayed),String(r.cancelled),r.rate]),
-      );
-    } else if (reportKey === 'delay') {
-      downloadCSV('delay_report.csv',
-        ['Date','Driver','Truck #','Route','Client','Scheduled','Reported At','Issue Type','Reason','Status'],
-        delayRows.map((r) => [r.date,r.driver,r.truck,r.route,r.client,r.scheduledTime,r.reportedAt,r.type,r.reason,r.status]),
-      );
-    } else if (utilTab === 'trucks') {
-      downloadCSV('truck_utilization_report.csv',
-        ['Plate Number','Classification','Times Assigned','Completed Trips','Cancelled Assignments','Last Driver','Last Used Date'],
-        truckUtilRows.map((r) => [r.plate,r.classification,String(r.timesAssigned),String(r.completedTrips),String(r.cancelledAssignments),r.lastDriver,r.lastUsedDate]),
-      );
-    } else {
-      downloadCSV('driver_utilization_report.csv',
-        ['Driver Name','Times Assigned','Completed Deliveries','Cancelled Assignments','Last Truck Used','Last Delivery Date'],
-        driverUtilRows.map((r) => [r.name,String(r.timesAssigned),String(r.completedDeliveries),String(r.cancelledAssignments),r.lastTruck,r.lastDeliveryDate]),
-      );
-    }
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportError, setExportError] = useState('');
+  const handleExportFile = async (format: 'csv' | 'xlsx') => {
+    if (exportBusy) return;
+    setExportBusy(true);
+    setExportError('');
+    try {
+      const period = reportKey === 'weekly' ? `${toIsoDate(weekBounds.start)} to ${toIsoDate(weekBounds.end)}`
+        : reportKey === 'monthly' ? 'Completed delivery months'
+        : reportKey === 'delay' ? 'All recorded delays and issues' : 'Historical assignments';
+      await exportReport({
+        type: reportKey, period, generatedAt: new Date(),
+        sheets: reportExportSheets(reportKey, utilTab, weeklyRows, monthlyRows, delayRows, truckUtilRows, driverUtilRows),
+      }, format);
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : 'Could not export report.');
+    } finally { setExportBusy(false); }
   };
 
   const handlePrint = async () => {
@@ -1101,13 +1181,17 @@ function PreviewModal({
               className="flex items-center gap-2 px-4 py-2 border border-border rounded-lg text-sm hover:bg-accent transition-colors">
               <Printer className="w-4 h-4" /> Print / PDF
             </button>
-            <button onClick={handleExportCSV}
-              className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 transition-colors">
-              <FileDown className="w-4 h-4" /> Export CSV
+            <button onClick={() => void handleExportFile('xlsx')} disabled={exportBusy}
+              className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 transition-colors disabled:opacity-60">
+              <FileDown className="w-4 h-4" /> {exportBusy ? 'Exporting…' : 'Export Excel (.xlsx)'}
+            </button>
+            <button onClick={() => void handleExportFile('csv')} disabled={exportBusy}
+              className="flex items-center gap-2 px-4 py-2 border border-border rounded-lg text-sm hover:bg-accent transition-colors disabled:opacity-60">
+              <FileDown className="w-4 h-4" /> Export CSV (.csv)
             </button>
           </div>
         </div>
-        {printError && <p role="alert" className="px-4 pb-2 text-sm text-red-700 sm:px-6">{printError}</p>}
+        {(printError || exportError) && <p role="alert" className="px-4 pb-2 text-sm text-red-700 sm:px-6">{printError || exportError}</p>}
       </div>
     </div>
     {reportKey === 'weekly' && formalPrintContext && (
@@ -1262,16 +1346,43 @@ interface ReportsProps {
 export default function Reports({ assignments, completed, cancelled, trucks }: ReportsProps) {
   const [previewKey, setPreviewKey] = useState<ReportKey | null>(null);
   const [issuedReports, setIssuedReports] = useState<IssuedReportSummary[] | null>(null);
+  const [issuedReportsPage, setIssuedReportsPage] = useState(1);
+  const [issuedReportsTotal, setIssuedReportsTotal] = useState(0);
+  const [issuedReportsLoading, setIssuedReportsLoading] = useState(true);
   const [issuedReportsError, setIssuedReportsError] = useState('');
-  const fetchIssuedReports = () => {
-    listIssuedReports(20)
-      .then((rows) => { setIssuedReports(rows); setIssuedReportsError(''); })
-      .catch((error: unknown) => setIssuedReportsError(error instanceof Error ? error.message : 'Could not load report history.'));
-  };
-  // Refetch on mount, and again whenever the preview modal closes — covers the
-  // common "print, close, see it appear" flow without a cross-component event bus.
-  useEffect(() => { fetchIssuedReports(); }, []);
-  useEffect(() => { if (!previewKey) fetchIssuedReports(); }, [previewKey]);
+  const [issuedReportsRefresh, setIssuedReportsRefresh] = useState(0);
+  const previousPreviewKey = useRef(previewKey);
+  useEffect(() => {
+    let current = true;
+    setIssuedReportsLoading(true);
+    setIssuedReportsError('');
+    listIssuedReportsPage(PAGE_SIZE, reportPageOffset(issuedReportsPage, PAGE_SIZE))
+      .then((result) => {
+        if (!current) return;
+        const validPage = clampReportPage(issuedReportsPage, result.total, PAGE_SIZE);
+        if (validPage !== issuedReportsPage) {
+          setIssuedReportsPage(validPage);
+          return;
+        }
+        setIssuedReports(result.reports);
+        setIssuedReportsTotal(result.total);
+        setIssuedReportsLoading(false);
+      })
+      .catch((error: unknown) => {
+        if (!current) return;
+        setIssuedReportsError(error instanceof Error ? error.message : 'Could not load report history.');
+        setIssuedReportsLoading(false);
+      });
+    return () => { current = false; };
+  }, [issuedReportsPage, issuedReportsRefresh]);
+  // A newly issued report belongs at the top of page one after the preview closes.
+  useEffect(() => {
+    if (previousPreviewKey.current && !previewKey) {
+      setIssuedReportsPage(1);
+      setIssuedReportsRefresh((value) => value + 1);
+    }
+    previousPreviewKey.current = previewKey;
+  }, [previewKey]);
   const [draftRange, setDraftRange] = useState<DateRange>(initialRange);
   const [range, setRange] = useState<DateRange>(initialRange);
   const [rangeError, setRangeError] = useState('');
@@ -1305,37 +1416,29 @@ export default function Reports({ assignments, completed, cancelled, trucks }: R
     confirmRangeAction('reset');
   };
 
-  const handleExport = (reportKey: ReportKey) => {
-    const weeklyRows  = buildWeeklyRows(assignments, completed, isoWeekBounds(new Date()));
-    const dRows       = buildDelayRows(assignments, completed);
-    const monthlyRows = buildMonthlyRows(completed);
-    if (reportKey === 'weekly') {
-      downloadCSV('weekly_report.csv',
-        ['Date','Driver','Truck #','Route','Client','Pickup Time','STA','ATA','Status'],
-        weeklyRows.map((r) => [r.date,r.driver,r.truck,r.route,r.client,r.pickupTime,r.scheduledArrivalTime,r.ata,r.status]),
-      );
-    } else if (reportKey === 'monthly') {
-      downloadCSV('monthly_report.csv',
-        ['Month','Total','On-Time','Delayed','Cancelled','Rate'],
-        monthlyRows.map((r) => [r.week,String(r.total),String(r.onTime),String(r.delayed),String(r.cancelled),r.rate]),
-      );
-    } else if (reportKey === 'delay') {
-      downloadCSV('delay_report.csv',
-        ['Date','Driver','Truck #','Route','Client','Scheduled','Reported At','Issue Type','Reason','Status'],
-        dRows.map((r) => [r.date,r.driver,r.truck,r.route,r.client,r.scheduledTime,r.reportedAt,r.type,r.reason,r.status]),
-      );
-    } else {
-      /* Quick export from the card (no tab context) — one combined file, Trucks then Drivers. */
-      const truckRows  = buildTruckUtilRows(assignments, completed, cancelled, trucks);
-      const driverRows = buildDriverUtilRows(assignments, completed, cancelled);
-      downloadCSV('fleet_driver_utilization_report.csv',
-        ['Section','Name / Plate','Classification','Times Assigned','Completed','Cancelled Assignments','Last Driver / Truck','Last Date'],
-        [
-          ...truckRows.map((r) => ['Truck', r.plate, r.classification, String(r.timesAssigned), String(r.completedTrips), String(r.cancelledAssignments), r.lastDriver, r.lastUsedDate]),
-          ...driverRows.map((r) => ['Driver', r.name, '—', String(r.timesAssigned), String(r.completedDeliveries), String(r.cancelledAssignments), r.lastTruck, r.lastDeliveryDate]),
-        ],
-      );
-    }
+  const [cardExportBusy, setCardExportBusy] = useState<ReportKey | null>(null);
+  const [cardExportError, setCardExportError] = useState('');
+  const handleExport = async (reportKey: ReportKey, format: 'csv' | 'xlsx') => {
+    if (cardExportBusy) return;
+    setCardExportBusy(reportKey);
+    setCardExportError('');
+    try {
+      const week = isoWeekBounds(new Date());
+      const weeklyRows  = buildWeeklyRows(assignments, completed, week);
+      const dRows       = buildDelayRows(assignments, completed);
+      const monthlyRows = buildMonthlyRows(completed);
+      await exportReport({
+        type: reportKey,
+        period: reportKey === 'weekly' ? `${toIsoDate(week.start)} to ${toIsoDate(week.end)}`
+          : reportKey === 'monthly' ? 'Completed delivery months'
+          : reportKey === 'delay' ? 'All recorded delays and issues' : 'Historical assignments',
+        generatedAt: new Date(),
+        sheets: reportExportSheets(reportKey, 'combined', weeklyRows, monthlyRows, dRows,
+          buildTruckUtilRows(assignments, completed, cancelled, trucks), buildDriverUtilRows(assignments, completed, cancelled)),
+      }, format);
+    } catch (error) {
+      setCardExportError(error instanceof Error ? error.message : 'Could not export report.');
+    } finally { setCardExportBusy(null); }
   };
 
   const entries: ReportEntry[] = [
@@ -1417,17 +1520,19 @@ export default function Reports({ assignments, completed, cancelled, trucks }: R
                 >
                   <Eye className="h-3.5 w-3.5" /> Preview
                 </button>
-                <button
-                  onClick={() => handleExport(key)}
-                  title="Export CSV"
-                  className="flex h-10 items-center gap-1.5 rounded-lg bg-primary px-4 text-sm font-medium text-white transition-colors hover:bg-primary/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-                >
-                  <FileDown className="h-3.5 w-3.5" /> Export
+                <button onClick={() => void handleExport(key, 'xlsx')} disabled={cardExportBusy !== null}
+                  className="flex h-10 items-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-medium text-white transition-colors hover:bg-primary/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-60">
+                  <FileDown className="h-3.5 w-3.5" /> {cardExportBusy === key ? 'Exporting…' : 'Export Excel (.xlsx)'}
+                </button>
+                <button onClick={() => void handleExport(key, 'csv')} disabled={cardExportBusy !== null}
+                  className="flex h-10 items-center gap-1.5 rounded-lg border border-border bg-white px-3 text-sm font-medium text-foreground transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-60">
+                  <FileDown className="h-3.5 w-3.5" /> Export CSV (.csv)
                 </button>
               </div>
             </div>
           ))}
         </div>
+        {cardExportError && <p role="alert" className="text-sm text-red-700">{cardExportError}</p>}
       </section>
 
       <section className="rounded-xl border border-border bg-white p-4 sm:p-5 shadow-sm">
@@ -1570,11 +1675,13 @@ export default function Reports({ assignments, completed, cancelled, trucks }: R
             <span>Report Name</span><span>Type</span><span>Date Range</span>
             <span>Generated At</span><span>Generated By</span><span>Actions</span>
           </div>
-          {issuedReportsError ? (
-            <p role="alert" className="px-4 py-12 text-center text-sm text-red-600">{issuedReportsError}</p>
-          ) : issuedReports === null ? (
+          {issuedReportsError && <div role="alert" className="flex flex-wrap items-center justify-center gap-2 px-4 py-3 text-sm text-red-600">
+            <span>{issuedReportsError}</span>
+            <button type="button" onClick={() => setIssuedReportsRefresh((value) => value + 1)} className="min-h-10 rounded-md px-2 font-medium underline focus-visible:outline-2 focus-visible:outline-primary">Try again</button>
+          </div>}
+          {issuedReports === null && issuedReportsLoading ? (
             <p className="px-4 py-12 text-center text-sm text-muted-foreground">Loading…</p>
-          ) : issuedReports.length === 0 ? (
+          ) : issuedReports === null ? null : issuedReportsTotal === 0 && !issuedReportsError ? (
             <p className="px-4 py-12 text-center text-sm text-muted-foreground">No reports have been generated yet.</p>
           ) : (
             <div className="divide-y divide-border">
@@ -1593,6 +1700,8 @@ export default function Reports({ assignments, completed, cancelled, trucks }: R
               ))}
             </div>
           )}
+          <PaginationFooter page={issuedReportsPage} totalItems={issuedReportsTotal} pageSize={PAGE_SIZE}
+            onPageChange={setIssuedReportsPage} singular="report" plural="reports" />
         </div>
       </section>
 
