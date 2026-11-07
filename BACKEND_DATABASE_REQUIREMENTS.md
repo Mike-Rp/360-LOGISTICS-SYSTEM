@@ -1920,6 +1920,39 @@ the connected Supabase project in this frontend task.
 
 **Status:** Implemented
 
+**2026-11-07 — Excel exports are now recorded too (bug fix).** Only Print / PDF called `issue_report()`, so an
+Excel download never got a Report ID and never appeared in Recent Reports (whose subtitle says "generated and
+downloaded"). Both Excel paths — the Export Excel button in a report preview, and the export button on each report card
+of the Reports page — now record the report FIRST (same RPC, same metadata-only record, same digest rules as printing)
+and only then build the file; if recording fails nothing is downloaded, so no report leaves the system unrecorded. The
+Report ID is written into the workbook (a "Report ID" row under the details, linked to the public verify page) and into
+the file name, and the history list refreshes straight away after a card export. The rest of the sheet layout is
+unchanged.
+
+**2026-11-07 — Weekly report summary counted the wrong things (bug fix, display only).** The summary above the
+table said **Completed** = every completed delivery in the system and **Active** = every active delivery, while **Total**
+and **Delayed** counted only the report's week — a printed report could show "Total Deliveries 6, Completed 21". All four
+numbers now come from the same weekly rows as the table: each row records whether it is a finished delivery (a "Delayed"
+row can be finished or still active, so the status alone cannot tell), **Completed** includes the delayed ones (same as the
+monthly report), and **Active** is this week's deliveries still in progress. The "Weekly Notes" block of the PDF uses the
+same numbers. No database change and no change to what is recorded for the Report ID. Test: `reportExport.test.cjs`.
+
+**Format column — PDF or Excel (migration `20261107000000_issued_reports_format.sql`).** Recent Reports could not say
+how a report left the system, so `issued_reports.report_format` ('pdf' | 'excel', NOT NULL, default 'pdf') was added.
+Every row that existed was recorded by a print, so the default is also the correct backfill. `issue_report()` gains
+`p_format` (default 'pdf'; anything else is `invalid_format`) and is otherwise identical to `20261105000002`
+(`can_write()` or `is_opm()`, same validation, random RPT-… id, server-stamped generator, same response). The old
+5-argument version is dropped — with both present, a call without a format would be ambiguous and PostgREST would refuse
+it. `list_issued_reports_page()` returns `format` per report (same signature, so `create or replace`). Not changed:
+`verify_report()`, `list_issued_reports()` (select * picks the column up), RLS / grants. The migration first checks that
+the live functions are the versions it was written against and stops otherwise. The history table shows a **PDF** /
+**Excel** badge in the Type cell; a row without a format (an older database) reads as PDF. **Applied 2026-11-07; `issued_reports_format.test.sql` passed 5/5.** **Rollout order:** only Excel
+sends `p_format`; printing makes the exact call it always did, so printing works before and after the migration. Excel
+export needs the migration — apply it before the app is deployed or Excel downloads will fail with "Unable to record and
+export the report". Tests: `supabase/tests/issued_reports_format.test.sql` (one function left, grants, default / constraint,
+pdf vs excel recorded, validation, refused callers write nothing, list shows the format) and `reportExport.test.cjs`
+(Report ID in the file name and workbook, layout unchanged, all three paths record first, Excel sends its format, badge).
+
 **2026-11-05 — permission change (approved): OPM may issue reports.** OPM could open all four Reports previews, but
 Print / PDF failed with `not_authorized` because `issue_report()` required `can_write()`, which excludes OPM. The earlier
 "OPM stays view-only" rule is changed for **report issuance only**. Migration
