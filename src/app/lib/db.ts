@@ -1442,10 +1442,15 @@ export async function issueReport(input: {
   reportType: 'weekly' | 'monthly' | 'delay' | 'utilization';
   periodStart?: string | null; periodEnd?: string | null;
   rowCount: number; rowDigest?: string | null;
+  /** How the report left the system. Left out for a printed PDF (the default). */
+  format?: 'pdf' | 'excel';
 }): Promise<{ id: string; generatedAt: string }> {
   const { data, error } = await supabase.rpc('issue_report', {
     p_report_type: input.reportType, p_period_start: input.periodStart ?? null, p_period_end: input.periodEnd ?? null,
     p_row_count: input.rowCount, p_row_digest: input.rowDigest ?? null,
+    // Only Excel sends a format. Printing keeps the exact call it always made, so it works with or without
+    // the issued_reports_format migration; the database records anything without a format as 'pdf'.
+    ...(input.format === 'excel' ? { p_format: 'excel' } : {}),
   });
   if (error) throw error;
   const row = data as { id: string; generatedAt: string };
@@ -1467,6 +1472,8 @@ export async function verifyReport(id: string): Promise<VerifiedReport | null> {
 export interface IssuedReportSummary {
   id: string; reportType: string; generatedByName: string; generatedAt: string;
   periodStart: string | null; periodEnd: string | null; rowCount: number;
+  /** 'pdf' = printed, 'excel' = exported. Missing (an older database) means pdf. */
+  format?: 'pdf' | 'excel';
 }
 
 export interface IssuedReportsPage {
@@ -1494,6 +1501,7 @@ export async function listIssuedReports(limit = 20): Promise<IssuedReportSummary
   return (data as Row[] ?? []).map((r) => ({
     id: r.id, reportType: r.report_type, generatedByName: r.generated_by_name, generatedAt: r.generated_at,
     periodStart: r.report_period_start ?? null, periodEnd: r.report_period_end ?? null, rowCount: r.row_count,
+    format: r.report_format === 'excel' ? 'excel' as const : 'pdf' as const,
   }));
 }
 
