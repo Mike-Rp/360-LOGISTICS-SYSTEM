@@ -16,22 +16,12 @@ const filename = loadTs('reportPdfFilename.ts');
 const report = loadTs('reportExport.ts', { './reportPdfFilename': filename });
 const ExcelJS = require('exceljs-community');
 
-test('CSV uses UTF-8 BOM, CRLF, correct quoting and preserves Unicode', () => {
-  const csv = report.serializeReportCsv({
-    name: 'Weekly', columns: [{ header: 'Driver' }, { header: 'Route' }],
-    rows: [['Niño "Jun"', 'Makati → Pasay, south\nleg'], ['Ñora', '—']],
-  });
-  assert.equal(csv, '\uFEFF"Driver","Route"\r\n"Niño ""Jun""","Makati → Pasay, south\nleg"\r\n"Ñora","—"\r\n');
-  assert.equal(Buffer.from(csv, 'utf8').toString('utf8'), csv);
-});
-
-test('CSV neutralizes formula-like untrusted text without padding normal values', () => {
-  for (const value of ['=2+2', '+SUM(1,2)', '-CMD', '@SUM(1,2)', '\t=HYPERLINK(1)']) {
-    assert.equal(report.safeCsvCell(value), `'${value}`);
-  }
-  assert.equal(report.safeCsvCell('0123'), '0123');
-  assert.equal(report.safeCsvCell('Niña'), 'Niña');
-  assert.equal(report.safeCsvCell(-4), '-4');
+test('Reports cards and shared preview footer offer Excel without CSV controls', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../components/admin/Reports.tsx'), 'utf8');
+  assert.doesNotMatch(source, /Export CSV|downloadReportCsv|handleExportFile\('csv'\)/i);
+  assert.match(source, /onClick=\{onClose\}[\s\S]*?>\s*Close\s*</);
+  assert.match(source, /onClick=\{handlePrint\}[\s\S]*?Print \/ PDF/);
+  assert.match(source, /Export Excel \(\.xlsx\)/);
 });
 
 test('all report types get Manila filenames and repeated exports avoid collisions', () => {
@@ -41,10 +31,9 @@ test('all report types get Manila filenames and repeated exports avoid collision
     ['utilization', 'Fleet-Driver-Utilization'], ['delay', 'Delay-Issues'],
   ];
   for (const [type, label] of names) {
-    const first = report.reportExportFilename(type, 'xlsx', instant);
+    const first = report.reportExportFilename(type, instant);
     assert.equal(first, `360LOGISTICS_${label}_2026-11-05_164522.xlsx`);
-    assert.equal(report.reportExportFilename(type, 'xlsx', instant), `360LOGISTICS_${label}_2026-11-05_164522_2.xlsx`);
-    assert.equal(report.reportExportFilename(type, 'csv', instant), `360LOGISTICS_${label}_2026-11-05_164522.csv`);
+    assert.equal(report.reportExportFilename(type, instant), `360LOGISTICS_${label}_2026-11-05_164522_2.xlsx`);
   }
 });
 
@@ -151,7 +140,7 @@ test('long names and routes wrap in the existing workbook without losing charact
   assert.ok(sheet.getRow(9).height > 23);
 });
 
-test('Reports export mapping produces complete CSV and XLSX rows for every report type', async () => {
+test('Reports export mapping produces complete XLSX rows for every report type', async () => {
   const source = fs.readFileSync(path.join(__dirname, '../components/admin/Reports.tsx'), 'utf8');
   const start = source.indexOf('function reportExportSheets(');
   const end = source.indexOf('async function exportReport(', start);
@@ -171,17 +160,14 @@ test('Reports export mapping produces complete CSV and XLSX rows for every repor
     drivers: [{ name: 'Niño Reyes', timesAssigned: 2, completedDeliveries: 1, cancelledAssignments: 0, lastTruck: '0123', lastDeliveryStamp: '2026-11-05', lastDeliveryDate: 'Nov 5' }],
   };
   const cases = [
-    ['weekly', 'Niño Reyes', 1],
-    ['monthly', 'November 2026', 1],
-    ['utilization', '0123', 2],
-    ['delay', 'Ñora Cruz', 1],
+    ['weekly', 1],
+    ['monthly', 1],
+    ['utilization', 2],
+    ['delay', 1],
   ];
-  for (const [type, expectedFirstValue, expectedRows] of cases) {
+  for (const [type, expectedRows] of cases) {
     const sheets = mapped.reportExportSheets(type, 'combined', rows.weekly, rows.monthly, rows.delays, rows.trucks, rows.drivers);
     assert.equal(sheets[0].rows.length, expectedRows);
-    const csvBytes = Buffer.from(report.serializeReportCsv(sheets[0]), 'utf8');
-    assert.equal(csvBytes.subarray(0, 3).toString('hex'), 'efbbbf');
-    assert.ok(csvBytes.toString('utf8').includes(expectedFirstValue));
     const xlsxBytes = await report.createReportWorkbook({ type, generatedAt: new Date('2026-11-05T08:45:22Z'), sheets });
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(Buffer.from(xlsxBytes));

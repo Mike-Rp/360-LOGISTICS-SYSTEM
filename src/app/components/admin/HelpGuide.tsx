@@ -213,11 +213,11 @@ const TOPICS: Topic[] = [
       },
       {
         title: 'Exploring report sections',
-        body: 'Each section (Delivery Summary, On-Time Analysis, Delay Reports, Document Review, Driver Performance) shows a preview table and can be exported as a CSV file.',
+        body: 'Open a report preview to review its table, or export a formatted Excel workbook from its report card.',
       },
       {
         title: 'Export a report',
-        body: 'Click the download icon (FileDown) button on any report section to download a CSV file. Open it in Excel, Google Sheets, or any spreadsheet app.',
+        body: 'Click "Export Excel (.xlsx)" on a report card to download a formatted workbook for Microsoft Excel or another compatible spreadsheet app.',
         tip: 'Use the Preview button (Eye icon) to review the data before exporting.',
       },
       {

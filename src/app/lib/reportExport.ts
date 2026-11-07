@@ -20,25 +20,12 @@ const REPORT_TITLES: Record<PrintableReportType, string> = {
 
 const exportCounts = new Map<string, number>();
 
-export function reportExportFilename(type: PrintableReportType, extension: 'csv' | 'xlsx', at: Date): string {
+export function reportExportFilename(type: PrintableReportType, at: Date): string {
   const base = reportPdfPrintTitle(type, at);
-  const key = `${base}.${extension}`;
+  const key = `${base}.xlsx`;
   const count = (exportCounts.get(key) ?? 0) + 1;
   exportCounts.set(key, count);
-  return `${base}${count > 1 ? `_${count}` : ''}.${extension}`;
-}
-
-/** A leading apostrophe stops Excel from evaluating an untrusted CSV cell as a formula. */
-export function safeCsvCell(value: ReportCell): string {
-  const text = value == null ? '' : String(value);
-  if (typeof value === 'number') return text;
-  return /^[\s\u0000-\u001f]*[=+\-@]/u.test(text) ? `'${text}` : text;
-}
-
-export function serializeReportCsv(sheet: ReportSheet): string {
-  const quote = (value: ReportCell) => `"${safeCsvCell(value).replace(/"/g, '""')}"`;
-  return `\uFEFF${[sheet.columns.map((column) => column.header), ...sheet.rows]
-    .map((row) => row.map(quote).join(',')).join('\r\n')}\r\n`;
+  return `${base}${count > 1 ? `_${count}` : ''}.xlsx`;
 }
 
 export function downloadReportBlob(blob: Blob, filename: string): void {
@@ -48,12 +35,6 @@ export function downloadReportBlob(blob: Blob, filename: string): void {
   link.download = filename;
   link.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-export function downloadReportCsv(report: ReportExport): void {
-  // CSV has one table; fleet card exports use a combined sheet to preserve its old columns.
-  const csv = serializeReportCsv(report.sheets[0]);
-  downloadReportBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }), reportExportFilename(report.type, 'csv', report.generatedAt));
 }
 
 function manilaParts(date: Date): Record<string, string> {
@@ -197,5 +178,5 @@ export async function createReportWorkbook(report: ReportExport): Promise<ArrayB
 
 export async function downloadReportExcel(report: ReportExport): Promise<void> {
   const buffer = await createReportWorkbook(report);
-  downloadReportBlob(new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), reportExportFilename(report.type, 'xlsx', report.generatedAt));
+  downloadReportBlob(new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), reportExportFilename(report.type, report.generatedAt));
 }

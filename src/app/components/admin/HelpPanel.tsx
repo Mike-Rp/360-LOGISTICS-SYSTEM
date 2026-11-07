@@ -150,12 +150,12 @@ const TOPICS: Topic[] = [
     icon: BarChart3,
     iconColor: 'text-rose-600',
     iconBg: 'bg-rose-100',
-    tags: ['reports', 'analytics', 'on-time', 'export', 'csv'],
+    tags: ['reports', 'analytics', 'on-time', 'export', 'excel'],
     steps: [
       { title: 'Go to Reports', body: 'Open Reports & Analytics from the sidebar.' },
       { title: 'Choose a report', body: 'Select Weekly Performance, Monthly Delivery Summary, or Delay & Issues.' },
       { title: 'Preview', body: 'Click "Preview" on a report card to inspect its detailed table.' },
-      { title: 'Export CSV', body: 'Click "Export" on a report card to download a CSV for Excel or Google Sheets.', tip: 'The Analytics date range below the report cards filters the charts, not the report cards.' },
+      { title: 'Export Excel', body: 'Click "Export Excel (.xlsx)" on a report card to download a formatted workbook.', tip: 'The Analytics date range below the report cards filters the charts, not the report cards.' },
     ],
   },
   {

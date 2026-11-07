@@ -16,7 +16,7 @@ import QRCode from 'qrcode';
 import { restoreSession, issueReport, listIssuedReportsPage, type IssuedReportSummary } from '../../lib/db';
 import { clampReportPage, reportPageOffset } from '../../lib/reportHistoryPaging';
 import { reportPdfPrintTitle } from '../../lib/reportPdfFilename';
-import { downloadReportCsv, downloadReportExcel, type ReportExport, type ReportSheet } from '../../lib/reportExport';
+import { downloadReportExcel, type ReportExport, type ReportSheet } from '../../lib/reportExport';
 import { REPORT_TYPE_LABEL } from '../../lib/reportTypes';
 import WeeklyPrintReport from './WeeklyPrintReport';
 import MonthlyPrintReport from './MonthlyPrintReport';
@@ -249,7 +249,7 @@ function buildMonthlyRows(completed: CompletedTask[]): MonthlyRow[] {
 }
 
 /* Web overview uses the scheduled delivery month for every assignment state.
-   The existing completed-only rows remain intact for CSV and Print / PDF. */
+   The existing completed-only rows remain intact for Excel and Print / PDF. */
 function buildMonthlyPreviewRows(
   assignments: Assignment[], completed: CompletedTask[], cancelled: Assignment[],
 ): MonthlyPreviewRow[] {
@@ -377,7 +377,7 @@ function buildDriverUtilRows(assignments: Assignment[], completed: CompletedTask
     .sort((a, b) => b.timesAssigned - a.timesAssigned || a.name.localeCompare(b.name) || a.key.localeCompare(b.key));
 }
 
-/* One set of columns and rows feeds both CSV and Excel; preview exports keep
+/* One set of columns and rows feeds Excel; preview exports keep
    their existing scope (including the selected fleet tab). */
 function reportExportSheets(
   key: ReportKey, fleet: UtilTab | 'combined', weekly: WeeklyRow[], monthly: MonthlyRow[],
@@ -448,8 +448,7 @@ function reportExportSheets(
   }];
 }
 
-async function exportReport(report: ReportExport, format: 'csv' | 'xlsx'): Promise<void> {
-  if (format === 'csv') { downloadReportCsv(report); return; }
+async function exportReport(report: ReportExport): Promise<void> {
   const session = await restoreSession().catch(() => null);
   if (session?.kind === 'staff') report.generatedBy = session.staff.name || session.staff.email;
   await downloadReportExcel(report);
@@ -645,7 +644,7 @@ function PreviewModal({
 
   const [exportBusy, setExportBusy] = useState(false);
   const [exportError, setExportError] = useState('');
-  const handleExportFile = async (format: 'csv' | 'xlsx') => {
+  const handleExportFile = async () => {
     if (exportBusy) return;
     setExportBusy(true);
     setExportError('');
@@ -656,7 +655,7 @@ function PreviewModal({
       await exportReport({
         type: reportKey, period, generatedAt: new Date(),
         sheets: reportExportSheets(reportKey, utilTab, weeklyRows, monthlyRows, delayRows, truckUtilRows, driverUtilRows),
-      }, format);
+      });
     } catch (error) {
       setExportError(error instanceof Error ? error.message : 'Could not export report.');
     } finally { setExportBusy(false); }
@@ -1007,7 +1006,7 @@ function PreviewModal({
             </>}
           </div>}
 
-          {/* Existing Print / PDF table and CSV fields retain their current definitions. */}
+          {/* Existing Print / PDF table fields retain their current definitions. */}
           {reportKey === 'delay' && <div className="hidden print:block">{(
             delayRows.length === 0
               ? <EmptyTable message="No delay reports yet. Incidents will appear here when drivers report delays." />
@@ -1181,13 +1180,9 @@ function PreviewModal({
               className="flex items-center gap-2 px-4 py-2 border border-border rounded-lg text-sm hover:bg-accent transition-colors">
               <Printer className="w-4 h-4" /> Print / PDF
             </button>
-            <button onClick={() => void handleExportFile('xlsx')} disabled={exportBusy}
+            <button onClick={() => void handleExportFile()} disabled={exportBusy}
               className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 transition-colors disabled:opacity-60">
               <FileDown className="w-4 h-4" /> {exportBusy ? 'Exporting…' : 'Export Excel (.xlsx)'}
-            </button>
-            <button onClick={() => void handleExportFile('csv')} disabled={exportBusy}
-              className="flex items-center gap-2 px-4 py-2 border border-border rounded-lg text-sm hover:bg-accent transition-colors disabled:opacity-60">
-              <FileDown className="w-4 h-4" /> Export CSV (.csv)
             </button>
           </div>
         </div>
@@ -1435,7 +1430,7 @@ export default function Reports({ assignments, completed, cancelled, trucks }: R
         generatedAt: new Date(),
         sheets: reportExportSheets(reportKey, 'combined', weeklyRows, monthlyRows, dRows,
           buildTruckUtilRows(assignments, completed, cancelled, trucks), buildDriverUtilRows(assignments, completed, cancelled)),
-      }, 'xlsx');
+      });
     } catch (error) {
       setCardExportError(error instanceof Error ? error.message : 'Could not export report.');
     } finally { setCardExportBusy(null); }
