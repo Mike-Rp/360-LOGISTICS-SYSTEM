@@ -193,3 +193,80 @@ test('Reports export mapping produces complete XLSX rows for every report type',
     }
   }
 });
+
+test('an exported file carries its Report ID in the file name', () => {
+  const at = new Date('2026-11-05T08:45:22Z');
+  assert.equal(report.reportExportFilename('weekly', at, 'RPT-AB12CD34EF56AB12'),
+    '360LOGISTICS_Weekly-Performance_2026-11-05_164522_RPT-AB12CD34EF56AB12.xlsx');
+  // ids from elsewhere are cleaned the same way as for the printed PDF title
+  assert.equal(report.reportExportFilename('delay', at, 'RPT-..//bad id'), '360LOGISTICS_Delay-Issues_2026-11-05_164522_RPT-badid.xlsx');
+});
+
+test('the workbook shows the Report ID with a link to verify it, and the table does not move', async () => {
+  const at = new Date('2026-11-05T08:45:22Z');
+  const columns = [{ header: 'Driver', width: 28 }, { header: 'Route', width: 42 }];
+  const base = { type: 'weekly', generatedAt: at, generatedBy: 'Test OPM', period: 'Test period', sheets: [{ name: 'Report', columns, rows: [['Niño', 'Makati']] }] };
+  const read = async (extra) => {
+    const bytes = await report.createReportWorkbook({ ...base, ...extra });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(Buffer.from(bytes));
+    return workbook.getWorksheet('Report');
+  };
+
+  const withId = await read({ reportId: 'RPT-AB12CD34EF56AB12', verifyUrl: 'https://example.test/verify-report?id=RPT-AB12CD34EF56AB12' });
+  assert.equal(withId.getCell('A7').value, 'Report ID');
+  assert.equal(withId.getCell('B7').value.text, 'RPT-AB12CD34EF56AB12');
+  assert.equal(withId.getCell('B7').value.hyperlink, 'https://example.test/verify-report?id=RPT-AB12CD34EF56AB12');
+  // everything the existing layout promises is still where it was
+  assert.equal(withId.getCell('A8').value, 'Driver');
+  assert.equal(withId.getCell('A9').value, 'Niño');
+  assert.equal(withId.autoFilter, 'A8:B8');
+  assert.equal(withId.getCell('B6').value, 'Test OPM');
+
+  const plain = await read({});
+  assert.equal(plain.getCell('A7').value, null);          // no id → the spacer row stays empty
+  assert.equal(plain.getRow(7).height, 12);
+  assert.equal(plain.getCell('A8').value, 'Driver');
+
+  const noLink = await read({ reportId: 'RPT-AB12CD34EF56AB12' });
+  assert.equal(noLink.getCell('B7').value, 'RPT-AB12CD34EF56AB12');
+});
+
+test('every way a report leaves the system is recorded first (PDF and both Excel buttons)', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../components/admin/Reports.tsx'), 'utf8');
+  const record = (source.match(/issueReportRecord\(/g) || []).length;
+  assert.ok(record >= 4, 'the helper is defined once and used by print, the preview Excel export and the card Excel export');
+  // the id is issued before the file is built, and handed to the workbook
+  assert.match(source, /const issued = await issueReportRecord\(reportKey, buildIssueInput\(\)\);[\s\S]*?await exportReport\(\{[\s\S]*?reportId: issued\.id/);
+  assert.match(source, /const issued = await issueReportRecord\(reportKey,\s*\n[\s\S]*?await exportReport\(\{[\s\S]*?reportId: issued\.id/);
+});
+
+test('Excel exports tell the database they are Excel; printing sends no format and stays a PDF', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../components/admin/Reports.tsx'), 'utf8');
+  const db = fs.readFileSync(path.join(__dirname, 'db.ts'), 'utf8');
+  // both Excel paths (the preview button and the report cards) record the report as excel
+  assert.match(source, /issueReportRecord\(reportKey, buildIssueInput\(\), 'excel'\)/);
+  assert.match(source, /\.sort\(\)\.join\(','\) \},\s*'excel'\);/);
+  // the print path is unchanged: no format argument
+  assert.match(source, /the QR is only created once a record has actually been issued\.\s*const issued = await issueReportRecord\(reportKey, buildIssueInput\(\)\);/);
+  // only Excel adds p_format to the call, so printing works before and after the migration
+  assert.match(db, /\.\.\.\(input\.format === 'excel' \? \{ p_format: 'excel' \} : \{\}\)/);
+});
+
+test('the history table shows a PDF or Excel badge, and a row without a format reads as PDF', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../components/admin/Reports.tsx'), 'utf8');
+  assert.match(source, /r\.format === 'excel' \? 'Excel' : 'PDF'/);
+});
+
+test('the weekly summary counts the same week as its table (not every delivery in the system)', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../components/admin/Reports.tsx'), 'utf8');
+  // every weekly row says whether it is a finished delivery; a delayed row can be either, so status alone is not enough
+  assert.match(source, /status: isDelayed \? 'Delayed' : 'Completed',\s*finished: true,/);
+  assert.match(source, /status: isDelayed \? 'Delayed' : \(statusMap\[a\.taskStatus\] \?\? 'Assigned'\),\s*finished: false,/);
+  // all four summary numbers come from those rows
+  assert.match(source, /total:\s+weeklyRows\.length,\s*completed: weeklyRows\.filter\(\(r\) => r\.finished\)\.length,/);
+  assert.match(source, /active:\s+weeklyRows\.filter\(\(r\) => !r\.finished\)\.length,/);
+  // and the old all-time counts are gone from the weekly summary
+  assert.doesNotMatch(source, /const weeklySummary = \{[^}]*completed: completed\.length/);
+  assert.doesNotMatch(source, /const weeklySummary = \{[^}]*active:\s+assignments\.length/);
+});
