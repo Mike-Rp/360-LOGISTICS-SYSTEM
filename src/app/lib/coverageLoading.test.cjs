@@ -109,6 +109,7 @@ function setup(t, mode = 'opm') {
       '../../lib/db': {}, './UnavailabilityDialog': { default: 'unavailable-dialog' },
       '../../lib/unavailability': load('unavailability.ts', { './philippineTime': philippineTime }),
       '../ui/dropdown-menu': {},
+      '../../lib/fleetAccountSearch': load('fleetAccountSearch.ts'),
       './Pagination': {
         PaginationFooter: 'pagination', useStablePageHeight: () => ({ current: null }),
         usePagination: (items) => ({ page: 1, pageItems: items, setPage: () => {} }),
@@ -117,8 +118,12 @@ function setup(t, mode = 'opm') {
       '../../data/truckTypes': {}, './ASNWithCopy': { default: 'asn' }, '../../lib/philippineMobile': {},
       '../../lib/philippineTime': philippineTime,
     });
-    component = () => Accounts({ drivers: [], trucks: [], search: '', canManageFleetAccounts: false,
-      coverage: csr.useMyFleetDelegation(enabled, owner) });
+    /* The active tab is owned by AdminDashboard in the real app (so search can follow it); the test holds it here. */
+    component = () => {
+      const [tab, setTab] = hooks.useState('Drivers');
+      return Accounts({ drivers: [], trucks: [], search: '', canManageFleetAccounts: false, tab, onTabChange: setTab,
+        coverage: csr.useMyFleetDelegation(enabled, owner) });
+    };
   } else {
     component = () => mode === 'csr' ? csr.useMyFleetDelegation(enabled, owner)
       : shared.useCoverageLookup(enabled, owner, lookup, 30_000);
