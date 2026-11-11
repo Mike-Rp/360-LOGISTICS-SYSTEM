@@ -22,6 +22,7 @@ import { DateField, TimeField } from './ScheduleFields';
 import { formatPhilippineTimestamp, PHILIPPINE_TIME_LABEL } from '../../lib/philippineTime';
 import { useModalFocus } from './useModalFocus';
 import DiscardChangesDialog from './DiscardChangesDialog';
+import TeamMemberPhotoPreview, { memberInitials } from './TeamMemberPhotoPreview';
 
 /* ── Activity log helpers — moved here from SettingsPanel.tsx, extended for member events ── */
 const ACT_CONFIG: Record<AdminActivityType, { label: string; icon: React.ElementType; color: string }> = {
@@ -117,6 +118,16 @@ function getDesc(e: AdminActivityEntry): string {
 /* Rows a CSR wrote while covering for the OPM are marked by the database function. */
 function underDelegation(e: AdminActivityEntry): string {
   return e.reason === 'Under OPM delegation' ? ' · under OPM delegation' : '';
+}
+
+function MemberAvatarButton({ member, photoUrl, onOpen }: { member: TeamMember; photoUrl?: string; onOpen: (button: HTMLButtonElement) => void }) {
+  const [imageFailed, setImageFailed] = useState(false);
+  return <button type="button" onClick={(event) => onOpen(event.currentTarget)} aria-haspopup="dialog" aria-label={`View ${member.name}'s profile photo`}
+    className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-800 text-xs font-semibold text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+    {photoUrl && !imageFailed
+      ? <img src={photoUrl} alt="" onError={() => setImageFailed(true)} className="h-full w-full object-cover" />
+      : memberInitials(member.name)}
+  </button>;
 }
 
 /* ── Modal shell (mirrors RegisterModals.tsx's local ModalShell) ── */
@@ -483,6 +494,8 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
   const [memberPage, setMemberPage] = useState(1);
   const [members,     setMembers]     = useState<TeamMember[]>([]);
   const [memberAvatars, setMemberAvatars] = useState<Map<string, string>>(new Map());
+  const [photoTarget, setPhotoTarget] = useState<TeamMember | null>(null);
+  const photoOpenerRef = useRef<HTMLButtonElement | null>(null);
   const [loading,     setLoading]     = useState(false);
   const [loadError,   setLoadError]   = useState('');
   const [showAddMember,  setShowAddMember]  = useState(false);
@@ -560,6 +573,13 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
   };
 
   useEffect(() => { if (open) fetchMembers(); }, [open]);
+  useEffect(() => { if (!open) setPhotoTarget(null); }, [open]);
+  const closePhotoPreview = () => {
+    setPhotoTarget(null);
+    window.requestAnimationFrame(() => {
+      if (photoOpenerRef.current?.isConnected) photoOpenerRef.current.focus();
+    });
+  };
   /* One batched signing call for every member's avatar, rather than one request per row. */
   useEffect(() => {
     let alive = true;
@@ -848,11 +868,9 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
               : visibleMembers.length === 0 ? <p className="py-8 text-center text-sm text-muted-foreground">No {memberStatus === 'active' ? 'active' : 'archived'} members found.</p>
               : <div className="space-y-2">{visibleMembers.map((member) => <div key={member.id}
                   className="grid grid-cols-[36px_minmax(0,1fr)] items-start gap-x-3 gap-y-1.5 rounded-xl border border-border px-3 py-3 sm:flex sm:flex-wrap sm:items-center sm:gap-3">
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-800 text-xs font-semibold text-white">
-                    {member.avatarPath && memberAvatars.get(member.avatarPath)
-                      ? <img src={memberAvatars.get(member.avatarPath)} alt="" className="h-full w-full object-cover" />
-                      : member.name.split(' ').map((part) => part[0]).join('').toUpperCase().slice(0, 2)}
-                  </span>
+                  <MemberAvatarButton key={`${member.id}-${member.avatarPath ? memberAvatars.get(member.avatarPath) ?? '' : ''}`}
+                    member={member} photoUrl={member.avatarPath ? memberAvatars.get(member.avatarPath) : undefined}
+                    onOpen={(button) => { photoOpenerRef.current = button; setPhotoTarget(member); }} />
                   <div className="min-w-0 flex-1"><p className="break-words text-sm font-semibold">{member.name}</p><p className="break-all text-xs text-muted-foreground">{member.email}</p></div>
                   <div className="col-start-2 min-w-0 text-xs text-muted-foreground"><span className="font-medium text-foreground">CSR</span><span className="mx-1.5">·</span>{memberStatus === 'active' ? `Last login: ${member.lastActive ? fmtTs(member.lastActive) : 'Never'}` : 'Access inactive'}</div>
                   {memberStatus === 'active'
@@ -1062,6 +1080,8 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
           onAdded={handleMemberAdded}
         />
       )}
+
+      {photoTarget && <TeamMemberPhotoPreview member={photoTarget} photoUrl={photoTarget.avatarPath ? memberAvatars.get(photoTarget.avatarPath) : undefined} onClose={closePhotoPreview} />}
 
       {archiveTarget && (
         <ConfirmPasswordDialog
