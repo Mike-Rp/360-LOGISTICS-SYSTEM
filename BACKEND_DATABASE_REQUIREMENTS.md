@@ -2254,6 +2254,8 @@ Supabase Auth first, RPC called only on success), same pattern now shared by
 driver archive, team member archive/restore, and this. Verified live: Resolve
 now prompts for a password before clearing the issue.
 
+**2026-11-11 — force-cancelled issues now visible (front-end only, no migration).** cancel_assignment() never touches assignment_issues, so a cancelled delivery whose issue is still open was cancelled because the issue could not be resolved. The Delay & Issues report (screen, print and Excel) now lists every driver-reported issue beside the delay rows: Resolved / Ongoing as before, and **Cancelled** (an existing word — no new status) for an open issue on a cancelled delivery, with a Cancelled tile/summary line. The Cancelled tab shows an "Unresolved issue" badge and the Cancellation details dialog shows the issue type and the driver's reason. The issue row is deliberately left open (closing it would falsely say it was resolved). Not covered: cancellations of very old reports that only have the legacy issue_reason text and no assignment_issues row.
+
 **REQ-008 is complete — all 4 phases implemented and verified live.**
 
 **Open item carried over from the original handoff, not yet resolved:** the
