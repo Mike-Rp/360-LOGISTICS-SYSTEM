@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
+import { issueReportStatus } from '../../lib/issueWorkflow';
 import { flushSync } from 'react-dom';
 import {
   FileDown, TrendingUp, Package, AlertTriangle,
@@ -43,7 +44,7 @@ interface MonthlyRow {
 interface DelayRow {
   date: string; dateStamp: string; asn: string; driver: string; truck: string; route: string;
   client: string; scheduledTime: string; reportedAt: string; reportedStamp: string;
-  reason: string; type: string; status: 'Resolved' | 'Ongoing';
+  reason: string; type: string; status: 'Resolved' | 'Ongoing' | 'Cancelled';
 }
 interface TruckUtilRow {
   plate: string; classification: string; timesAssigned: number;
@@ -196,7 +197,10 @@ function buildWeeklyRows(assignments: Assignment[], completed: CompletedTask[], 
 }
 
 /* Build delay rows from live data */
-function buildDelayRows(assignments: Assignment[], completed: CompletedTask[]): DelayRow[] {
+/** Reason text for an issue that was still open when its delivery was force-cancelled. */
+export const UNRESOLVED_CANCEL_NOTE = 'Delivery cancelled, issue unresolved';
+
+function buildDelayRows(assignments: Assignment[], completed: CompletedTask[], cancelled: Assignment[] = []): DelayRow[] {
   const rows: DelayRow[] = [];
 
   const processReports = (a: Assignment | CompletedTask, resolved: boolean) => {
@@ -219,8 +223,31 @@ function buildDelayRows(assignments: Assignment[], completed: CompletedTask[]): 
     }
   };
 
-  for (const a of assignments) processReports(a, false);
-  for (const c of completed)   processReports(c, true);
+  /* Driver-reported issues (assignment_issues): resolved → Resolved; still open on a cancelled delivery →
+     Cancelled (it was force-cancelled because the issue could not be resolved); otherwise Ongoing. */
+  const processIssues = (a: Assignment, isCancelled: boolean) => {
+    for (const issue of a.issues ?? []) {
+      const status = issueReportStatus(issue.status, isCancelled);
+      rows.push({
+        date: issue.reportedAt ? fmtDate(issue.reportedAt) : a.deliveryDate,
+        dateStamp: issue.reportedAt || a.deliveryDate,
+        asn: a.id,
+        driver: a.driverName, truck: a.truckPlate,
+        route: getAssignmentRoute(a),
+        client: a.company,
+        scheduledTime: a.pickupTime || '—',
+        reportedAt: issue.reportedAt ? fmtTime(issue.reportedAt) : '—',
+        reportedStamp: issue.reportedAt || '—',
+        reason: status === 'Cancelled' ? `${issue.reason} · ${UNRESOLVED_CANCEL_NOTE}` : issue.reason,
+        type: issue.issueType.replace(/\.\.\.$/, '') || 'Issue',
+        status,
+      });
+    }
+  };
+
+  for (const a of assignments) { processReports(a, false); processIssues(a, false); }
+  for (const c of completed)   { processReports(c, true);  processIssues(c, false); }
+  for (const x of cancelled)   processIssues(x, true);
 
   return rows;
 }
@@ -545,7 +572,7 @@ function PreviewModal({
 }) {
   const weekBounds  = isoWeekBounds(new Date());
   const weeklyRows  = buildWeeklyRows(assignments, completed, weekBounds);
-  const delayRows   = buildDelayRows(assignments, completed);
+  const delayRows   = buildDelayRows(assignments, completed, cancelled);
   const monthlyRows = buildMonthlyRows(completed);
   const monthlyPreviewRows = buildMonthlyPreviewRows(assignments, completed, cancelled);
   const [selectedMonthKey, setSelectedMonthKey] = useState<string | null>(null);
@@ -628,6 +655,7 @@ function PreviewModal({
     total:    delayRows.length,
     resolved: delayRows.filter((r) => r.status === 'Resolved').length,
     ongoing:  delayRows.filter((r) => r.status === 'Ongoing').length,
+    cancelled: delayRows.filter((r) => r.status === 'Cancelled').length,
     affected: new Set(delayRows.map((r) => r.asn)).size,
   };
   const issueCounts = [...delayRows.reduce((counts, row) =>
@@ -777,10 +805,11 @@ function PreviewModal({
             ]} />
           )}
           {reportKey === 'delay' && (
-            <ReportMetricGrid metrics={[
+            <ReportMetricGrid gridClassName="lg:grid-cols-5" metrics={[
               { label:'Total Incidents', value: delaySummary.total,    icon: AlertTriangle, valueColor:delaySummary.total > 0 ? 'text-red-700' : 'text-foreground', printColor:'text-red-600',    printBackground:'bg-red-50' },
               { label:'Resolved',        value: delaySummary.resolved, icon: Check,         valueColor:'text-green-700', printColor:'text-green-600',  printBackground:'bg-green-50' },
               { label:'Ongoing',         value: delaySummary.ongoing,  icon: Timer,         valueColor:'text-amber-700', printColor:'text-amber-600',  printBackground:'bg-amber-50' },
+              { label:'Cancelled',       value: delaySummary.cancelled, icon: X,            valueColor:delaySummary.cancelled > 0 ? 'text-red-700' : 'text-foreground', supporting:'Issue could not be resolved', printColor:'text-red-600', printBackground:'bg-red-50' },
               { label:'Affected Deliveries', value: delaySummary.affected, icon: Truck, supporting:'Unique assignments with reports', printColor:'text-foreground' },
             ]} />
           )}
@@ -1000,7 +1029,7 @@ function PreviewModal({
                         <td className="break-words px-2.5 py-3">{row.route}</td>
                         <td className="px-2.5 py-3"><DelayTypeBadge type={row.type} /></td>
                         <td className="px-2.5 py-3">
-                          <span className={`inline-flex rounded-md border px-2 py-0.5 font-medium ${row.status === 'Resolved' ? 'border-green-200 bg-green-50 text-green-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>{row.status}</span>
+                          <span className={`inline-flex rounded-md border px-2 py-0.5 font-medium ${row.status === 'Resolved' ? 'border-green-200 bg-green-50 text-green-700' : row.status === 'Cancelled' ? 'border-red-200 bg-red-50 text-red-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>{row.status}</span>
                         </td>
                       </tr>
                       <tr className="border-b border-border/70 bg-muted/10">
@@ -1023,6 +1052,7 @@ function PreviewModal({
                     ['Total incidents', String(delaySummary.total)],
                     ['Resolved', String(delaySummary.resolved)],
                     ['Ongoing', String(delaySummary.ongoing)],
+                    ['Cancelled (issue unresolved)', String(delaySummary.cancelled)],
                     ['Affected deliveries', String(delaySummary.affected)],
                     ...(mostCommonIssues ? [['Most common issue', mostCommonIssues]] : []),
                   ].map(([label, value]) => (
@@ -1450,7 +1480,7 @@ export default function Reports({ assignments, completed, cancelled, trucks }: R
     try {
       const week = isoWeekBounds(new Date());
       const weeklyRows  = buildWeeklyRows(assignments, completed, week);
-      const dRows       = buildDelayRows(assignments, completed);
+      const dRows       = buildDelayRows(assignments, completed, cancelled);
       const monthlyRows = buildMonthlyRows(completed);
       const truckRows   = buildTruckUtilRows(assignments, completed, cancelled, trucks);
       const driverRows  = buildDriverUtilRows(assignments, completed, cancelled);

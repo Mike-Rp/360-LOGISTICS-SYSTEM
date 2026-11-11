@@ -16,12 +16,12 @@ interface IncidentRow {
   reportedStamp: string;
   reason: string;
   type: string;
-  status: 'Resolved' | 'Ongoing';
+  status: 'Resolved' | 'Ongoing' | 'Cancelled';
 }
 
 interface Props {
   rows: IncidentRow[];
-  summary: { total: number; resolved: number; ongoing: number; affected: number };
+  summary: { total: number; resolved: number; ongoing: number; cancelled: number; affected: number };
   issueCounts: [string, number][];
   mostCommonIssues: string | null;
   generatedAt: Date;
@@ -52,12 +52,13 @@ export default function DelayPrintReport({
         <h2>Incident Summary</h2>
         <table className="wpr-summary dir-summary">
           <thead><tr>
-            <th>Total Incidents</th><th>Resolved</th><th>Ongoing</th><th>Affected Deliveries</th>
+            <th>Total Incidents</th><th>Resolved</th><th>Ongoing</th><th>Cancelled</th><th>Affected Deliveries</th>
           </tr></thead>
           <tbody><tr>
             <td>{summary.total}</td>
             <td className="wpr-completed">{summary.resolved}</td>
             <td className={summary.ongoing > 0 ? 'wpr-delayed' : ''}>{summary.ongoing}</td>
+            <td className={summary.cancelled > 0 ? 'wpr-delayed' : ''}>{summary.cancelled}</td>
             <td>{summary.affected}</td>
           </tr></tbody>
         </table>
@@ -114,6 +115,7 @@ export default function DelayPrintReport({
               <div><dt>Total incidents</dt><dd>{summary.total}</dd></div>
               <div><dt>Resolved</dt><dd>{summary.resolved}</dd></div>
               <div><dt>Ongoing</dt><dd>{summary.ongoing}</dd></div>
+              <div><dt>Cancelled (issue unresolved)</dt><dd>{summary.cancelled}</dd></div>
               <div><dt>Affected deliveries</dt><dd>{summary.affected}</dd></div>
               {mostCommonIssues && <div><dt>Most common issue</dt><dd>{mostCommonIssues}</dd></div>}
             </dl>
