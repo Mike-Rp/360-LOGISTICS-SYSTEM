@@ -1,7 +1,7 @@
 // @ts-nocheck — runs on Deno; typed and tested via logic.test.cjs.
 // Login lockout — the decision logic of the `login` Edge Function.
 // Kept free of Deno/npm imports so Node can unit-test it (logic.test.cjs);
-// index.ts wires it to Supabase. The 5-failure / 5-minute rule itself lives in
+// index.ts wires it to Supabase. The lock rules themselves (5 failures, then each lock 5 minutes longer up to 1 hour) live in
 // the database (record_login_failure) so the count is atomic.
 //
 // Never logs, returns or stores the password.

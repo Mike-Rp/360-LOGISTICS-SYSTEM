@@ -2,7 +2,7 @@
 // project's TypeScript check (src/ only) doesn't cover.
 //
 // login — the sign-in path for staff AND drivers, with an account lockout:
-// 5 failed attempts lock the account for 5 minutes (see the logic.ts header and
+// 5 failed attempts lock the account, each later lock 5 minutes longer up to 1 hour (see the logic.ts header and
 // supabase/migrations/20261031000000_login_lockout.sql).
 // Called by the logged-out login screen with { email, password }; on success it
 // returns the Auth session, which the browser installs with auth.setSession().
