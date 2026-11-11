@@ -1,6 +1,7 @@
 -- ════════════════════════════════════════════════════════════════════════════
 -- Login lockout — database tests.
--- Run AFTER 20261031000000_login_lockout.sql and 20261111000001_login_lockout_escalation.sql.
+-- Run AFTER 20261031000000_login_lockout.sql, 20261111000001_login_lockout_escalation.sql and
+-- 20261111000002_login_lockout_forgiveness_fix.sql.
 --
 -- Rules under test: 5 wrong passwords lock a fresh account for 5 minutes; after a lock ONE wrong
 -- password locks it again, each lock 5 minutes longer than the last, up to 1 hour; 3 hours with no
@@ -143,7 +144,8 @@ begin
   reset role;
   select failed_count, lock_level into c, lvl from public.login_attempts where email = e;
   if lvl <> 0 or c <> 1 then raise exception 'LOCKOUT FAIL: after the reset level = %, count = % (expected 0 and 1)', lvl, c; end if;
-  -- ...and it really is fresh: four more failures do not lock, the fifth locks for 5 minutes
+  -- ...and it really is fresh (the stored level was reset, not just the in-memory copy): the next failures do not
+  -- lock, and the 5th locks for 5 minutes
   set local role service_role;
   for i in 1..3 loop
     r := public.record_login_failure(e);
