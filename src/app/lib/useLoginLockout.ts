@@ -2,10 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 
 export interface ConfirmedLockout { retryAt: number | null }
 
-/** The existing login contract reports remaining seconds for a five-minute lock.
+/** The longest a lock can last: each lock is 5 minutes longer than the last, up to 1 hour. */
+export const MAX_LOCK_SECONDS = 3600;
+
+/** The login contract reports the remaining seconds of a lock (5 minutes at first, up to 1 hour).
  * Reject missing, non-finite, expired and out-of-contract values; never substitute a duration. */
 export function loginRetrySeconds(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= 300 ? value : undefined;
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= MAX_LOCK_SECONDS ? value : undefined;
 }
 
 export function confirmedLockout(seconds: unknown, requestedAt: number): ConfirmedLockout {
