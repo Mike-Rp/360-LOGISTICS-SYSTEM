@@ -71,3 +71,30 @@ test('Dispatch card renders both stage and blocking indicator without adding act
   assert.match(card, /blockingIssue && <div className="mt-3 flex min-w-0/);
   assert.match(card, /assignment\.openIssue && !isViewOnly/);
 });
+
+const { getUnresolvedCancelledIssue, issueReportStatus } = loaded.exports;
+
+test('a cancelled delivery with a still-open issue is reported as cancelled because of the issue', () => {
+  const open = { id: 1, status: 'open', issueType: 'Accident / road incident' };
+  const done = { id: 2, status: 'resolved', issueType: 'Vehicle breakdown' };
+  assert.equal(getUnresolvedCancelledIssue({ taskStatus: 'Cancelled', issues: [done, open] }), open);
+  assert.equal(getUnresolvedCancelledIssue({ taskStatus: 'Cancelled', issues: [done] }), null);
+  assert.equal(getUnresolvedCancelledIssue({ taskStatus: 'Cancelled' }), null);
+  assert.equal(getUnresolvedCancelledIssue({ taskStatus: 'In Transit', issues: [open] }), null);
+});
+
+test('report status uses only words the system already has', () => {
+  assert.equal(issueReportStatus('resolved', false), 'Resolved');
+  assert.equal(issueReportStatus('resolved', true), 'Resolved');
+  assert.equal(issueReportStatus('open', false), 'Ongoing');
+  assert.equal(issueReportStatus('open', true), 'Cancelled');
+});
+
+test('the Delay & Issues report and the Cancelled tab use the shared rules', () => {
+  const reports = readFileSync(join(__dirname, '../components/admin/Reports.tsx'), 'utf8');
+  assert.match(reports, /issueReportStatus\(issue\.status, isCancelled\)/);
+  assert.match(reports, /buildDelayRows\(assignments, completed, cancelled\)/);
+  const table = readFileSync(join(__dirname, '../components/admin/DeliveryTable.tsx'), 'utf8');
+  assert.match(table, /getUnresolvedCancelledIssue\(a\)/);
+  assert.match(table, /getUnresolvedCancelledIssue\(cancelledDetails\)/);
+});

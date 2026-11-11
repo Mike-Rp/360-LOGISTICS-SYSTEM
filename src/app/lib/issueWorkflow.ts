@@ -26,3 +26,17 @@ export function getBlockingIssueSummary(assignment: Pick<Assignment, 'issueReaso
   if (!hasOpenBlockingIssue(assignment)) return null;
   return { reason: assignment.openIssue?.reason?.trim() || assignment.issueReason?.trim() || null };
 }
+
+/** cancel_assignment() never touches assignment_issues, so a cancelled delivery that still has an OPEN issue
+ * row was force-cancelled because the issue could not be resolved. Returns that issue (the first one), else null. */
+export function getUnresolvedCancelledIssue(assignment: Pick<Assignment, 'taskStatus' | 'issues'>): NonNullable<Assignment['issues']>[number] | null {
+  if (assignment.taskStatus !== 'Cancelled') return null;
+  return assignment.issues?.find((issue) => issue.status === 'open') ?? null;
+}
+
+/** Delay & Issues report status for one issue row: resolved → Resolved; still open on a cancelled delivery →
+ * Cancelled (nobody can resolve it any more); otherwise Ongoing. No new status — "Cancelled" already exists. */
+export function issueReportStatus(issueStatus: 'open' | 'resolved', deliveryCancelled: boolean): 'Resolved' | 'Ongoing' | 'Cancelled' {
+  if (issueStatus === 'resolved') return 'Resolved';
+  return deliveryCancelled ? 'Cancelled' : 'Ongoing';
+}
