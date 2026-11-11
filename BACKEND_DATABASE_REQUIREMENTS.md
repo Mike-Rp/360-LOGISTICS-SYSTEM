@@ -2904,6 +2904,14 @@ longest lock reads "1 hour" (English and Filipino). Tests: `login_lockout.test.s
 immediate re-lock, 3-hour forgiveness incl. just-under-3-hours, success clears the level, unknown addresses escalate) and
 `loginLockout.test.cjs` (longer waits block the form and are worded correctly, 3601 s is out of range).
 
+**2026-11-11 — forgiveness fix (migration `20261111000002_login_lockout_forgiveness_fix.sql`).** Found by check 10 of the
+rewritten test right after the escalation migration: after 3 quiet hours the function treated the account as fresh in memory
+and counted the new wrong password as failure 1, but the update that saved it did not write `lock_level` back, so the stored
+level stayed (e.g. 5) and the NEXT wrong password locked the account for 30 minutes instead of starting a fresh run of 5 tries.
+The fix writes `lock_level = 0` on that path (the only change; rules, cap and grants identical) and clears any unlocked row
+the bug had left with a level and a last failure over 3 hours old. The first migration was already applied, so the fix is a
+new migration, with its own safety check that the live function is the escalation version.
+
 **Verification (original 5-minute rule, 2026-10-31):** `supabase/tests/login_lockout.test.sql` 10/10; `logic.test.cjs` 10/10; Edge
 Function deployed 2026-10-31; live: 5 wrong passwords locked a staff account and a driver
 account, a different account still logged in, and a non-existent address locked too.
