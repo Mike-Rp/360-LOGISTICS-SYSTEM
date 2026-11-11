@@ -20,6 +20,7 @@ const types = load('../data/assignmentTypes.ts', id => {
 });
 const operational = load('assignmentOperational.ts');
 const timing = load('assignmentTiming.ts');
+const issues = load('issueWorkflow.ts');
 const workflow = load('assignmentWorkflow.ts', id => {
   if (id === './assignmentTiming') return timing;
   if (id === '../data/statusColors') return colors;
@@ -28,8 +29,9 @@ const workflow = load('assignmentWorkflow.ts', id => {
 });
 const dispatch = load('dispatchStatusFilter.ts', id => {
   if (id === './assignmentOperational') return operational;
-  assert.equal(id, './assignmentWorkflow');
-  return workflow;
+  if (id === './assignmentWorkflow') return workflow;
+  assert.equal(id, './issueWorkflow');
+  return issues;
 });
 
 const record = (id, taskStatus, operationalStage, documents = []) => ({
@@ -65,4 +67,44 @@ test('document review status and classification can filter together', () => {
   assert.deepEqual(matching('', 'Wing Van').map(a => a.id), ['A', 'C']);
   assert.deepEqual(matching('Assigned', '').map(a => a.id), ['C']);
   assert.deepEqual(matching('Failed / Issue', 'Wing Van'), []);
+});
+
+test('Failed / Issue includes open blocking issues without changing delivery stages', () => {
+  for (const [stage, operationalStage] of [
+    ['Assigned', null], ['Assigned', 'at_pickup'], ['Assigned', 'loading'], ['Assigned', 'in_transit'],
+  ]) {
+    const assignment = {
+      ...record('A', stage, operationalStage),
+      openIssue: { id: 9, reason: 'Accident / road incident' },
+    };
+    assert.equal(dispatch.matchesDispatchStatus(assignment, 'Failed / Issue'), true);
+    assert.notEqual(dispatch.getDispatchCardStatus(assignment), 'Failed / Issue');
+  }
+});
+
+test('Failed / Issue excludes healthy and resolved assignments but retains legacy failures', () => {
+  assert.equal(dispatch.matchesDispatchStatus(record('healthy', 'Assigned', null), 'Failed / Issue'), false);
+  assert.equal(dispatch.matchesDispatchStatus(record('resolved', 'Assigned', null), 'Failed / Issue'), false);
+  assert.equal(dispatch.matchesDispatchStatus(record('failed', 'Failed / Issue', null), 'Failed / Issue'), true);
+  assert.equal(dispatch.matchesDispatchStatus({ ...record('delayed', 'Assigned', null), delayReports: [{ reason: 'Traffic' }] }, 'Failed / Issue'), false);
+});
+
+test('Failed / Issue still combines with classification and other status filters retain stage matching', () => {
+  const assignments = [
+    { ...record('blocked-wing', 'Assigned', null), classification: 'Wing Van', openIssue: { reason: 'Vehicle breakdown' } },
+    { ...record('blocked-flatbed', 'Assigned', null), classification: 'Flatbed Truck', openIssue: { reason: 'Vehicle breakdown' } },
+    { ...record('healthy-wing', 'Assigned', null), classification: 'Wing Van' },
+  ];
+  const matching = (status, classification) => assignments.filter(a =>
+    dispatch.matchesDispatchStatus(a, status) && a.classification === classification).map(a => a.id);
+  assert.deepEqual(matching('Failed / Issue', 'Wing Van'), ['blocked-wing']);
+  assert.deepEqual(matching('Assigned', 'Wing Van'), ['blocked-wing', 'healthy-wing']);
+});
+
+test('a failed issue-data load does not replace the last verified assignments with an empty result', () => {
+  const db = readFileSync(join(__dirname, 'db.ts'), 'utf8');
+  const ui = readFileSync(join(__dirname, '../components/admin/DriversManagement.tsx'), 'utf8');
+  assert.match(db, /fetchAll\('assignment_issues',[\s\S]*?\),\s*fetchAll\('notifications'/);
+  assert.match(ui, /visibleAssignments\.length === 0 \? \([\s\S]*?availabilityError \? \(/);
+  assert.match(ui, /Could not verify current assignments and issues\./);
 });

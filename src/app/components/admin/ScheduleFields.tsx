@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Calendar, Clock, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Popover, PopoverAnchor, PopoverContent } from '../ui/popover';
+import { philippineDateKey } from '../../lib/philippineTime';
+import { isAtOrBeforeMinMonth } from './expectedReturnValue';
 
 const MONTHS_LONG = ['January','February','March','April','May','June',
                      'July','August','September','October','November','December'];
@@ -21,9 +23,12 @@ const dateToIso = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 const fieldBase =
-  'w-full px-3.5 py-2.5 rounded-[10px] border text-sm text-foreground placeholder:text-muted-foreground ' +
+  'w-full rounded-[10px] border text-foreground placeholder:text-muted-foreground ' +
   'focus:outline-none focus:ring-2 focus:ring-[#1DBF73]/25 focus:border-[#1DBF73] transition-colors';
 const fieldTone = (err?: boolean) => err ? 'border-red-400 bg-red-50' : 'border-border bg-white';
+const fieldSize = (compact: boolean) => compact
+  ? 'min-w-0 py-2.5 pl-2 pr-8 text-[13px] min-[360px]:text-sm'
+  : 'px-3.5 py-2.5 pr-10 text-sm';
 
 /* Slim, light scrollbars — the browser default renders as heavy dark bars */
 const thinScroll =
@@ -33,7 +38,7 @@ const thinScroll =
   'hover:[&::-webkit-scrollbar-thumb]:bg-[#1DBF73]/50';
 
 /* ─── Date field — type into the input, or click the icon for a calendar ─── */
-export function DateField({ value, onChange, hasError, minIso, maxIso, id, label, restrictToday = false, layer = false, calendarToday, describedBy }: {
+export function DateField({ value, onChange, hasError, minIso, maxIso, id, label, restrictToday = false, layer = false, calendarToday, describedBy, compact = false, popoverSide, constrainMinMonth = false }: {
   /* `bad` = the browser holds a half-typed or impossible date (its value is then '') */
   value: string; onChange: (v: string, bad?: boolean) => void; hasError?: boolean;
   /* Bound the selectable range; typing is still validated on submit */
@@ -44,20 +49,25 @@ export function DateField({ value, onChange, hasError, minIso, maxIso, id, label
   describedBy?: string;
   restrictToday?: boolean;
   layer?: boolean;
+  compact?: boolean;
+  popoverSide?: 'top' | 'bottom';
+  /** Keep the month switcher at or after minIso. Opt in only for Expected return. */
+  constrainMinMonth?: boolean;
   /** Override only the calendar day; date-only selections are never converted to instants. */
   calendarToday?: string;
 }) {
   const [open, setOpen] = useState(false);
 
   /* Which month the calendar is showing — follows the value when there is one */
-  const today = calendarToday ?? todayIso();
+  const today = constrainMinMonth ? philippineDateKey(new Date()) : calendarToday ?? todayIso();
+  const effectiveMinIso = constrainMinMonth && (!minIso || today > minIso) ? today : minIso;
   const anchor = isoToDate(value || today);
   const [viewY, setViewY] = useState(anchor.getFullYear());
   const [viewM, setViewM] = useState(anchor.getMonth());
 
   /* Re-centre on the selected date each time the calendar is opened */
   const openCalendar = () => {
-    const a = isoToDate(value || today);
+    const a = isoToDate(value && (!constrainMinMonth || !effectiveMinIso || value >= effectiveMinIso) ? value : effectiveMinIso || today);
     setViewY(a.getFullYear());
     setViewM(a.getMonth());
     setOpen((v) => !v);
@@ -65,10 +75,19 @@ export function DateField({ value, onChange, hasError, minIso, maxIso, id, label
 
   const firstWeekday = new Date(viewY, viewM, 1).getDay();
   const daysInMonth  = new Date(viewY, viewM + 1, 0).getDate();
-  const min          = minIso ? isoToDate(minIso) : null;
+  const min          = effectiveMinIso ? isoToDate(effectiveMinIso) : null;
   const max          = maxIso ? isoToDate(maxIso) : null;
+  const atMinMonth = constrainMinMonth && !!effectiveMinIso && isAtOrBeforeMinMonth(viewY, viewM, effectiveMinIso);
+
+  useEffect(() => {
+    if (open && constrainMinMonth && min && atMinMonth && (viewY !== min.getFullYear() || viewM !== min.getMonth())) {
+      setViewY(min.getFullYear());
+      setViewM(min.getMonth());
+    }
+  }, [open, constrainMinMonth, effectiveMinIso, viewY, viewM]);
 
   const step = (delta: number) => {
+    if (delta < 0 && constrainMinMonth && atMinMonth) return;
     const d = new Date(viewY, viewM + delta, 1);
     setViewY(d.getFullYear());
     setViewM(d.getMonth());
@@ -83,11 +102,11 @@ export function DateField({ value, onChange, hasError, minIso, maxIso, id, label
             onChange={(e) => onChange(e.target.value, e.target.validity.badInput)}
             onBlur={(e) => { if (e.target.validity.badInput) onChange(e.target.value, true); }}
             /* Without a max the browser lets the year run to 6 digits */
-            min={minIso} max={maxIso ?? '9999-12-31'}
-            className={`${fieldBase} ${fieldTone(hasError)} pr-10 [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-inner-spin-button]:hidden`}
+            min={effectiveMinIso} max={maxIso ?? '9999-12-31'}
+            className={`${fieldBase} ${fieldTone(hasError)} ${fieldSize(compact)} [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-inner-spin-button]:hidden`}
           />
           <button type="button" onClick={openCalendar} aria-label={label ? `Open ${label.toLowerCase()} calendar` : 'Open calendar'}
-            className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+            className={`absolute top-1/2 -translate-y-1/2 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors ${compact ? 'right-0.5 p-1' : 'right-1 p-1.5'}`}>
             <Calendar className="w-4 h-4" />
           </button>
         </div>
@@ -95,14 +114,16 @@ export function DateField({ value, onChange, hasError, minIso, maxIso, id, label
 
       <PopoverContent
         align="start"
+        side={popoverSide}
+        collisionPadding={popoverSide ? 12 : undefined}
         sideOffset={6}
         onOpenAutoFocus={(e) => e.preventDefault()}
         className={`w-[268px] max-w-[calc(100vw-2rem)] bg-white border border-border rounded-xl shadow-xl p-3 ${layer ? 'z-[90]' : ''}`}
       >
         {/* Month switcher */}
         <div className="flex items-center justify-between mb-2">
-          <button type="button" onClick={() => step(-1)}
-            className="p-1.5 rounded-md hover:bg-accent text-muted-foreground transition-colors">
+          <button type="button" onClick={() => step(-1)} disabled={constrainMinMonth && atMinMonth} aria-label="Previous month"
+            className="p-1.5 rounded-md hover:bg-accent text-muted-foreground transition-colors disabled:cursor-not-allowed disabled:opacity-40">
             <ChevronLeft className="w-4 h-4" />
           </button>
           <span className="text-sm font-semibold text-foreground">{MONTHS_LONG[viewM]} {viewY}</span>
@@ -143,7 +164,7 @@ export function DateField({ value, onChange, hasError, minIso, maxIso, id, label
         </div>
 
         <div className="flex items-center justify-between mt-2 pt-2 border-t border-border">
-          <button type="button" disabled={restrictToday && ((!!minIso && today < minIso) || (!!maxIso && today > maxIso))} onClick={() => { onChange(today); setOpen(false); }}
+          <button type="button" disabled={restrictToday && ((!!effectiveMinIso && today < effectiveMinIso) || (!!maxIso && today > maxIso))} onClick={() => { onChange(today); setOpen(false); }}
             className="text-xs font-medium text-[#1DBF73] hover:underline disabled:opacity-40 disabled:cursor-not-allowed">Today</button>
           <button type="button" onClick={() => { onChange(''); setOpen(false); }}
             className="text-xs font-medium text-muted-foreground hover:text-foreground">Clear</button>
@@ -157,12 +178,14 @@ export function DateField({ value, onChange, hasError, minIso, maxIso, id, label
 const WHEEL_HOURS = Array.from({ length: 12 }, (_, i) => i + 1);
 const WHEEL_MINS  = Array.from({ length: 60 }, (_, i) => i);
 
-export function TimeField({ value, onChange, hasError, id, label, layer = false, describedBy }: {
+export function TimeField({ value, onChange, hasError, id, label, layer = false, describedBy, compact = false, popoverSide }: {
   value: string; onChange: (v: string) => void; hasError?: boolean;
   id?: string;
   label?: string;
   describedBy?: string;
   layer?: boolean;
+  compact?: boolean;
+  popoverSide?: 'top' | 'bottom';
 }) {
   const [open, setOpen] = useState(false);
 
@@ -191,10 +214,10 @@ export function TimeField({ value, onChange, hasError, id, label, layer = false,
           <input
             id={id} aria-label={label} aria-describedby={describedBy} aria-invalid={hasError || undefined} type="time" value={value}
             onChange={(e) => onChange(e.target.value)}
-            className={`${fieldBase} ${fieldTone(hasError)} pr-10 [&::-webkit-calendar-picker-indicator]:hidden`}
+            className={`${fieldBase} ${fieldTone(hasError)} ${fieldSize(compact)} [&::-webkit-calendar-picker-indicator]:hidden`}
           />
           <button type="button" onClick={() => setOpen((v) => !v)} aria-label={label ? `Open ${label.toLowerCase()} picker` : 'Open time picker'}
-            className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+            className={`absolute top-1/2 -translate-y-1/2 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors ${compact ? 'right-0.5 p-1' : 'right-1 p-1.5'}`}>
             <Clock className="w-4 h-4" />
           </button>
         </div>
@@ -202,6 +225,8 @@ export function TimeField({ value, onChange, hasError, id, label, layer = false,
 
       <PopoverContent
         align="start"
+        side={popoverSide}
+        collisionPadding={popoverSide ? 12 : undefined}
         sideOffset={6}
         onOpenAutoFocus={(e) => e.preventDefault()}
         className={`w-auto bg-white border border-border rounded-xl shadow-xl p-2.5 ${layer ? 'z-[90]' : ''}`}

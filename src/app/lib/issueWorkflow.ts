@@ -20,3 +20,9 @@ export function hasOpenBlockingIssue(assignment: Pick<Assignment, 'issueReason' 
   return assignment.taskStatus !== 'Failed / Issue' && assignment.taskStatus !== 'Cancelled'
     && !!assignment.issueReason?.trim();
 }
+
+/** A card-sized summary of the same verified blocking state used in Shipment Details. */
+export function getBlockingIssueSummary(assignment: Pick<Assignment, 'issueReason' | 'taskStatus' | 'openIssue'>): { reason: string | null } | null {
+  if (!hasOpenBlockingIssue(assignment)) return null;
+  return { reason: assignment.openIssue?.reason?.trim() || assignment.issueReason?.trim() || null };
+}

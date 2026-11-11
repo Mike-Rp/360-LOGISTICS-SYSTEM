@@ -1,13 +1,15 @@
-import { useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { X, UserX, Wrench, AlertTriangle } from 'lucide-react';
 import {
   DRIVER_REASONS, NOTE_MAX_LENGTH, checkUnavailabilityForm,
   type UnavailabilityKind, type UnavailableReason,
 } from '../../lib/unavailability';
 import { toLocalInputValue } from '../../lib/fleetDelegation';
-import { PHILIPPINE_TIME_LABEL, persistedTimestamp } from '../../lib/philippineTime';
+import { PHILIPPINE_TIME_LABEL, persistedTimestamp, philippineDateKey } from '../../lib/philippineTime';
 import { useModalFocus } from './useModalFocus';
 import DiscardChangesDialog from './DiscardChangesDialog';
+import { DateField, TimeField } from './ScheduleFields';
+import { expectedReturnError, withExpectedReturnDate, withExpectedReturnTime } from './expectedReturnValue';
 
 /* "Mark unavailable" (driver) / "Put under maintenance" (truck), and the same form to edit an active period.
    The database re-checks everything; this only explains problems before sending. `onSubmit` runs the real call
@@ -38,12 +40,30 @@ export default function UnavailabilityDialog({
     const saved = persistedTimestamp(initial?.expectedReturnAt);
     return saved ? toLocalInputValue(saved) : '';
   });
+  const [returnDate = '', returnTime = ''] = returnValue.split('T');
+  const useExpectedReturnPicker = mode === 'mark';
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const todayPht = philippineDateKey(new Date(nowMs));
   const [errors, setErrors] = useState<{ reason?: string; note?: string; returnAt?: string }>({});
   const [submitError, setSubmitError] = useState('');
   const [busy, setBusy] = useState(false);
   const modalRef = useRef<HTMLFormElement>(null);
   const original = useRef({ reason, note, returnValue });
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const returnErrorFor = (value: string, atMs: number) => {
+    const check = checkUnavailabilityForm({ kind, reason: isDriver ? reason : 'maintenance', note, returnValue: value, nowMs: atMs });
+    return check.ok ? undefined : expectedReturnError(value, check.errors.returnAt, atMs);
+  };
+  useEffect(() => {
+    if (!useExpectedReturnPicker) return;
+    const timer = window.setInterval(() => setNowMs(Date.now()), 15_000);
+    return () => window.clearInterval(timer);
+  }, [useExpectedReturnPicker]);
+  useEffect(() => {
+    if (useExpectedReturnPicker && returnValue) {
+      setErrors((previous) => ({ ...previous, returnAt: returnErrorFor(returnValue, nowMs) }));
+    }
+  }, [nowMs]);
   const requestClose = () => {
     if (busy) return;
     if (reason !== original.current.reason || note !== original.current.note || returnValue !== original.current.returnValue) setConfirmDiscard(true);
@@ -59,9 +79,10 @@ export default function UnavailabilityDialog({
   const handleSubmit = async () => {
     if (busy) return;
     setSubmitError('');
-    const check = checkUnavailabilityForm({ kind, reason: isDriver ? reason : 'maintenance', note, returnValue, originalReturnAt: initial?.expectedReturnAt, nowMs: Date.now() });
+    const submittedAt = Date.now();
+    const check = checkUnavailabilityForm({ kind, reason: isDriver ? reason : 'maintenance', note, returnValue, originalReturnAt: initial?.expectedReturnAt, nowMs: submittedAt });
     if (!check.ok) {
-      setErrors(check.errors);
+      setErrors({ ...check.errors, returnAt: useExpectedReturnPicker ? expectedReturnError(returnValue, check.errors.returnAt, submittedAt) : check.errors.returnAt });
       const id = check.errors.reason ? 'unavailable-reason' : check.errors.note ? 'unavailable-note' : 'unavailable-return';
       modalRef.current?.querySelector<HTMLElement>(`#${id}`)?.focus();
       return;
@@ -139,13 +160,22 @@ export default function UnavailabilityDialog({
             <label htmlFor="unavailable-return" className="mb-1.5 block text-sm font-medium text-foreground">
               Expected return <span className="text-xs font-normal text-muted-foreground">(optional)</span>
             </label>
-            <input id="unavailable-return" type="datetime-local" value={returnValue} aria-invalid={errors.returnAt ? true : undefined} aria-describedby={`unavailable-return-help${errors.returnAt ? ' unavailable-return-error' : ''}`}
+            {useExpectedReturnPicker ? <div className="grid min-w-0 grid-cols-2 gap-2">
+              <div className="min-w-0"><DateField id="unavailable-return" label="Expected return date" value={returnDate} layer compact popoverSide="top"
+                minIso={todayPht} calendarToday={todayPht} restrictToday constrainMinMonth hasError={!!errors.returnAt}
+                describedBy={`unavailable-return-help${errors.returnAt ? ' unavailable-return-error' : ''}`}
+                onChange={(date, bad) => { const next = withExpectedReturnDate(returnValue, date, bad); setReturnValue(next); setErrors((p) => ({ ...p, returnAt: returnErrorFor(next, Date.now()) })); }} /></div>
+              <div className="min-w-0"><TimeField id="unavailable-return-time" label="Expected return time" value={returnTime} layer compact popoverSide="top" hasError={!!errors.returnAt}
+                describedBy={`unavailable-return-help${errors.returnAt ? ' unavailable-return-error' : ''}`}
+                onChange={(time) => { const next = withExpectedReturnTime(returnValue, time); setReturnValue(next); setErrors((p) => ({ ...p, returnAt: returnErrorFor(next, Date.now()) })); }} /></div>
+            </div> : <input id="unavailable-return" type="datetime-local" value={returnValue} aria-invalid={errors.returnAt ? true : undefined} aria-describedby={`unavailable-return-help${errors.returnAt ? ' unavailable-return-error' : ''}`}
               onChange={(e) => { setReturnValue(e.target.value); setErrors((p) => ({ ...p, returnAt: undefined })); }}
-              className={`${inputClass(errors.returnAt)} min-w-0 max-w-full`} />
+              className={`${inputClass(errors.returnAt)} min-w-0 max-w-full`} />}
             <p id="unavailable-return-help" className="mt-1 text-sm text-muted-foreground">{PHILIPPINE_TIME_LABEL}</p>
             {errors.returnAt && <p id="unavailable-return-error" role="alert" className="mt-1 text-sm text-red-600">{errors.returnAt}</p>}
             <p className="mt-1 text-sm text-muted-foreground">
-              {returnValue ? 'It ends by itself at this time.' : isDriver && reason === 'no_show'
+              {useExpectedReturnPicker && returnValue && (!returnDate || !returnTime) ? 'Choose both a date and time, or clear Expected return.'
+                : returnValue ? 'It ends by itself at this time.' : isDriver && reason === 'no_show'
                 ? 'Left empty, a no-show ends at the end of today.'
                 : `Left empty, ${isDriver ? 'they stay' : 'it stays'} ${isDriver ? 'unavailable' : 'under maintenance'} until you mark ${isDriver ? 'them' : 'it'} back.`}
             </p>

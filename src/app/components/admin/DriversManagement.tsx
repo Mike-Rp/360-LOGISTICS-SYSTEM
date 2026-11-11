@@ -34,7 +34,7 @@ import { advanceDispatchHighlight, dispatchHighlightPage, type DispatchHighlight
 import { hasUnsavedDispatchDetails } from '../../lib/dispatchDraft';
 import { ADMIN_NAVIGATION_EVENT, pushAdminNavigation } from '../../lib/adminNavigation';
 import type { ActionFeedbackToast, ActivityKey } from '../../lib/notificationEvents';
-import { hasOpenBlockingIssue } from '../../lib/issueWorkflow';
+import { getBlockingIssueSummary, hasOpenBlockingIssue } from '../../lib/issueWorkflow';
 import { TRUCK_CLASSIFICATIONS, truckFullImageFor, capacityKgOnly } from '../../data/truckTypes';
 import { destinationAreaEnabled, getAssignmentRoute, getDeliveryLocation } from '../../data/assignmentRoute';
 import {
@@ -2445,7 +2445,7 @@ export default function DriversManagement({
       )}
 
       {/* ── Main Board ── */}
-      {validAssignments.length === 0 && !statusFilter && !classificationFilter && !reviewQueueOpen ? (
+      {validAssignments.length === 0 && !availabilityError && !statusFilter && !classificationFilter && !reviewQueueOpen ? (
         <div className="bg-white rounded-2xl border border-dashed border-border p-16 text-center">
           <ClipboardList className="w-14 h-14 mx-auto mb-4 text-muted-foreground/30" />
           <p className="font-semibold text-foreground mb-1">No Active Assignments</p>
@@ -2462,7 +2462,16 @@ export default function DriversManagement({
       ) : visibleAssignments.length === 0 ? (
         <div className="bg-white rounded-2xl border border-dashed border-border p-16 text-center">
           <Search className="w-12 h-12 mx-auto mb-3 text-muted-foreground/30" />
-          {reviewQueueOpen && !statusFilter && !classificationFilter && !sq ? (
+          {availabilityError ? (
+            <>
+              <p role="alert" className="font-semibold text-foreground mb-1">Could not verify current assignments and issues.</p>
+              <p className="text-sm text-muted-foreground">The latest results are unavailable. Please try again.</p>
+              {onRetryAvailability && <button type="button" onClick={onRetryAvailability} disabled={availabilityLoading}
+                className="mt-4 rounded-lg border border-border bg-white px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/40 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-primary">
+                {availabilityLoading ? 'Retrying…' : 'Try again'}
+              </button>}
+            </>
+          ) : reviewQueueOpen && !statusFilter && !classificationFilter && !sq ? (
             <p role="status" className="font-semibold text-foreground">No documents waiting for review.</p>
           ) : statusFilter || classificationFilter ? (
             <>
@@ -2491,6 +2500,7 @@ export default function DriversManagement({
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {activePage.pageItems.map((a) => {
             const truck    = trucks.find((t) => t.id === a.truckId);
+            const blockingIssue = getBlockingIssueSummary(a);
             const { delivery: timing, pickup: pickupTiming } = getDispatchTimingNotices(a, timingNow);
             const docs = getAssignmentDocumentProgress(a);
             const documentAge = getDocumentAgingState(a, timingNow, notifications);
@@ -2508,7 +2518,7 @@ export default function DriversManagement({
                 style={dispatchHighlight?.id === a.id && dispatchHighlight.phase === 'hold'
                   ? { backgroundColor: '#E9FAF0', borderColor: '#32C785' } : undefined}
                 className={`flex h-full flex-col rounded-xl border-[0.5px] overflow-hidden ${
-                  sq ? 'border-yellow-400 bg-yellow-50/30' : timing?.kind === 'overdue' || pickupTiming?.kind === 'pickup_overdue' ? 'border-red-200 bg-white' : 'border-border bg-white'
+                  blockingIssue ? 'border-red-300 bg-white' : sq ? 'border-yellow-400 bg-yellow-50/30' : timing?.kind === 'overdue' || pickupTiming?.kind === 'pickup_overdue' ? 'border-red-200 bg-white' : 'border-border bg-white'
                 } ${dispatchHighlight?.id === a.id && dispatchHighlight.phase === 'fade'
                   ? 'transition-[background-color,border-color] duration-1000 ease-out motion-reduce:transition-none' : ''}`}
               >
@@ -2523,8 +2533,21 @@ export default function DriversManagement({
                         <ASNWithCopy value={a.id} label="Assignment number:" alignTextStart><Highlight text={a.id} query={search} /></ASNWithCopy>
                       </div>
                     </div>
-                    <div className="ml-auto shrink-0"><DispatchStatusBadge assignment={a} /></div>
+                    <div className="ml-auto flex shrink-0 flex-col items-end gap-1.5">
+                      <DispatchStatusBadge assignment={a} />
+                      {blockingIssue && <span className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-800">
+                        <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />Blocking Issue
+                      </span>}
+                    </div>
                   </div>
+
+                  {blockingIssue && <div className="mt-3 flex min-w-0 items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm leading-snug text-red-900">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                    <div className="min-w-0 [overflow-wrap:anywhere]">
+                      {blockingIssue.reason && <p className="font-semibold">{blockingIssue.reason}</p>}
+                      <p>Delivery progress paused until the issue is resolved.</p>
+                    </div>
+                  </div>}
 
                   <div className="mt-4 border-t border-border pt-4">
                     <div className="grid grid-cols-1 gap-3 border-b border-border pb-3 sm:grid-cols-2 sm:gap-0">
