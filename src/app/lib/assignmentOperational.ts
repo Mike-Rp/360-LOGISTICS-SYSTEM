@@ -37,6 +37,14 @@ export function getAdminOperationalProgress(assignment: Assignment) {
   };
 }
 
+/** Presentation hint only (the cancellation RPC locks and checks the row again): a delivery with an OPEN BLOCKING
+ * ISSUE can be cancelled at any stage before it is delivered — otherwise a problem that cannot be fixed would leave no way
+ * to end the delivery. Without an open issue the loading cutoff below applies. */
+export function canCancelAssignment(assignment: Assignment): boolean {
+  if (assignment.openIssue && assignment.taskStatus !== 'Delivered' && assignment.taskStatus !== 'Cancelled') return true;
+  return canCancelBeforeLoadingCompletes(assignment);
+}
+
 /** Presentation hint only. The cancellation RPC locks and checks the row again. */
 export function canCancelBeforeLoadingCompletes(assignment: Assignment): boolean {
   return assignment.taskStatus === 'Assigned'
