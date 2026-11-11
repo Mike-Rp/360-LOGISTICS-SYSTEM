@@ -435,9 +435,15 @@ function assignmentFromRow(r: Row, docs: Row[], photos: Row[], delays: Row[], is
     ...(photos.length ? { statusPhotos: Object.fromEntries(photos.map((p) => [p.status, photoFromRow(p)])) } : {}),
     ...(r.issue_reason ? { issueReason: r.issue_reason } : {}),
     ...(openIssueRow ? { openIssue: {
-      id: openIssueRow.id, reason: openIssueRow.reason,
+      id: openIssueRow.id, issueType: openIssueRow.issue_type ?? '', reason: openIssueRow.reason,
       reportedByName: openIssueRow.reported_by_name, reportedAt: openIssueRow.reported_at,
     } } : {}),
+    ...(issues.length ? { issues: [...issues].sort((a, b) => a.id - b.id).map((i) => ({
+      id: i.id, issueType: i.issue_type ?? '', reason: i.reason ?? '', isBlocking: !!i.is_blocking,
+      status: i.status === 'resolved' ? 'resolved' as const : 'open' as const,
+      reportedByName: i.reported_by_name ?? '', reportedAt: i.reported_at ?? '',
+      resolvedAt: i.resolved_at ?? null, resolutionNote: i.resolution_note ?? null,
+    })) } : {}),
     ...(delays.length ? { delayReports: [...delays].sort((a, b) => a.id - b.id).map(delayFromRow) } : {}),
     ...(r.driver_acknowledged_at ? { driverAcknowledgedAt: r.driver_acknowledged_at } : {}),
     ...(r.cancel_acknowledged_at ? { cancelAcknowledgedAt: r.cancel_acknowledged_at } : {}),

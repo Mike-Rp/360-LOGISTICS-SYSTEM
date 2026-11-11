@@ -127,7 +127,11 @@ export interface Assignment {
   /** REQ-008: this assignment's current OPEN blocking issue from the real issue
    * lifecycle table (assignment_issues) — read-only, null once resolved. Older
    * reports made before this table existed only have issueReason, with no row here. */
-  openIssue?: { id: number; reason: string; reportedByName: string; reportedAt: string } | null;
+  openIssue?: { id: number; issueType: string; reason: string; reportedByName: string; reportedAt: string } | null;
+  /** Every driver-reported issue on this assignment, resolved or not (read-only, from assignment_issues).
+   * A cancelled assignment whose issue is still 'open' was cancelled because the issue could not be resolved —
+   * cancel_assignment() never touches the issue row. */
+  issues?: AssignmentIssueRecord[];
   delayReports?: DelayReport[];
   /* Set the moment the driver's app first displays this assignment — lets
      admin see whether a driver has actually seen a freshly assigned task. */
@@ -135,6 +139,11 @@ export interface Assignment {
   /* When the delivery was created — ISO timestamp from assignments.created_at (read-only,
      never written back). Used by the Deliveries table to sort and filter by time. */
   createdAt?: string;
+}
+
+export interface AssignmentIssueRecord {
+  id: number; issueType: string; reason: string; isBlocking: boolean; status: 'open' | 'resolved';
+  reportedByName: string; reportedAt: string; resolvedAt: string | null; resolutionNote: string | null;
 }
 
 export interface CompletedTask extends Assignment {
