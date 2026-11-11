@@ -998,7 +998,7 @@ export async function completeAssignment(id: string): Promise<string> {
 }
 
 /* ── Accounts: archive instead of delete, and new PIN ──
-   archive_driver() and reset_driver_pin() refuse unless the admin re-entered their password
+   archive_driver(), archive_truck() and reset_driver_pin() refuse unless the admin re-entered their password
    in the last 5 minutes (verifyOwnPassword right before). All three write their own changes;
    the caller reloads afterwards. */
 export async function archiveDriver(id: string): Promise<void> {
