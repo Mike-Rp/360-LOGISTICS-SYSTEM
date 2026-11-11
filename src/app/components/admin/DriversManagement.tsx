@@ -23,7 +23,7 @@ import ConfirmPasswordDialog from './ConfirmPasswordDialog';
 import DeliveryTimingBadge from './DeliveryTimingBadge';
 import PickupTimingNotice from './PickupTimingNotice';
 import { getDispatchTimingNotices } from '../../lib/assignmentTiming';
-import { OPERATIONAL_STEPS, OPERATIONAL_PHOTO_GROUPS, getAdminOperationalProgress, getDeliveryActivityStates, canCancelBeforeLoadingCompletes, formatOperationalStamp, formatOperationalDuration } from '../../lib/assignmentOperational';
+import { OPERATIONAL_STEPS, OPERATIONAL_PHOTO_GROUPS, getAdminOperationalProgress, getDeliveryActivityStates, canCancelAssignment, canCancelBeforeLoadingCompletes, formatOperationalStamp, formatOperationalDuration } from '../../lib/assignmentOperational';
 import { sortCompletedNewestFirst } from '../../lib/completedOrdering';
 import { statusColors } from '../../data/statusColors';
 import { assignmentDisplayStatusConfig, canCompleteAssignment, getAssignmentDisplayStatus, getAssignmentDocumentProgress, getDocumentAgingState, type AssignmentDisplayStatus } from '../../lib/assignmentWorkflow';
@@ -1237,7 +1237,7 @@ function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClo
             </button>
           )}
           {/* The RPC rechecks the persisted stage while holding the assignment row lock. */}
-          {assignment && !isViewOnly && canCancelBeforeLoadingCompletes(assignment) && (
+          {assignment && !isViewOnly && canCancelAssignment(assignment) && (
             <button onClick={() => setConfirmCancel(true)}
               className="min-h-10 flex-1 rounded-xl border border-red-200 px-4 py-2.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 flex items-center justify-center gap-2">
               <Trash2 className="w-4 h-4" /> Cancel Assignment
@@ -1269,7 +1269,7 @@ function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClo
                 <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-red-100 bg-red-50"><AlertTriangle className="h-5 w-5 text-red-600" /></span>
                 <h2 id="cancel-title" className="text-base font-semibold text-foreground">Cancel this assignment?</h2>
               </div>
-              <p className="mb-4 text-sm text-muted-foreground">This will cancel the assignment and release the assigned Driver and Truck. This action cannot be undone.</p>
+              <p className="mb-4 text-sm text-muted-foreground">This will cancel the assignment and release the assigned Driver and Truck. This action cannot be undone.{assignment.openIssue && !canCancelBeforeLoadingCompletes(assignment) && ' The driver reported an issue that is still open, so this cancellation will be recorded as an unresolved issue.'}</p>
               <label htmlFor="cancel-reason" className="mb-1 block text-sm font-medium">Cancellation Reason *</label>
               <textarea id="cancel-reason" value={cancelReason} maxLength={150} rows={3}
                 onChange={(event) => { setCancelReason(event.target.value); setCancelError(''); }}
