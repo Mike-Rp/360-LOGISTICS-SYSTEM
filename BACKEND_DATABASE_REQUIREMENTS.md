@@ -1290,6 +1290,22 @@ applied to 360Logistics DB and verified (20/20 database checks) on 2026-10-20.
 **Status:** Implemented (2026-10-26 — all follow-ups, including the
 activity-log gaps, closed)
 
+**2026-11-11 — Archiving a truck now needs the OPM's password, like archiving a driver (bug fix).**
+`archive_driver()` has refused since `20260924000000` unless the password was typed in the last 5 minutes
+(`signed_in_recently(300)` → `reauth_required`), but `archive_truck()` was written without that check and the screen's
+truck dialog had the password prompt switched off, so a truck could be archived with one click. Migration
+`20261111000000_archive_truck_requires_password.sql` re-creates `archive_truck()` identical to `20261018000003` plus that
+one check, placed right after the OPM check (same position and wording as `archive_driver()`), so the password check comes
+before anything is revealed (a stale session cannot learn whether a truck exists or is busy). It first checks that the live
+function is the expected version and stops otherwise. In `AccountsPanel.tsx` the truck dialog no longer passes
+`requirePassword={false}`. Not changed: who may archive (OPM only), the busy / already-archived / not-found rules, the
+activity-log row, or any data. Tests: `supabase/tests/archive_truck_password.test.sql` (stale password refused and nothing
+changes, fresh password archives and logs, CSR refused, older rules intact, password check first) and
+`src/app/lib/archivePassword.test.cjs` (the truck dialog asks for the password, like the driver one; the function checks it
+after the OPM check and before any lookup). Rollout: a screen deployed without the migration still shows the prompt (it only
+verifies the password); a database migrated before the screen would refuse a truck archive from the old screen with
+"Please enter your password again" — apply the migration and deploy together.
+
 **Pending Workspace Settings follow-up (2026-10-21; not approved for database changes):**
 The current `remove_team_member(p_id)` deletes `auth.users`, which also removes
 the member profile. It cannot serve as Archive Member because the account
