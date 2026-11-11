@@ -2857,7 +2857,7 @@ unauthorized callers cannot set or edit event timestamps directly.
 
 ---
 
-## [REQ-016] Login lockout — 5 failed attempts lock the account for 5 minutes
+## [REQ-016] Login lockout — 5 failed attempts lock the account; each later lock is 5 minutes longer (up to 1 hour)
 
 **Status: IMPLEMENTED (2026-10-31).** Applies to Admin/CSR/OPM and Driver logins.
 
@@ -2865,11 +2865,12 @@ unauthorized callers cannot set or edit event timestamps directly.
 |---|---|
 | Failed attempts allowed | 5 |
 | Lockout starts | on the 5th failed sign-in (that response already says "locked") |
-| Duration | 5 minutes, fixed — attempts during a lock are rejected, **not counted, and do not extend it** |
+| Duration | the first lock is 5 minutes; every later lock is **5 minutes longer, up to 1 hour** (5, 10, 15 … 60, then 60) — attempts during a lock are rejected, **not counted, and do not extend it** |
 | Successful login | clears the counter |
 | During a lock | every attempt is refused, even with the right password |
-| After 5 minutes | attempts accepted again; the next failure starts a fresh count of 1 |
-| Stale failures | failures older than 15 minutes don't add up |
+| When a lock ends | attempts are accepted again, but **one** more wrong password locks the account again at once (no new 5 tries), one step longer |
+| Forgiveness | **3 hours with no failed attempt** forgets all earlier locks (a fresh 5 tries and a 5-minute first lock); a successful login clears them at once |
+| Stale failures | for an account that has not been locked, failures older than 15 minutes don't add up |
 | Scope | per **account** (lower-cased login email; a driver's is derived from their mobile number). Not per IP — by decision, since Supabase already rate-limits per IP and shared office/mobile IPs would lock out co-workers |
 | Unknown addresses | counted and locked like real ones (team decision; also keeps real and fake addresses indistinguishable) |
 
@@ -2885,7 +2886,25 @@ shows "Too many failed attempts. Try again in N min." (driver text in English an
 Fails closed: if the lock cannot be checked the login is refused. Auth rate limits (429) and
 outages are not counted as failed attempts.
 
-**Verification:** `supabase/tests/login_lockout.test.sql` 10/10; `logic.test.cjs` 10/10; Edge
+**2026-11-11 — escalating locks (migration `20261111000001_login_lockout_escalation.sql`).** The first lock stays
+5 minutes after 5 wrong passwords, but after any lock ONE more wrong password locks the account again (no fresh 5 tries) and
+every lock is 5 minutes longer than the last, capped at 1 hour (5, 10, 15, … 60, 60, 60). `login_attempts.lock_level` counts
+the locks in this run (stored up to 12, already the 1-hour maximum); accounts locked at the moment of the migration are marked
+level 1. 3 hours with no failed attempt resets the level and the count (the clock runs from the last wrong password, so an
+account that hit the 1-hour lock needs the rest of the 3 hours to pass after it ends); a successful sign-in clears everything.
+Attempts during a lock are still refused, not counted, and do not extend or raise it; unknown addresses behave like real
+ones. Only `record_login_failure()` changed — the Edge Function needs no redeploy (it passes along the seconds the database
+returns). The migration first checks that the live function is the expected version and stops otherwise. Why: a 4-digit driver
+PIN has only 10,000 possibilities, and a flat 5-minute lock allowed about 60 guesses an hour. Accepted trade-off (unchanged in
+kind, bigger in size): because locks are per account, anyone can lock someone else's account by typing wrong passwords; the
+1-hour cap and the 3-hour forgiveness bound it, and there is deliberately no OPM unlock screen (no new workspace module).
+Screens: the login screen and `db.ts` accepted waits only up to 300 seconds and treated longer ones as invalid, which would
+have left a 10-minute lock unblocked with a "try again later" notice — both now accept up to 3600 s (`MAX_LOCK_SECONDS`), and the
+longest lock reads "1 hour" (English and Filipino). Tests: `login_lockout.test.sql` rewritten (13 checks: schedule to the cap,
+immediate re-lock, 3-hour forgiveness incl. just-under-3-hours, success clears the level, unknown addresses escalate) and
+`loginLockout.test.cjs` (longer waits block the form and are worded correctly, 3601 s is out of range).
+
+**Verification (original 5-minute rule, 2026-10-31):** `supabase/tests/login_lockout.test.sql` 10/10; `logic.test.cjs` 10/10; Edge
 Function deployed 2026-10-31; live: 5 wrong passwords locked a staff account and a driver
 account, a different account still logged in, and a non-existent address locked too.
 
