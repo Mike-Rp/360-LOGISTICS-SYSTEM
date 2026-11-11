@@ -972,10 +972,9 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
         </div>
       )}
 
-      {/* ════ DIALOG: Archive truck (no password) ════ */}
+      {/* ════ DIALOG: Archive truck (password required, like archiving a driver) ════ */}
       {truckTarget && canManageFleetAccounts && (
         <ConfirmPasswordDialog
-          requirePassword={false}
           title="Move truck to archive?"
           message={<>
             <span className="font-mono font-semibold text-foreground">{truckTarget.plate}</span> will be moved to the archive
