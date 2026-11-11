@@ -395,6 +395,7 @@ export default function AdminDashboard({
       <HelpPanel
         open={helpOpen}
         onClose={() => setHelpOpen(false)}
+        role={adminRole}
       />
       {isOperationManager && (
         <WorkspaceSettingsPanel

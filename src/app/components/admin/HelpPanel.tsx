@@ -6,6 +6,8 @@ import {
   AlertTriangle, CheckCircle2, BookOpen,
 } from 'lucide-react';
 import { useModalFocus } from './useModalFocus';
+import type { AdminRole } from '../../data/assignmentTypes';
+import { filterHelpTopics, helpCategories, visibleHelpTopics } from '../../lib/helpGuideVisibility';
 
 interface Step {
   title: string;
@@ -121,7 +123,7 @@ const TOPICS: Topic[] = [
     tags: ['delivery', 'status', 'active', 'completed', 'cancelled', 'documents'],
     steps: [
       { title: 'Open Deliveries', body: 'Select "Deliveries" in the sidebar to see the assignment list.' },
-      { title: 'Choose a tab', body: 'Use Active, Completed, or Cancelled to narrow the list. Search and the date filter can help find a specific assignment.' },
+      { title: 'Choose a tab', body: 'Use Active, Delayed, Completed, or Cancelled to narrow the list. Search and the date filter can help find a specific assignment.' },
       { title: 'Check the status', body: 'Read the Status badge for the assignment workflow. Delivered does not automatically mean its document review is complete.' },
       { title: 'Open documents', body: 'When available, click the Documents control on the delivery to open that assignment in Document Archive.' },
     ],
@@ -153,7 +155,7 @@ const TOPICS: Topic[] = [
     tags: ['reports', 'analytics', 'on-time', 'export', 'excel'],
     steps: [
       { title: 'Go to Reports', body: 'Open Reports & Analytics from the sidebar.' },
-      { title: 'Choose a report', body: 'Select Weekly Performance, Monthly Delivery Summary, or Delay & Issues.' },
+      { title: 'Choose a report', body: 'Select Weekly Performance, Monthly Delivery Summary, Fleet & Driver Utilization, or Delay & Issues.' },
       { title: 'Preview', body: 'Click "Preview" on a report card to inspect its detailed table.' },
       { title: 'Export Excel', body: 'Click "Export Excel (.xlsx)" on a report card to download a formatted workbook.', tip: 'The Analytics date range below the report cards filters the charts, not the report cards.' },
     ],
@@ -169,10 +171,10 @@ const TOPICS: Topic[] = [
     tags: ['driver', 'login', 'mobile', 'pin'],
     steps: [
       { title: 'Open the app', body: 'Drivers go to the 360 Logistics URL on their phone. The Driver tab is shown by default.' },
-      { title: 'Enter mobile number', body: 'Type the number the admin registered (e.g. 09XX XXX XXXX).', tip: 'Use the exact number registered — including the leading 0.' },
+      { title: 'Enter mobile number', body: 'Enter the 10 digits of the registered mobile number after the fixed +63 prefix. The first digit must be 9.', tip: 'Use the exact number registered for the driver.' },
       { title: 'Enter 4-digit PIN', body: 'Tap each box and enter the PIN provided by the admin.' },
-      { title: 'Tap Login', body: 'Correct credentials → task dashboard appears immediately.' },
-      { title: 'Forgot PIN?', body: 'Tap "Forgot PIN" — contact the admin to regenerate it from Drivers & Trucks.', warning: 'Drivers cannot reset their own PIN. Only admins can regenerate it.' },
+      { title: 'Tap Log In', body: 'With correct credentials, the driver task dashboard opens.' },
+      { title: 'Forgot PIN?', body: 'Use the Forgot PIN action to see the current authorized contact number. An OPM or a CSR with temporary PIN coverage can set a new PIN.', warning: 'Drivers cannot reset their own PIN.' },
     ],
   },
   {
@@ -186,7 +188,7 @@ const TOPICS: Topic[] = [
     tags: ['driver', 'status', 'photo', 'document'],
     steps: [
       { title: 'View assigned task', body: 'After login, the current assignment shows at the top: pickup, destination, client, Scheduled Time of Arrival (STA).' },
-      { title: 'Update status', body: 'Tap "Update Status" and select the next step: Picked Up → In Transit → Delivered. Each step may prompt for a photo.', tip: 'Keep updates timely — admins monitor these in real time.' },
+      { title: 'Update status', body: 'Follow the next action shown for the assignment, including pickup, loading, travel, arrival, and delivery. Provide required photos when prompted.', tip: 'Keep updates timely so staff can monitor the delivery.' },
       { title: 'Upload documents', body: 'Go to the Documents section of the task, tap each type, and upload a clear photo of the signed document.', warning: 'Blurry or incomplete photos will be rejected — resubmission is needed.' },
       { title: 'Report a delay or issue', body: 'Use "Report Delay" or "Report Issue". Select a reason and add details — admin is notified immediately.' },
     ],
@@ -203,7 +205,7 @@ const TOPICS: Topic[] = [
     steps: [
       { title: 'Open Settings', body: 'Open the account menu in the header and select Settings.' },
       { title: 'Save profile changes', body: 'Edit your display name or photo, preview the change, then click "Save Changes" in the Profile section.' },
-      { title: 'Update your password', body: 'Use the separate "Update Password" action in the Password section.' },
+      { title: 'Update your password', body: 'Open Security and use "Update Password".' },
       { title: 'Manage notifications', body: 'Use the notification preference control in Settings to turn notifications on or off.' },
     ],
   },
@@ -217,15 +219,14 @@ const TOPICS: Topic[] = [
     iconBg: 'bg-green-100',
     tags: ['security', 'roles', 'access', 'opm'],
     steps: [
-      { title: 'OPM (Operational Manager)', body: 'Manages workspace members (creates CSR accounts) in Workspace Settings, and is the only role that can register, edit, archive, or reset the PIN of drivers and trucks. Read-only everywhere else.' },
-      { title: 'CSR', body: 'Full day-to-day access to the operational pages — dispatch, editing and cancelling assignments, document review — but cannot touch drivers, trucks, PINs, or staff accounts.' },
+      { title: 'OPM (Operational Manager)', body: 'Manages workspace members, drivers, trucks, fleet availability, and temporary CSR coverage. Dispatch operations and document review are read-only for OPM; report generation is available separately.' },
+      { title: 'CSR', body: 'Handles dispatch assignments and document review. CSR can register drivers or trucks or set new driver PINs only during the specific temporary coverage granted by OPM; Archive and existing PINs remain unavailable.' },
       { title: 'Separate accounts', body: 'Each team member should use their own login so activity can be attributed correctly.', warning: 'Never share login credentials.' },
     ],
   },
 ];
 
 const CATEGORY_ORDER = ['Dispatch', 'Deliveries', 'Documents', 'Reports', 'Drivers & Trucks', 'Settings', 'Admin'];
-const CATEGORIES = ['All', ...CATEGORY_ORDER.filter((name) => TOPICS.some((topic) => topic.category === name))];
 const COMMON_TASK_IDS = ['add-driver', 'add-truck', 'assign-task', 'review-documents'];
 const CATEGORY_DETAILS: Record<string, { icon: React.ElementType; description: string }> = {
   Dispatch: { icon: ClipboardList, description: 'Assign, track, and review deliveries.' },
@@ -240,13 +241,25 @@ const CATEGORY_DETAILS: Record<string, { icon: React.ElementType; description: s
 interface Props {
   open: boolean;
   onClose: () => void;
+  role: AdminRole | null;
 }
 
-export default function HelpPanel({ open, onClose }: Props) {
+export default function HelpPanel({ open, onClose, role }: Props) {
   const [search,      setSearch]      = useState('');
   const [category,    setCategory]    = useState('All');
-  const [activeTopic, setActiveTopic] = useState<Topic | null>(null);
+  const [activeTopicId, setActiveTopicId] = useState<string | null>(null);
   const [expandedCategories, setExpandedCategories] = useState<string[]>([]);
+  const roleTopics = useMemo(() => visibleHelpTopics(TOPICS, role), [role]);
+  const categories = useMemo(() => helpCategories(roleTopics, CATEGORY_ORDER), [roleTopics]);
+  const selectedCategory = categories.includes(category) ? category : 'All';
+  const activeTopic = roleTopics.find((topic) => topic.id === activeTopicId) ?? null;
+
+  useEffect(() => {
+    setSearch('');
+    setCategory('All');
+    setActiveTopicId(null);
+    setExpandedCategories([]);
+  }, [role]);
 
   const detailRef = useRef<HTMLDivElement>(null);
 
@@ -258,7 +271,7 @@ export default function HelpPanel({ open, onClose }: Props) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (activeTopic) setActiveTopic(null);
+        if (activeTopic) setActiveTopicId(null);
         else onClose();
       }
     };
@@ -279,36 +292,24 @@ export default function HelpPanel({ open, onClose }: Props) {
     }
   }, [activeTopic]);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return TOPICS.filter((t) => {
-      const matchCat = category === 'All' || t.category === category;
-      if (!q) return matchCat;
-      return matchCat && (
-        t.title.toLowerCase().includes(q) ||
-        t.summary.toLowerCase().includes(q) ||
-        t.category.toLowerCase().includes(q) ||
-        t.tags.some((tag) => tag.includes(q))
-      );
-    });
-  }, [search, category]);
+  const filtered = useMemo(() => filterHelpTopics(roleTopics, selectedCategory, search), [roleTopics, selectedCategory, search]);
 
   useEffect(() => {
     if (search.trim()) {
-      setExpandedCategories(CATEGORIES.filter((name) => filtered.some((topic) => topic.category === name)));
+      setExpandedCategories(categories.filter((name) => filtered.some((topic) => topic.category === name)));
     }
-  }, [search, filtered]);
+  }, [search, filtered, categories]);
 
   const commonTasks = filtered.filter((topic) => COMMON_TASK_IDS.includes(topic.id));
-  const groupedTopics = CATEGORIES.slice(1)
+  const groupedTopics = categories.slice(1)
     .map((name) => ({ name, topics: filtered.filter((topic) => topic.category === name) }))
     .filter((group) => group.topics.length > 0);
 
   const toggleCategory = (name: string) => setExpandedCategories((current) =>
     current.includes(name) ? current.filter((item) => item !== name) : [...current, name]);
 
-  const openTopic = (topic: Topic) => setActiveTopic(topic);
-  const goBack    = ()            => setActiveTopic(null);
+  const openTopic = (topic: Topic) => setActiveTopicId(topic.id);
+  const goBack    = ()            => setActiveTopicId(null);
 
   if (!open) return null;
 
@@ -363,7 +364,7 @@ export default function HelpPanel({ open, onClose }: Props) {
               </div>
               <div>
                 <h2 id="help-title" className="text-base font-semibold text-foreground leading-tight">Help &amp; Guide</h2>
-                <p className="text-xs text-muted-foreground">Quick help for common admin tasks.</p>
+                <p className="text-xs text-muted-foreground">Quick help for your staff role.</p>
               </div>
             </div>
             <button
@@ -459,13 +460,13 @@ export default function HelpPanel({ open, onClose }: Props) {
                 )}
               </div>
               <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
-                {CATEGORIES.map((cat) => (
+                {categories.map((cat) => (
                   <button
                     key={cat}
                     onClick={() => { setCategory(cat); setExpandedCategories(cat === 'All' ? [] : [cat]); }}
-                    aria-pressed={category === cat}
+                    aria-pressed={selectedCategory === cat}
                     className={`min-h-9 shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors border focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${
-                      category === cat
+                      selectedCategory === cat
                         ? 'bg-primary text-white border-primary'
                         : 'bg-white text-muted-foreground border-border hover:border-primary/40 hover:text-primary'
                     }`}
@@ -499,7 +500,7 @@ export default function HelpPanel({ open, onClose }: Props) {
                   {commonTasks.length > 0 && (
                     <section aria-labelledby="common-tasks-title">
                       <h3 id="common-tasks-title" className="text-sm font-semibold text-foreground">Common Tasks</h3>
-                      <p className="text-xs text-muted-foreground mt-0.5 mb-2.5">Quick access to common admin tasks.</p>
+                      <p className="text-xs text-muted-foreground mt-0.5 mb-2.5">Quick access to common tasks for your role.</p>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {commonTasks.map((topic) => (
                           <button key={topic.id} type="button" onClick={() => openTopic(topic)}
