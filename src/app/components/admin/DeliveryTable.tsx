@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { MapPin, Package, CheckCircle2, Truck, Building2, Filter, ChevronRight } from 'lucide-react';
+import { MapPin, Package, CheckCircle2, Truck, Building2, Filter, ChevronRight, AlertTriangle } from 'lucide-react';
+import { getUnresolvedCancelledIssue } from '../../lib/issueWorkflow';
 import type { Assignment, CompletedTask, LocalTruck, TaskStatus } from '../../data/assignmentTypes';
 import { taskStatusConfig } from '../../data/assignmentTypes';
 import { statusColors } from '../../data/statusColors';
@@ -480,7 +481,10 @@ export default function DeliveryTable({
                           {a.remarks && <RemarksPreview remarks={a.remarks} onOpen={() => setRemarksAssignment(a)} />}
                         </td>
                         <td className="px-2.5 py-4 text-[15px] font-medium text-foreground break-words"><Highlight text={a.company} query={search} /></td>
-                        <td className="px-2.5 py-4"><AssignmentStatusBadge assignment={a} /></td>
+                        <td className="px-2.5 py-4">
+                          <AssignmentStatusBadge assignment={a} />
+                          {tab === 'cancelled' && getUnresolvedCancelledIssue(a) && <span className="mt-1.5 flex w-fit max-w-full items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700" title="Cancelled because the driver's reported issue could not be resolved"><AlertTriangle aria-hidden="true" className="h-3 w-3 shrink-0" />Unresolved issue</span>}
+                        </td>
                         <td className="px-2.5 py-4 min-w-0"><DeliveryDateValue assignment={a} tab={tab} timingNow={timingNow} /></td>
                         <td className="px-2.5 py-4">{tab === 'cancelled'
                           ? <CancellationDetailsAction assignment={a} onOpen={() => setCancelledDetails(a)} />
@@ -646,6 +650,10 @@ export default function DeliveryTable({
             <div><dt className="text-muted-foreground">Cancelled by</dt><dd className="font-medium">{cancelledDetails?.cancelledBy ?? 'Not recorded'}</dd></div>
             <div><dt className="text-muted-foreground">Cancelled at</dt><dd className="font-medium">{formatOperationalStamp(cancelledDetails?.cancelledAt) ?? 'Not recorded'}</dd></div>
             <div><dt className="text-muted-foreground">Cancellation reason</dt><dd className="whitespace-pre-wrap break-words font-medium">{cancelledDetails?.cancelReason ?? 'Not recorded'}</dd></div>
+            {cancelledDetails && getUnresolvedCancelledIssue(cancelledDetails) && (() => { const issue = getUnresolvedCancelledIssue(cancelledDetails)!; return <>
+              <div><dt className="text-muted-foreground">Unresolved issue</dt><dd className="font-medium text-red-700">{issue.issueType}</dd></div>
+              <div><dt className="text-muted-foreground">Reported by driver</dt><dd className="whitespace-pre-wrap break-words font-medium">{issue.reason}{issue.reportedByName ? ` — ${issue.reportedByName}` : ''}</dd></div>
+            </>; })()}
           </dl>
           {cancelledDetails?.documents.some(doc => doc.uploaded) &&
             <a href={adminHref('Documents', { assignmentId: cancelledDetails.id })}
