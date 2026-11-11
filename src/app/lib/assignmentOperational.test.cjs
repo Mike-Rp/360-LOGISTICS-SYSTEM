@@ -86,3 +86,29 @@ test('activity stages require completion timestamps and their own evidence', () 
   assert.equal(getDeliveryActivityStates({ ...unloading,
     statusPhotos: photos(['unloading_before', 'unloading_after']) })[5], 'completed');
 });
+
+const { canCancelAssignment, canCancelBeforeLoadingCompletes } = loaded.exports;
+const openIssue = { id: 1, issueType: 'Vehicle breakdown', reason: 'Vehicle breakdown', reportedByName: 'Driver', reportedAt: '2026-11-11T08:00:00Z' };
+
+test('an open blocking issue lets the delivery be cancelled at any stage before delivery', () => {
+  for (const [status, stage] of [['Assigned', null], ['Assigned', 'loading'], ['Picked Up', 'loaded'], ['In Transit', 'loaded'],
+    ['In Transit', 'destination_arrived'], ['In Transit', 'unloading']]) {
+    assert.equal(canCancelAssignment(item(status, stage, { openIssue })), true, `${status}/${stage} with an open issue`);
+  }
+  assert.equal(canCancelAssignment(item('Delivered', 'unloaded', { openIssue })), false);
+  assert.equal(canCancelAssignment(item('Cancelled', null, { openIssue })), false);
+});
+
+test('without an open issue the loading cutoff is unchanged', () => {
+  assert.equal(canCancelAssignment(item('Assigned', 'loading')), true);
+  assert.equal(canCancelAssignment(item('In Transit', 'loaded', { loadingCompletedAt: '2026-11-11T08:00:00Z' })), false);
+  assert.equal(canCancelAssignment(item('Picked Up', 'loaded')), false);
+  assert.equal(canCancelAssignment(item('In Transit', 'unloading', { openIssue: null })), false);
+  assert.equal(canCancelBeforeLoadingCompletes(item('In Transit', 'loaded', { openIssue })), false);
+});
+
+test('Shipment Details shows Cancel Assignment through canCancelAssignment', () => {
+  const view = readFileSync(join(__dirname, '../components/admin/DriversManagement.tsx'), 'utf8');
+  assert.match(view, /canCancelAssignment\(assignment\)/);
+  assert.doesNotMatch(view, /!isViewOnly && canCancelBeforeLoadingCompletes\(assignment\)/);
+});
