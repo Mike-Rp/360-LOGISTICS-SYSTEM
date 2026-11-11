@@ -68,7 +68,8 @@ export default function LoginScreen({ onAdminLogin, onDriverLogin, sessionNotice
   const driverSubmitting = useRef(false);
   const adminSubmitting = useRef(false);
   const lockMessage = (feedback: { minutes: number | null } | null) => !feedback ? '' : feedback.minutes === null
-    ? tr('login.lockedUnknown') : feedback.minutes === 1 ? tr('login.lockedOne') : tr('login.locked', { minutes: feedback.minutes });
+    ? tr('login.lockedUnknown') : feedback.minutes === 1 ? tr('login.lockedOne')
+    : feedback.minutes >= 60 ? tr('login.lockedHour') : tr('login.locked', { minutes: feedback.minutes });
 
   const submitResetRequest = async () => {
     if (resetBusy || resetSubmitted) return;
