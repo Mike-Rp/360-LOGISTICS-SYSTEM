@@ -114,11 +114,16 @@ function setup(t, kind = 'admin', language = 'en') {
 }
 
 test('retry validation never manufactures timing, including malformed and expired values', () => {
-  for (const value of [undefined, null, '300', NaN, Infinity, -5, 0, 301, 1e100]) {
+  for (const value of [undefined, null, '300', NaN, Infinity, -5, 0, 3601, 1e100]) {
     assert.equal(rules.loginRetrySeconds(value), undefined);
     assert.deepEqual(rules.lockoutFeedback(rules.confirmedLockout(value, 0), 0), { blocked: false, minutes: null });
   }
   assert.deepEqual(rules.lockoutFeedback(rules.confirmedLockout(300, 0), 0), { blocked: true, minutes: 5 });
+  // each lock is 5 minutes longer than the last, up to 1 hour — all of those are valid waits now
+  assert.deepEqual(rules.lockoutFeedback(rules.confirmedLockout(600, 0), 0), { blocked: true, minutes: 10 });
+  assert.deepEqual(rules.lockoutFeedback(rules.confirmedLockout(1800, 0), 0), { blocked: true, minutes: 30 });
+  assert.deepEqual(rules.lockoutFeedback(rules.confirmedLockout(3600, 0), 0), { blocked: true, minutes: 60 });
+  assert.equal(rules.MAX_LOCK_SECONDS, 3600);
   assert.equal(rules.lockoutFeedback(rules.confirmedLockout(120, 0), 120000), null);
   assert.equal(rules.lockoutFeedback(rules.confirmedLockout(1, 0), 1001), null);
   // A slow response cannot restart or extend its authoritative remaining duration.
@@ -178,7 +183,7 @@ for (const kind of ['admin', 'driver']) {
     assert.ok(app.resources() > 0); app.advance(1000); app.lifecycle();
     assert.equal(app.button().props.disabled, false); app.cleanup(); assert.equal(app.resources(), 0);
   });
-  for (const value of ['300', 0, -1, NaN, Infinity, 900]) {
+  for (const value of ['300', 0, -1, NaN, Infinity, 3601]) {
     test(`${kind}: malformed retry ${value} gives generic feedback without a disabled timer`, async (t) => {
       const app = setup(t, kind); app.fill(); app.submit(); await app.fail('locked', value);
       assert.match(app.content(), /Please try again later/); assert.equal(app.button().props.disabled, false);
@@ -198,10 +203,32 @@ test('actual login data layer maps only authoritative valid retry seconds and pr
     '../data/assignmentTypes': { DOCUMENT_TYPES: [] }, '../data/assignmentRoute': {}, './assignmentLocation': {},
     './storageRefs': {}, './driverHistory': {}, './resetPasswordFeedback': {}, './teamMemberValidation': {},
   });
-  for (const seconds of [300, 55, undefined, null, '300', 0, -1, 301]) {
+  for (const seconds of [300, 55, 600, 900, 3600, undefined, null, '300', 0, -1, 3601]) {
     body = { error: 'locked', retryAfterSeconds: seconds };
     await assert.rejects(db.signInStaff('csr@example.invalid', 'mock-only'), (error) => error instanceof db.LoginError && error.code === 'locked' && error.retryAfterSeconds === rules.loginRetrySeconds(seconds));
   }
   body = { error: 'invalid_credentials' };
   await assert.rejects(db.signInStaff('csr@example.invalid', 'mock-only'), (error) => error.code === 'invalid_credentials' && error.retryAfterSeconds === undefined);
 });
+
+for (const kind of ['admin', 'driver']) {
+  test(`${kind}: longer locks (10 and 15 minutes, then 1 hour) block the form and are worded correctly`, async (t) => {
+    const app = setup(t, kind); app.fill(); app.submit(); await app.fail('locked', 600);
+    assert.match(app.content(), /try again in 10 minutes/);
+    assert.equal(app.button().props.disabled, true);
+    app.advance(600000); assert.equal(app.button().props.disabled, false);
+    app.submit(); await app.fail('locked', 900);
+    assert.match(app.content(), /try again in 15 minutes/);
+    assert.equal(app.button().props.disabled, true);
+    app.advance(900000); app.submit(); await app.fail('locked', 3600);
+    assert.match(app.content(), /try again in 1 hour\./);
+    assert.doesNotMatch(app.content(), /60 minutes/);
+    assert.equal(app.button().props.disabled, true);
+    app.advance(60000); assert.match(app.content(), /try again in 59 minutes/);   // the countdown then runs down as usual
+    app.advance(3540000); assert.equal(app.button().props.disabled, false);
+  });
+  test(`${kind}: Filipino wording for the 1-hour lock`, async (t) => {
+    const app = setup(t, kind, 'fil'); app.fill(); app.submit(); await app.fail('locked', 3600);
+    assert.match(app.content(), /1 oras/);
+  });
+}
