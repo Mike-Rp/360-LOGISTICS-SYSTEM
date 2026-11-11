@@ -3,7 +3,7 @@ import {
   LogOut, Package, CheckCircle2, XCircle, Camera, WifiOff,
   Clock, Truck, AlertTriangle, FileText, Building2, FileCheck, FileX,
   ChevronRight, ChevronLeft, Lock, ArrowDown, ArrowUp,
-  RefreshCw, RotateCcw, X, Phone, Bell, Menu, History, Languages, MapPin, Images, CalendarDays,
+  RefreshCw, RotateCcw, X, Phone, Bell, Menu, History, Languages, MapPin, Images, CalendarDays, CircleHelp, Search,
 } from 'lucide-react';
 import type { Assignment, CompletedTask, TaskStatus, StatusPhoto, DocStatus } from '../../data/assignmentTypes';
 import { statusColors } from '../../data/statusColors';
@@ -16,6 +16,7 @@ import {
 import { getDeliveryTimingStatus, getPickupTimingStatus, type DeliveryTimingStatus } from '../../lib/assignmentTiming';
 import { assignmentDisplayStatusConfig, getAssignmentDisplayStatus, getAssignmentDocumentProgress, getDocumentAgingState } from '../../lib/assignmentWorkflow';
 import { DriverLanguageProvider, useDriverI18n, type DriverLanguage } from './driverI18n';
+import { driverHelpGuides, searchDriverHelpGuides } from './driverHelpGuides';
 import { destinationAreaEnabled, getAssignmentRoute, getDeliveryLocation } from '../../data/assignmentRoute';
 import { checkPhoto, loadVehicleDetector, type PhotoCheckFailure } from '../../lib/photoQuality';
 import { MILESTONE_NOTIFICATIONS } from '../../lib/notificationEvents';
@@ -1391,6 +1392,47 @@ function DriverDrawer({ title, onClose, children, compact = false }: { title: st
   );
 }
 
+function DriverHelpContent() {
+  const { language, t } = useDriverI18n();
+  const [query, setQuery] = useState('');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const guides = searchDriverHelpGuides(language, query);
+  const selected = selectedId ? driverHelpGuides(language).find((guide) => guide.id === selectedId) : null;
+  if (selected) return <div className="min-w-0">
+    <button type="button" onClick={() => setSelectedId(null)} className="mb-5 flex min-h-11 items-center gap-2 text-sm font-semibold text-green-700 focus-visible:outline-2 focus-visible:outline-green-700">
+      <ChevronLeft className="h-5 w-5" aria-hidden="true" />{t('help.back')}
+    </button>
+    <p className="text-sm font-semibold text-green-700">{selected.category}</p>
+    <h3 className="mt-1 break-words text-xl font-bold text-foreground">{selected.title}</h3>
+    <ol className="mt-5 space-y-4">
+      {selected.steps.map((step, index) => <li key={index} className="flex min-w-0 gap-3 border-b border-gray-100 pb-4 last:border-0">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-green-50 text-sm font-bold text-green-700">{index + 1}</span>
+        <div className="min-w-0"><span className="text-sm font-bold text-gray-700">{t('help.step', { number: index + 1 })}</span><p className="mt-1 break-words text-sm leading-relaxed text-gray-700">{step}</p></div>
+      </li>)}
+    </ol>
+  </div>;
+
+  const common = query ? [] : guides.filter((guide) => guide.common);
+  return <div className="min-w-0">
+    <p className="mb-4 text-sm text-gray-600">{t('help.description')}</p>
+    <label htmlFor="driver-help-search" className="sr-only">{t('help.search')}</label>
+    <div className="relative mb-6">
+      <Search className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-500" aria-hidden="true" />
+      <input id="driver-help-search" type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('help.searchPlaceholder')}
+        className="min-h-12 w-full min-w-0 rounded-xl border border-gray-200 bg-white pl-10 pr-3 text-base text-foreground focus-visible:outline-2 focus-visible:outline-green-700" />
+    </div>
+    {common.length > 0 && <section aria-labelledby="driver-help-common" className="mb-6">
+      <h3 id="driver-help-common" className="mb-3 text-base font-bold text-foreground">{t('help.common')}</h3>
+      <div className="space-y-2">{common.map((guide) => <button key={guide.id} type="button" onClick={() => setSelectedId(guide.id)} className="flex min-h-12 w-full min-w-0 items-center justify-between gap-2 rounded-xl border border-gray-200 px-3 py-2 text-left text-sm font-semibold text-gray-800 focus-visible:outline-2 focus-visible:outline-green-700"><span className="min-w-0 break-words">{guide.title}</span><ChevronRight className="h-5 w-5 shrink-0 text-gray-500" aria-hidden="true" /></button>)}</div>
+    </section>}
+    <section aria-labelledby="driver-help-all">
+      <h3 id="driver-help-all" className="mb-3 text-base font-bold text-foreground">{t('help.all')}</h3>
+      {guides.length ? <div className="space-y-2">{guides.map((guide) => <button key={guide.id} type="button" onClick={() => setSelectedId(guide.id)} className="flex min-h-14 w-full min-w-0 items-center justify-between gap-2 rounded-xl border border-gray-200 px-3 py-2 text-left focus-visible:outline-2 focus-visible:outline-green-700"><span className="min-w-0"><span className="block text-xs font-semibold text-green-700">{guide.category}</span><span className="block break-words text-sm font-semibold text-gray-800">{guide.title}</span></span><ChevronRight className="h-5 w-5 shrink-0 text-gray-500" aria-hidden="true" /></button>)}</div>
+        : <p role="status" className="py-4 text-sm text-gray-600">{t('help.noResults')}</p>}
+    </section>
+  </div>;
+}
+
 function HistoryDetailsSheet({ driverId, driverName, assignmentId, onClose, onCheckSession, issueNotification }: { driverId: string; driverName: string; assignmentId: string; onClose: () => void; onCheckSession: () => Promise<boolean>; issueNotification?: DriverNotificationRecord | null }) {
   const { t, document: documentText, status: statusText } = useDriverI18n();
   const [detail, setDetail] = useState<HistoryDetail | null>(null);
@@ -1692,7 +1734,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   const [notificationError, setNotificationError] = useState('');
   const [markAllPending, setMarkAllPending] = useState(false);
   const notificationReadInFlight = useRef(new Set<string>());
-  const [activeDrawer, setActiveDrawer] = useState<'notifications' | 'menu' | 'language' | null>(null);
+  const [activeDrawer, setActiveDrawer] = useState<'notifications' | 'menu' | 'language' | 'help' | null>(null);
   const [languageNotice, setLanguageNotice] = useState<DriverLanguage | null>(null);
   const [statusNotice, setStatusNotice] = useState<TaskStatus | null>(null);
   const [focusedDocType, setFocusedDocType] = useState<string | null>(null);
@@ -2688,6 +2730,12 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
           <span className="text-sm text-gray-500">{language === 'fil' ? t('language.filipino') : t('language.english')}</span>
           <ChevronRight className="w-5 h-5 text-gray-400 shrink-0" aria-hidden="true" />
         </button>
+        <button type="button" onClick={() => setActiveDrawer('help')}
+          className="mt-3 w-full min-h-16 rounded-2xl border border-gray-200 bg-white px-4 py-3 text-left flex items-center gap-3 focus-visible:outline-2 focus-visible:outline-green-700">
+          <CircleHelp className="w-6 h-6 text-green-700 shrink-0" aria-hidden="true" />
+          <span className="flex-1 font-bold text-foreground">{t('help.title')}</span>
+          <ChevronRight className="w-5 h-5 text-gray-400 shrink-0" aria-hidden="true" />
+        </button>
         <div className="mt-4 border-t border-gray-200 pt-4">
           <div className="flex items-center justify-between gap-3 px-1">
             <div className="min-w-0">
@@ -2716,6 +2764,10 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
           </button>
         </div>
       </div>
+    </DriverDrawer>
+  ) : activeDrawer === 'help' ? (
+    <DriverDrawer title={t('help.title')} onClose={closeDrawer}>
+      <DriverHelpContent />
     </DriverDrawer>
   ) : activeDrawer === 'language' ? (
     <DriverDrawer title={t('menu.language')} onClose={() => setActiveDrawer('menu')} compact>
