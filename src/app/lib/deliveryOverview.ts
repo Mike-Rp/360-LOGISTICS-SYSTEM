@@ -54,11 +54,17 @@ export function getOverviewItems(
     const evidenceTimes = Object.values(record.statusPhotos ?? {})
       .map(photo => statusPhotoTimestamp(photo.timestamp))
       .filter((time): time is number => time !== null);
-    const times = [creationTime(record.createdAt, record.id), ...evidenceTimes].filter((time): time is number => time !== null);
+    const issueTime = eventTime(record.openIssue?.reportedAt);
+    const times = [creationTime(record.createdAt, record.id), ...evidenceTimes, issueTime].filter((time): time is number => time !== null);
     byId.set(record.id, { id: record.id, activityAt: times.length ? Math.max(...times) : null, status });
   };
   // An archived completion wins if a save/poll briefly exposes both copies.
-  for (const record of [...assignments, ...completed]) {
+  for (const record of assignments) {
+    // A driver-reported issue that is still open (assignment_issues, not the old 'Failed / Issue' status, which the
+    // current issue flow deliberately never sets) counts under Issues instead of the delivery's normal status.
+    add(record, record.openIssue && record.taskStatus !== 'Cancelled' ? 'Failed / Issue' : getAssignmentDisplayStatus(record));
+  }
+  for (const record of completed) {
     add(record, getAssignmentDisplayStatus(record));
   }
   for (const record of cancelled) {
