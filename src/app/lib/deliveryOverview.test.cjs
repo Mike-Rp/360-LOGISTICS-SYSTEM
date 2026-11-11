@@ -163,3 +163,24 @@ test('today uses Manila calendar boundaries for all statuses', () => {
   assert.equal(counts['Picked Up'], 1);
   assert.equal(counts.Cancelled, 1);
 });
+
+test('an active delivery with an open driver-reported issue counts under Issues, not Active', () => {
+  const issue = { id: 1, issueType: 'Vehicle breakdown', reason: 'Vehicle breakdown', reportedByName: 'Driver', reportedAt: '2026-10-16T03:00:00Z' };
+  const stuck = { ...record('ASN-ISSUE', 'In Transit', '2026-10-16T01:00:00Z'), openIssue: issue };
+  const fine = record('ASN-FINE', 'In Transit', '2026-10-16T01:30:00Z');
+  const sum = totals(overview.buildOverviewBars([stuck, fine], [], [], 'today', now));
+  assert.equal(sum['Failed / Issue'], 1);
+  assert.equal(sum['In Transit'], 1);
+  // once the issue is resolved (openIssue gone) the delivery goes back to its normal status
+  const resolved = totals(overview.buildOverviewBars([{ ...stuck, openIssue: null }, fine], [], [], 'today', now));
+  assert.equal(resolved['Failed / Issue'], 0);
+  assert.equal(resolved['In Transit'], 2);
+});
+
+test('a force-cancelled delivery stays under Cancelled even though its issue is still open', () => {
+  const issue = { id: 2, issueType: 'Accident / road incident', reason: 'Accident', reportedByName: 'Driver', reportedAt: '2026-10-16T03:00:00Z' };
+  const gone = { ...record('ASN-GONE', 'Cancelled', '2026-10-16T01:00:00Z'), openIssue: issue };
+  const sum = totals(overview.buildOverviewBars([], [], [gone], 'today', now));
+  assert.equal(sum.Cancelled, 1);
+  assert.equal(sum['Failed / Issue'], 0);
+});
