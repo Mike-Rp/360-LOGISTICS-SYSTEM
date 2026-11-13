@@ -12,7 +12,8 @@ const compiled = ts.transpileModule(source, {
 }).outputText;
 const loaded = { exports: {} };
 new Function('require', 'module', 'exports', compiled)(
-  (name) => name === './useModalFocus' ? { useModalFocus() {} } : require(name), loaded, loaded.exports,
+  (name) => name === './useModalFocus' ? { useModalFocus() {} }
+    : name === './useModalBodyLock' ? { useModalBodyLock() {} } : require(name), loaded, loaded.exports,
 );
 const { default: TeamMemberPhotoPreview, memberInitials } = loaded.exports;
 const member = { id: 'csr-1', name: 'María Ñ. Santos', role: 'csr', avatarPath: 'private/path' };
@@ -38,8 +39,9 @@ test('missing photo uses existing initials fallback and actual role', () => {
   assert.equal(memberInitials('María Ñ. Santos'), 'MÑ');
 });
 
-test('failed image replaces the photo with initials and keeps close options', () => {
+test('failed image replaces the photo with initials and only the explicit close action dismisses', () => {
   assert.match(source, /onError=\{\(\) => setImageFailed\(true\)\}/);
-  assert.match(source, /useModalFocus\(true, modalRef, onClose\)/);
-  assert.match(source, /onClick=\{onClose\} aria-hidden="true"/);
+  assert.match(source, /useModalFocus\(true, modalRef\)/);
+  assert.match(source, /onClick=\{onClose\} aria-label="Close profile photo"/);
+  assert.doesNotMatch(source, /bg-black\/50" onClick=/);
 });

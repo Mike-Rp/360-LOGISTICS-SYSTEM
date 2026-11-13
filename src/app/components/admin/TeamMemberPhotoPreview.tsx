@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import type { TeamMember } from '../../data/assignmentTypes';
 import { useModalFocus } from './useModalFocus';
+import { useModalBodyLock } from './useModalBodyLock';
 
 export function memberInitials(name: string): string {
   return name.split(' ').map((part) => part[0]).join('').toUpperCase().slice(0, 2);
@@ -14,10 +15,11 @@ export default function TeamMemberPhotoPreview({ member, photoUrl, onClose }: {
 }) {
   const modalRef = useRef<HTMLDivElement>(null);
   const [imageFailed, setImageFailed] = useState(false);
-  useModalFocus(true, modalRef, onClose);
+  useModalFocus(true, modalRef);
+  useModalBodyLock(true);
 
   return <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 [padding-bottom:max(1rem,env(safe-area-inset-bottom))] [padding-top:max(1rem,env(safe-area-inset-top))]">
-    <div className="absolute inset-0 bg-black/50" onClick={onClose} aria-hidden="true" />
+    <div className="absolute inset-0 bg-black/50" aria-hidden="true" />
     <div ref={modalRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="member-photo-title"
       className="relative flex max-h-[90dvh] w-full max-w-sm min-w-0 flex-col overflow-hidden rounded-2xl bg-white shadow-xl">
       <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">

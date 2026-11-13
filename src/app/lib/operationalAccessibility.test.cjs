@@ -25,7 +25,7 @@ function text(node) {
   return typeof node === 'string' || typeof node === 'number' ? String(node) : '';
 }
 function runtime(t) {
-  const saved = { document: global.document, setTimeout, clearTimeout };
+  const saved = { document: global.document, window: global.window, setTimeout, clearTimeout };
   const listeners = new Set(), timers = new Map(); let timerId = 0, layer = false;
   const doc = { body: {}, activeElement: null,
     querySelector: () => layer ? {} : null,
@@ -34,6 +34,7 @@ function runtime(t) {
     removeEventListener(type, fn) { listeners.delete(fn); },
   };
   global.document = doc;
+  global.window = { setInterval: () => 1, clearInterval() {} };
   global.setTimeout = (fn) => { const id = ++timerId; timers.set(id, fn); return id; };
   global.clearTimeout = (id) => timers.delete(id);
   const lifecycles = [];
@@ -137,14 +138,17 @@ function unavailability(t, kind = 'driver', initial) {
     react: life.hooks, 'react/jsx-runtime': require('react/jsx-runtime'), 'lucide-react': new Proxy({}, { get: () => 'svg' }),
     '../../lib/unavailability': helpers, '../../lib/philippineTime': time,
     '../../lib/fleetDelegation': { toLocalInputValue: time.toPhilippineInputValue },
-    './useModalFocus': { useModalFocus(open, ref, callback) { close = callback; } }, './DiscardChangesDialog': { default: 'discard' },
+    './ScheduleFields': { DateField: 'date-field', TimeField: 'time-field' },
+    './expectedReturnValue': load('../components/admin/expectedReturnValue.ts', { '../../lib/philippineTime': time }),
+    './useModalFocus': { useModalFocus(open, ref, callback) { close = callback; } }, './useModalBodyLock': { useModalBodyLock() {} }, './DiscardChangesDialog': { default: 'discard' },
   });
   const render = () => life.render(() => Dialog({ kind, name: 'Long operational name '.repeat(8), mode: initial ? 'edit' : 'mark', initial,
     onSubmit: async (draft) => { calls.push(draft); }, onCancel() { cancelled++; }, errorText: () => 'Request failed' }));
   const field = id => nodes(render()).find(node => node.props.id === id);
   const change = (id, value) => { field(id).props.onChange({ target: { value } }); render(); };
   render();
-  return { render, field, change, calls, cancelled: () => cancelled, close: () => close(),
+  return { render, field, change, calls, cancelled: () => cancelled,
+    close: () => nodes(render()).find(node => node.type === 'button' && /^Close /.test(node.props['aria-label'] ?? '')).props.onClick(),
     submit: () => nodes(render()).find(node => node.type === 'form').props.onSubmit({ preventDefault() {} }),
     discard: () => nodes(render()).find(node => node.type === 'discard'), env };
 }
@@ -156,8 +160,10 @@ test('driver errors are linked, readable and focus the responsible reason/note/r
   assert.match(app.field('unavailable-reason-error').props.className, /text-sm/);
   app.change('unavailable-reason', 'other'); app.submit();
   assert.equal(app.field('unavailable-note').props['aria-describedby'], 'unavailable-note-error');
-  app.change('unavailable-note', 'A saved reason'); app.change('unavailable-return', '2000-01-01T12:00'); app.submit();
-  assert.match(app.field('unavailable-return').props['aria-describedby'], /unavailable-return-error/);
+  app.change('unavailable-note', 'A saved reason');
+  app.field('unavailable-return').props.onChange('2000-01-01'); app.render();
+  app.field('unavailable-return-time').props.onChange('12:00'); app.render(); app.submit();
+  assert.match(app.field('unavailable-return').props.describedBy, /unavailable-return-error/);
   assert.equal(app.calls.length, 0);
 });
 
@@ -203,14 +209,34 @@ test('coverage form links CSR/scopes/window errors, protects drafts, and retains
     '../../lib/adminNavigation': {}, '../../lib/pendingPasswordResetRequests': {}, '../../lib/philippineMobile': load('philippineMobile.ts'),
     './MobileNumberField': { default: 'mobile' }, '../../lib/teamMemberValidation': {}, '../../lib/useCoverageLookup': {},
     './ScheduleFields': { DateField: 'date-field', TimeField: 'time-field' }, '../../lib/philippineTime': time,
-    './useModalFocus': {}, './DiscardChangesDialog': { default: 'discard' },
+    './useModalFocus': {}, './useModalBodyLock': { useModalBodyLock() {} }, './DiscardChangesDialog': { default: 'discard' },
+    './TeamMemberPhotoPreview': { default: 'photo-preview', memberInitials: () => 'TM' },
   }, '\nexports.CoverageModal = CoverageModal;');
   const previousWindow = global.window; global.window = { setInterval: () => 1, clearInterval() {} }; t.after(() => { global.window = previousWindow; });
   const render = () => life.render(() => CoverageModal({ members: [{ id: 'csr', name: 'Niño Peña', email: 'test@example.invalid', status: 'active' }], onClose: () => closed++, onContinue: draft => continued = draft }));
   const all = () => nodes(render()), byId = id => all().find(node => node.props.id === id);
+  const coveragePhone = () => byId('coverage-phone');
+  assert.match(coveragePhone().props.validateOnChange('8'), /start with 9/);
+  assert.match(coveragePhone().props.validateOnChange('0'), /start with 9/);
+  assert.equal(coveragePhone().props.validateOnChange('9'), '');
+  assert.equal(coveragePhone().props.validateOnChange('917'), '');
+  assert.equal(coveragePhone().props.validateOnChange('9171234567'), '');
+  assert.equal(coveragePhone().props.validateOnChange(''), '');
   const click = label => all().find(node => node.type === 'button' && text(node) === label).props.onClick();
   click('Continue'); assert.equal(byId('coverage-csr').props['aria-describedby'], 'coverage-csr-error');
   byId('coverage-csr').props.onChange({ target: { value: 'csr' } });
+  const { default: Mobile } = load('../components/admin/MobileNumberField.tsx', {
+    'react/jsx-runtime': require('react/jsx-runtime'), '../../lib/philippineMobile': load('philippineMobile.ts'),
+  });
+  const phoneInput = () => nodes(Mobile(coveragePhone().props)).find(node => node.type === 'input');
+  const typePhone = value => { phoneInput().props.onChange({ target: { value } }); render(); };
+  typePhone('8'); assert.match(coveragePhone().props.error, /start with 9/);
+  typePhone('9'); assert.equal(coveragePhone().props.error, '');
+  click('Continue'); assert.match(coveragePhone().props.error, /10-digit/);
+  phoneInput().props.onPaste({ preventDefault() {}, clipboardData: { getData: () => '0123456789' } }); render();
+  assert.match(coveragePhone().props.error, /start with 9/);
+  typePhone(''); assert.equal(coveragePhone().props.error, '');
+  typePhone('9171234567'); assert.equal(coveragePhone().props.error, '');
   let checks = all().filter(node => node.type === 'input' && node.props.type === 'checkbox');
   checks[0].props.onChange({ target: { checked: false } }); checks[1].props.onChange({ target: { checked: false } });
   click('Continue'); assert.equal(byId('coverage-reset-pin').props['aria-describedby'], 'coverage-scopes-error');
@@ -235,7 +261,7 @@ for (const failure of ['wrong_password', 'network']) {
     const { default: Dialog } = load('../components/admin/ConfirmPasswordDialog.tsx', {
       react: life.hooks, 'react/jsx-runtime': require('react/jsx-runtime'), 'lucide-react': new Proxy({}, { get: () => 'svg' }),
       '../../lib/db': { AssignmentActionError, verifyOwnPassword: async () => { verified++; throw new AssignmentActionError(failure); } },
-      './PasswordVisibilityInput': { default: 'password-field' }, './useModalFocus': { useModalFocus() {} },
+      './PasswordVisibilityInput': { default: 'password-field' }, './useModalFocus': { useModalFocus() {} }, './useModalBodyLock': { useModalBodyLock() {} },
     });
     const render = () => life.render(() => Dialog({ title: 'Give this CSR leave coverage?', message: 'Confirm coverage', confirmLabel: 'Give Coverage',
       onConfirm: async () => confirmed++, onCancel() {}, errorText: () => 'Could not verify your password. Please try again.' }));
@@ -259,7 +285,7 @@ test('confirmation Escape respects in-flight action; no-password coverage confir
   const env = runtime(t), life = env.lifecycle(); let close, done, confirmed = 0, cancelled = 0;
   const { default: Dialog } = load('../components/admin/ConfirmPasswordDialog.tsx', {
     react: life.hooks, 'react/jsx-runtime': require('react/jsx-runtime'), 'lucide-react': new Proxy({}, { get: () => 'svg' }),
-    '../../lib/db': {}, './PasswordVisibilityInput': {}, './useModalFocus': { useModalFocus(open, ref, onEscape) { close = onEscape; } },
+    '../../lib/db': {}, './PasswordVisibilityInput': {}, './useModalFocus': { useModalFocus(open, ref, onEscape) { close = onEscape; } }, './useModalBodyLock': { useModalBodyLock() {} },
   });
   const render = () => life.render(() => Dialog({ title: 'End coverage now?', message: 'Access will end.', confirmLabel: 'End Coverage', requirePassword: false,
     onConfirm: () => { confirmed++; return new Promise(resolve => done = resolve); }, onCancel: () => cancelled++, errorText: () => 'Failed' }));

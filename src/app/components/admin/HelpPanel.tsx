@@ -6,6 +6,7 @@ import {
   AlertTriangle, CheckCircle2, BookOpen,
 } from 'lucide-react';
 import { useModalFocus } from './useModalFocus';
+import { useModalBodyLock } from './useModalBodyLock';
 import type { AdminRole } from '../../data/assignmentTypes';
 import { filterHelpTopics, helpCategories, visibleHelpTopics } from '../../lib/helpGuideVisibility';
 
@@ -266,24 +267,8 @@ export default function HelpPanel({ open, onClose, role }: Props) {
   /* Focus moves into the modal on open, Tab stays inside, returns to the opener on close */
   const modalRef = useRef<HTMLDivElement>(null);
   useModalFocus(open, modalRef);
+  useModalBodyLock(open);
 
-  /* ── Close on Esc — back first if in detail, then close panel ── */
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        if (activeTopic) setActiveTopicId(null);
-        else onClose();
-      }
-    };
-    if (open) document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [open, onClose, activeTopic]);
-
-  /* ── Body scroll lock ── */
-  useEffect(() => {
-    document.body.style.overflow = open ? 'hidden' : '';
-    return () => { document.body.style.overflow = ''; };
-  }, [open]);
 
   /* ── Scroll detail to top when topic changes ── */
   useEffect(() => {
@@ -316,7 +301,7 @@ export default function HelpPanel({ open, onClose, role }: Props) {
   return (
     <>
       {/* Backdrop */}
-      <div className="fixed inset-0 z-40 bg-black/40 backdrop-blur-[2px]" onClick={onClose} />
+      <div className="fixed inset-0 z-40 bg-black/40 backdrop-blur-[2px]" aria-hidden="true" />
 
       {/* Centred modal — the wrapper ignores clicks so they fall through to the backdrop.
           Fixed height (not max) so it doesn't resize between the list and a guide's steps. */}

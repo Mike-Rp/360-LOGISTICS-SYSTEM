@@ -3,6 +3,7 @@ import { KeyRound, AlertTriangle } from 'lucide-react';
 import { verifyOwnPassword, AssignmentActionError } from '../../lib/db';
 import PasswordVisibilityInput from './PasswordVisibilityInput';
 import { useModalFocus } from './useModalFocus';
+import { useModalBodyLock } from './useModalBodyLock';
 
 /* Failed password attempts are counted per browser tab and survive closing/reopening
    the dialog. Supabase Auth also rate-limits sign-ins on its own servers. */
@@ -39,6 +40,7 @@ export default function ConfirmPasswordDialog({
   const [now,      setNow]      = useState(Date.now());
   const modalRef = useRef<HTMLFormElement>(null);
   useModalFocus(true, modalRef, () => { if (!busy) onCancel(); });
+  useModalBodyLock(true);
 
   /* Tick once a second so the cooldown counts down */
   useEffect(() => {
@@ -89,7 +91,7 @@ export default function ConfirmPasswordDialog({
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => { if (!busy) onCancel(); }} />
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" aria-hidden="true" />
       <form
         ref={modalRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="account-confirm-title"
         onSubmit={(e) => { e.preventDefault(); void handleConfirm(); }}

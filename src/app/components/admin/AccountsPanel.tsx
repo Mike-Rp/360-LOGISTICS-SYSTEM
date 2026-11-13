@@ -28,6 +28,8 @@ import ASNWithCopy from './ASNWithCopy';
 import type { ActionFeedbackToast } from '../../lib/notificationEvents';
 import { parsePhilippineMobile } from '../../lib/philippineMobile';
 import { formatPhilippineTimestamp } from '../../lib/philippineTime';
+import { useModalFocus } from './useModalFocus';
+import { useModalBodyLock } from './useModalBodyLock';
 import { matchesDriverSearch, matchesTruckSearch, normalizeFleetSearch } from '../../lib/fleetAccountSearch';
 
 /* Plain-language text for the errors the archive / PIN database functions can return */
@@ -361,6 +363,9 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
   const [pinTarget,    setPinTarget]    = useState<{ id: string; name: string } | null>(null);
   /* A covering CSR is shown the PIN the server just chose — once, then it is gone. */
   const [issuedPin,    setIssuedPin]    = useState<{ name: string; pin: string } | null>(null);
+  const issuedPinRef = useRef<HTMLDivElement>(null);
+  useModalFocus(!!issuedPin, issuedPinRef);
+  useModalBodyLock(!!issuedPin);
   const [truckTarget,  setTruckTarget]  = useState<{ id: string; plate: string } | null>(null);
   /* REQ-019: mark unavailable / under maintenance (or edit the open period), and mark back */
   const [unavailTarget, setUnavailTarget] = useState<{ kind: UnavailabilityKind; id: string; name: string; period?: Unavailability } | null>(null);
@@ -952,8 +957,8 @@ export default function AccountsPanel({ drivers, setDrivers, trucks, setTrucks, 
       {/* ════ DIALOG: the new PIN a covering CSR just set (shown once) ════ */}
       {issuedPin && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
-          <div role="dialog" aria-modal="true" aria-labelledby="issued-pin-title"
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" aria-hidden="true" />
+          <div ref={issuedPinRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="issued-pin-title"
             className="relative w-full max-w-[360px] rounded-2xl border border-border bg-white p-5 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
             <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full border border-[#1DBF73]/25 bg-[#1DBF73]/10">
               <KeyRound className="h-5 w-5 text-[#1DBF73]" />

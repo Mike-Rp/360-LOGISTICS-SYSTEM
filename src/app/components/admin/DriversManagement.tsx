@@ -20,9 +20,12 @@ import { OperationalEvidence, type OperationalPhotoSelection } from './ShipmentP
 import UploadedFilePreviewModal from './UploadedFilePreviewModal';
 import PasswordVisibilityInput from './PasswordVisibilityInput';
 import ConfirmPasswordDialog from './ConfirmPasswordDialog';
+import { useModalFocus } from './useModalFocus';
+import { useModalBodyLock } from './useModalBodyLock';
 import DeliveryTimingBadge from './DeliveryTimingBadge';
 import PickupTimingNotice from './PickupTimingNotice';
 import { getDispatchTimingNotices } from '../../lib/assignmentTiming';
+import { parsePhilippineInputValue, philippineDateKey } from '../../lib/philippineTime';
 import { OPERATIONAL_STEPS, OPERATIONAL_PHOTO_GROUPS, getAdminOperationalProgress, getDeliveryActivityStates, canCancelAssignment, canCancelBeforeLoadingCompletes, formatOperationalStamp, formatOperationalDuration } from '../../lib/assignmentOperational';
 import { sortCompletedNewestFirst } from '../../lib/completedOrdering';
 import { statusColors } from '../../data/statusColors';
@@ -148,12 +151,18 @@ const oneYearAheadIso = () => {
   return dateToIso(new Date(d.getFullYear() + 1, d.getMonth(), d.getDate()));
 };
 
+const philippineScheduleBounds = (now: Date) => {
+  const today = philippineDateKey(now);
+  const [year, month, day] = today.split('-').map(Number);
+  const latest = new Date(Date.UTC(year + 1, month - 1, day)).toISOString().slice(0, 10);
+  return { today, latest };
+};
+
 /* Date rules shared by the live check (while typing) and submit.
    `requireFilled` also flags empty fields — submit only, not while the admin is still typing. */
-function dateErrors(pickup: string, delivery: string, bad: BadDates, requireFilled: boolean): Record<string, string> {
+function dateErrors(pickup: string, delivery: string, bad: BadDates, requireFilled: boolean,
+  today = todayIso(), latest = oneYearAheadIso()): Record<string, string> {
   const e: Record<string, string> = {};
-  const today      = todayIso();               // worked out now, never hardcoded
-  const latest     = oneYearAheadIso();
   const pickupOk   = !!pickup && isRealIso(pickup);
   const deliveryOk = !!delivery && isRealIso(delivery);
 
@@ -173,23 +182,26 @@ function dateErrors(pickup: string, delivery: string, bad: BadDates, requireFill
 /* Every schedule rule checked on submit — used by both Dispatch Truck and Edit */
 function scheduleErrors(s: {
   pickup: string; delivery: string; pickupTime: string; scheduledArrivalTime: string; remarks: string; bad: BadDates;
-}): Record<string, string> {
-  const e = dateErrors(s.pickup, s.delivery, s.bad, true);
-  if (!s.pickupTime) e.pickupTime = 'Select a pick up time.';
-  if (!s.scheduledArrivalTime)        e.scheduledArrivalTime        = 'Select a scheduled time of arrival.';
+}, options: { requireFilled?: boolean; philippineTime?: boolean; now?: Date } = {}): Record<string, string> {
+  const now = options.now ?? new Date();
+  const { today, latest } = options.philippineTime
+    ? philippineScheduleBounds(now) : { today: todayIso(), latest: oneYearAheadIso() };
+  const e = dateErrors(s.pickup, s.delivery, s.bad, options.requireFilled !== false, today, latest);
+  if (options.requireFilled !== false && !s.pickupTime) e.pickupTime = 'Select a pick up time.';
+  if (options.requireFilled !== false && !s.scheduledArrivalTime) e.scheduledArrivalTime = 'Select a scheduled time of arrival.';
 
-  /* If the delivery date is today, times must be in the future */
-  if (s.delivery && !e.date) {
-    const selDate = isoToDate(s.delivery);
-    const todayMidnight = new Date(); todayMidnight.setHours(0, 0, 0, 0);
-    if (selDate.getTime() === todayMidnight.getTime()) {
-      const now = new Date();
-      if (s.pickupTime && time24ToDate(selDate, s.pickupTime) <= now)
-        e.pickupTime = "Pickup time must be in the future for today's date.";
-      if (s.scheduledArrivalTime && time24ToDate(selDate, s.scheduledArrivalTime) <= now)
-        e.scheduledArrivalTime = "Scheduled arrival time must be in the future for today's date.";
-    }
-  }
+  /* Dispatch compares each time with its own date. Keep Edit's existing date rule unchanged. */
+  const pickupCheckDate = options.philippineTime ? s.pickup : s.delivery;
+  const pickupDateError = options.philippineTime ? e.pickedUpDate : e.date;
+  const scheduledTime = (date: string, value: string) => options.philippineTime
+    ? parsePhilippineInputValue(`${date}T${value}`)?.getTime()
+    : time24ToDate(isoToDate(date), value).getTime();
+  if (pickupCheckDate === today && !pickupDateError && s.pickupTime &&
+      (scheduledTime(pickupCheckDate, s.pickupTime) ?? Infinity) <= now.getTime())
+    e.pickupTime = "Pickup time must be in the future for today's date.";
+  if (s.delivery === today && !e.date && s.scheduledArrivalTime &&
+      (scheduledTime(s.delivery, s.scheduledArrivalTime) ?? Infinity) <= now.getTime())
+    e.scheduledArrivalTime = "Scheduled arrival time must be in the future for today's date.";
 
   /* ── Scheduled Time of Arrival (STA) must not precede pickup — both are zero-padded 24-hour "HH:MM",
      so a plain string compare orders them correctly.
@@ -448,13 +460,16 @@ function DispatchStatusBadge({ assignment }: { assignment: Assignment }) {
 function ModalShell({ title, onClose, wide = false, children }: {
   title: React.ReactNode; onClose: () => void; wide?: boolean; children: React.ReactNode;
 }) {
+  const modalRef = useRef<HTMLDivElement>(null);
+  useModalFocus(true, modalRef);
+  useModalBodyLock(true);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4">
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className={`relative bg-white rounded-xl sm:rounded-2xl shadow-2xl w-full ${wide ? 'max-w-3xl' : 'max-w-md'} flex flex-col max-h-[94vh] sm:max-h-[92vh] animate-in fade-in zoom-in-95 duration-200`}>
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" aria-hidden="true" />
+      <div ref={modalRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={typeof title === 'string' ? title : 'Dispatch details'} className={`relative bg-white rounded-xl sm:rounded-2xl shadow-2xl w-full ${wide ? 'max-w-3xl' : 'max-w-md'} flex flex-col max-h-[94vh] sm:max-h-[92vh] animate-in fade-in zoom-in-95 duration-200`}>
         <div className="flex items-center justify-between px-5 sm:px-7 py-4 sm:py-5 border-b border-border flex-shrink-0">
           <h3 className="text-lg sm:text-xl font-semibold text-foreground">{title}</h3>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-accent transition-colors text-muted-foreground">
+          <button type="button" onClick={onClose} aria-label="Close dialog" className="p-1.5 rounded-lg hover:bg-accent transition-colors text-muted-foreground">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -759,6 +774,9 @@ function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClo
   activityTarget?: ActivityKey | null;
   timingNow: Date;
 }) {
+  const modalRef = useRef<HTMLDivElement>(null);
+  useModalFocus(true, modalRef);
+  useModalBodyLock(true);
   const isDemoAdmin = adminEmail === DEMO_ADMIN_EMAIL;
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [cancelBusy,    setCancelBusy]    = useState(false);
@@ -879,8 +897,8 @@ function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClo
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center sm:p-4 lg:p-6">
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative flex h-[100dvh] w-full min-w-0 flex-col overflow-hidden bg-white shadow-xl sm:h-[min(90dvh,820px)] sm:w-[94vw] sm:max-w-[960px] sm:rounded-2xl lg:h-[min(86dvh,820px)]">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" aria-hidden="true" />
+      <div ref={modalRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Shipment Details" className="relative flex h-[100dvh] w-full min-w-0 flex-col overflow-hidden bg-white shadow-xl sm:h-[min(90dvh,820px)] sm:w-[94vw] sm:max-w-[960px] sm:rounded-2xl lg:h-[min(86dvh,820px)]">
 
         {/* ── Sticky header: driver identity ── */}
         <header className="flex flex-shrink-0 items-center gap-3 border-b border-border px-4 py-3 sm:px-6">
@@ -1320,7 +1338,7 @@ function ViewDetailsModal({ assignment, driver, truck, issueNotifications, onClo
         <UploadedFilePreviewModal key={`${previewDoc.assignmentId ?? assignment?.id}:${previewDoc.photoSlotKey ?? previewDoc.type}`}
           url={previewDoc.url} title={previewDoc.type} kind={previewDoc.kind} timestamp={previewDoc.timestamp}
           operationalPhoto={previewDoc.kind === 'image' ? previewDoc.operationalPhoto : undefined}
-          assignmentId={previewDoc.assignmentId ?? assignment?.id} onClose={() => setPreviewDoc(null)} />
+          assignmentId={previewDoc.assignmentId ?? assignment?.id} onClose={() => setPreviewDoc(null)} staffModal />
       )}
     </div>
   );
@@ -1364,6 +1382,9 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, availab
 
   /* Password confirmation step */
   const [pending,  setPending]  = useState<(AssignmentEdit & AssignmentLocationEdit) | null>(null);
+  const confirmRef = useRef<HTMLFormElement>(null);
+  useModalFocus(!!pending, confirmRef);
+  useModalBodyLock(!!pending);
   const [password, setPassword] = useState('');
   const [pwError,  setPwError]  = useState('');
   const [busy,     setBusy]     = useState(false);
@@ -1663,8 +1684,9 @@ function EditAssignmentModal({ assignment, drivers, trucks, assignments, availab
       {/* ── Re-enter password before saving ── */}
       {pending && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" onClick={() => { if (!busy) { setPending(null); setPassword(''); } }} />
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" aria-hidden="true" />
           <form
+            ref={confirmRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Confirm it's you"
             onSubmit={(e) => { e.preventDefault(); void handleConfirm(); }}
             className="relative bg-white rounded-xl border border-border shadow-xl p-5 w-full max-w-[360px] animate-in fade-in zoom-in-95 duration-200">
             <div className="w-10 h-10 rounded-full bg-[#1DBF73]/10 border border-[#1DBF73]/25 flex items-center justify-center mx-auto mb-3">
@@ -1861,6 +1883,32 @@ export default function DriversManagement({
   const [taskBadDates,    setTaskBadDates]    = useState<BadDates>({ pickup: false, delivery: false });
   const [taskSaving, setTaskSaving] = useState(false);
   const taskSavingRef = useRef(false);
+  const taskSchedule = (changes: Partial<Parameters<typeof scheduleErrors>[0]> = {}) => ({
+    pickup: taskPickedUpDate, delivery: taskDate, pickupTime: taskPickupTime,
+    scheduledArrivalTime: taskScheduledArrivalTime, remarks: taskRemarks, bad: taskBadDates, ...changes,
+  });
+  const liveTaskScheduleErrors = (changes: Partial<Parameters<typeof scheduleErrors>[0]> = {}) =>
+    scheduleErrors(taskSchedule(changes), { requireFilled: false, philippineTime: true });
+  const updateTaskScheduleErrors = (changes: Partial<Parameters<typeof scheduleErrors>[0]>) => {
+    const fresh = liveTaskScheduleErrors(changes);
+    setTaskErrors((previous) => ({ ...previous, pickedUpDate: '', date: '', pickupTime: '', scheduledArrivalTime: '', ...fresh }));
+  };
+  const { today: taskToday, latest: taskLatest } = philippineScheduleBounds(new Date());
+  useEffect(() => {
+    if (!showAssignTask || taskStep !== 2) return;
+    const timer = window.setInterval(() => {
+      const fresh = liveTaskScheduleErrors();
+      setTaskErrors((previous) => ({
+        ...previous,
+        pickedUpDate: taskPickedUpDate ? fresh.pickedUpDate ?? '' : previous.pickedUpDate,
+        date: taskDate ? fresh.date ?? '' : previous.date,
+        pickupTime: taskPickedUpDate && taskPickupTime ? fresh.pickupTime ?? '' : previous.pickupTime,
+        scheduledArrivalTime: taskDate && taskScheduledArrivalTime
+          ? fresh.scheduledArrivalTime ?? '' : previous.scheduledArrivalTime,
+      }));
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [showAssignTask, taskStep, taskPickedUpDate, taskDate, taskPickupTime, taskScheduledArrivalTime, taskBadDates]);
   const dispatchDirty = hasUnsavedDispatchDetails({
     driverId: taskDriverId, truckId: taskTruckId,
     originArea: taskFrom, pickupLocation: taskPickupLocation,
@@ -1924,7 +1972,7 @@ export default function DriversManagement({
     const delivery = which === 'delivery' ? v : taskDate;
     setTaskBadDates(nextBad);
     if (which === 'pickup') setTaskPickedUpDate(v); else setTaskDate(v);
-    setTaskErrors((p) => ({ ...p, pickedUpDate: '', date: '', scheduledArrivalTime: '', ...dateErrors(pickup, delivery, nextBad, false) }));
+    updateTaskScheduleErrors({ pickup, delivery, bad: nextBad });
   };
 
   /* ── Step 1: Assignment info ── */
@@ -1941,15 +1989,12 @@ export default function DriversManagement({
     return Object.keys(e).length === 0;
   };
 
-  const handleNextStep = () => { if (validateStep1()) { setTaskErrors({}); setTaskStep(2); } };
+  const handleNextStep = () => { if (validateStep1()) { setTaskErrors(liveTaskScheduleErrors()); setTaskStep(2); } };
 
   const handleAssignTask = async () => {
     if (isViewOnly || taskSavingRef.current) return;
     /* Same rules as the live check, re-run on submit (typed dates skip the calendar's limits) */
-    const e = scheduleErrors({
-      pickup: taskPickedUpDate, delivery: taskDate, pickupTime: taskPickupTime, scheduledArrivalTime: taskScheduledArrivalTime,
-      remarks: taskRemarks, bad: taskBadDates,
-    });
+    const e = scheduleErrors(taskSchedule(), { philippineTime: true });
 
     if (Object.keys(e).length) { setTaskErrors(e); return; }
 
@@ -2809,24 +2854,26 @@ export default function DriversManagement({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <FieldLabel required>Picked Up Date</FieldLabel>
-                    <DateField value={taskPickedUpDate}
+                    <DateField id="dispatch-pickup-date" label="Picked up date" value={taskPickedUpDate}
                       onChange={(v, bad) => setTaskDateField('pickup', v, bad)}
                       hasError={!!taskErrors.pickedUpDate}
-                      minIso={todayIso()}
-                      maxIso={taskDate || oneYearAheadIso()}
+                      describedBy={taskErrors.pickedUpDate ? 'dispatch-pickup-date-error' : undefined}
+                      calendarToday={taskToday}
+                      minIso={taskToday}
+                      maxIso={taskDate || taskLatest}
                     />
                     {taskErrors.pickedUpDate
-                      ? <p className="text-xs text-red-500 mt-1">{taskErrors.pickedUpDate}</p>
+                      ? <p id="dispatch-pickup-date-error" className="text-xs text-red-500 mt-1">{taskErrors.pickedUpDate}</p>
                       : <p className="text-[12px] text-muted-foreground mt-1.5">Planned pickup date</p>}
                   </div>
                   <div>
                     <FieldLabel required>Pick Up Time</FieldLabel>
-                    <TimeField value={taskPickupTime}
-                      /* Also clears any Scheduled Time of Arrival (STA)-ordering error, which pickup time feeds into */
-                      onChange={(v) => { setTaskPickupTime(v); setTaskErrors((p) => ({ ...p, pickupTime: '', scheduledArrivalTime: '' })); }}
+                    <TimeField id="dispatch-pickup-time" label="Pick up time" value={taskPickupTime} isolateWheel
+                      onChange={(v) => { setTaskPickupTime(v); updateTaskScheduleErrors({ pickupTime: v }); }}
                       hasError={!!taskErrors.pickupTime}
+                      describedBy={taskErrors.pickupTime ? 'dispatch-pickup-time-error' : undefined}
                     />
-                    {taskErrors.pickupTime && <p className="text-xs text-red-500 mt-1">{taskErrors.pickupTime}</p>}
+                    {taskErrors.pickupTime && <p id="dispatch-pickup-time-error" className="text-xs text-red-500 mt-1">{taskErrors.pickupTime}</p>}
                   </div>
                 </div>
 
@@ -2834,24 +2881,27 @@ export default function DriversManagement({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <FieldLabel required>Delivery Date</FieldLabel>
-                    <DateField value={taskDate}
+                    <DateField id="dispatch-delivery-date" label="Delivery date" value={taskDate}
                       onChange={(v, bad) => setTaskDateField('delivery', v, bad)}
                       hasError={!!taskErrors.date}
-                      minIso={taskPickedUpDate && taskPickedUpDate > todayIso() ? taskPickedUpDate : todayIso()}
-                      maxIso={oneYearAheadIso()}
+                      describedBy={taskErrors.date ? 'dispatch-delivery-date-error' : undefined}
+                      calendarToday={taskToday}
+                      minIso={taskPickedUpDate && taskPickedUpDate > taskToday ? taskPickedUpDate : taskToday}
+                      maxIso={taskLatest}
                     />
                     {taskErrors.date
-                      ? <p className="text-xs text-red-500 mt-1">{taskErrors.date}</p>
+                      ? <p id="dispatch-delivery-date-error" className="text-xs text-red-500 mt-1">{taskErrors.date}</p>
                       : <p className="text-[12px] text-muted-foreground mt-1.5">Target delivery date</p>}
                   </div>
                   <div>
                     <FieldLabel required>Scheduled Time of Arrival (STA)</FieldLabel>
-                    <TimeField value={taskScheduledArrivalTime}
-                      onChange={(v) => { setTaskScheduledArrivalTime(v); setTaskErrors((p) => ({ ...p, scheduledArrivalTime: '' })); }}
+                    <TimeField id="dispatch-sta-time" label="Scheduled time of arrival" value={taskScheduledArrivalTime} isolateWheel
+                      onChange={(v) => { setTaskScheduledArrivalTime(v); updateTaskScheduleErrors({ scheduledArrivalTime: v }); }}
                       hasError={!!taskErrors.scheduledArrivalTime}
+                      describedBy={taskErrors.scheduledArrivalTime ? 'dispatch-sta-time-error' : undefined}
                     />
                     {taskErrors.scheduledArrivalTime
-                      ? <p className="text-xs text-red-500 mt-1">{taskErrors.scheduledArrivalTime}</p>
+                      ? <p id="dispatch-sta-time-error" className="text-xs text-red-500 mt-1">{taskErrors.scheduledArrivalTime}</p>
                       : <p className="text-[12px] text-muted-foreground mt-1.5">Estimated Time of Arrival</p>}
                   </div>
                 </div>

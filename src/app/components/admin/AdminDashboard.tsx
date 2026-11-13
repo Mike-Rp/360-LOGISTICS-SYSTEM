@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Sidebar, { MobileTopBar } from './Sidebar';
 import Header from './Header';
 import NotificationToastContainer from './NotificationToastContainer';
@@ -20,6 +20,7 @@ import { canDispatchAssignments, canManageFleetAccounts as mayManageFleetAccount
 import { isActivityKey, notificationDestination, type ActionFeedbackToast, type ActivityKey } from '../../lib/notificationEvents';
 import { notificationSoundEnabled, setNotificationSoundEnabled } from '../../lib/notificationSound';
 import { useMyFleetDelegation } from '../../lib/useMyFleetDelegation';
+import { moveMainModuleScroll } from '../../lib/mainModuleScroll';
 import type { StaffSession } from '../../lib/db';
 import type { Assignment, CompletedTask, LocalDriver, LocalTruck, AppNotification, AdminRole, AdminActivityEntry, AdminActivityInput } from '../../data/assignmentTypes';
 
@@ -105,6 +106,11 @@ export default function AdminDashboard({
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [resetRequestTarget, setResetRequestTarget] = useState<string | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const mainRef = useRef<HTMLElement>(null);
+  const previousModuleRef = useRef(activeNav);
+  const moduleScrollPositions = useRef(new Map<NavItem, number>());
+  const historyNavigationRef = useRef(false);
+  const leavingScrollTopRef = useRef<number | null>(null);
   const feedbackSequence = useRef(0);
   const [feedback, setFeedback] = useState<ActionFeedbackToast[]>([]);
   const showActionFeedback = useCallback((message: string, tone: ActionFeedbackToast['tone'] = 'success', presentation?: ActionFeedbackToast['presentation']) => {
@@ -123,6 +129,31 @@ export default function AdminDashboard({
   /* REQ-018: a CSR the OPM has asked to cover for their leave may reset PINs / register drivers and
      trucks for a window. The OPM themselves never uses this. */
   const fleetCoverage = useMyFleetDelegation(adminRole === 'csr' || adminRole === 'admin', staffProfile?.id ?? adminEmail ?? '');
+
+  useLayoutEffect(() => {
+    const previous = previousModuleRef.current;
+    if (previous !== activeNav && mainRef.current) {
+      moveMainModuleScroll(mainRef.current, previous, activeNav, moduleScrollPositions.current,
+        historyNavigationRef.current, leavingScrollTopRef.current ?? mainRef.current.scrollTop);
+    }
+    previousModuleRef.current = activeNav;
+    historyNavigationRef.current = false;
+    leavingScrollTopRef.current = null;
+  }, [activeNav]);
+
+  useEffect(() => {
+    const onModuleNavigation = (event: Event) => {
+      if (adminPageFromUrl() === previousModuleRef.current) return;
+      leavingScrollTopRef.current = mainRef.current?.scrollTop ?? 0;
+      historyNavigationRef.current = event.type === 'popstate';
+    };
+    window.addEventListener('popstate', onModuleNavigation);
+    window.addEventListener(ADMIN_NAVIGATION_EVENT, onModuleNavigation);
+    return () => {
+      window.removeEventListener('popstate', onModuleNavigation);
+      window.removeEventListener(ADMIN_NAVIGATION_EVENT, onModuleNavigation);
+    };
+  }, []);
 
   useEffect(() => {
     setSearchInput({ page: activeNav, value: '' });
@@ -161,12 +192,14 @@ export default function AdminDashboard({
   }, []);
 
   const navigateToModule = (page: NavItem, tab?: 'completed') => {
+    historyNavigationRef.current = false;
     pushAdminNavigation(page, undefined, tab);
     setActiveNav(page);
   };
 
   const navigateToNotification = (page: string, target: { assignmentId: string; docType?: string; review?: boolean; activityKey?: ActivityKey }) => {
     if (page !== 'Documents' && page !== 'Monitor') return;
+    historyNavigationRef.current = false;
     pushAdminNavigation(page, target);
     setNotificationTarget({ page, ...target });
     setActiveNav(page);
@@ -361,7 +394,7 @@ export default function AdminDashboard({
         />
         </div>
         <span role="status" className="sr-only">{initialLoading ? 'Loading page content…' : ''}</span>
-        <main aria-busy={contentLoading} className={`min-h-0 min-w-0 flex-1 p-4 sm:p-6 ${mobileMenuOpen || settingsOpen ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+        <main ref={mainRef} aria-busy={contentLoading} className={`min-h-0 min-w-0 flex-1 p-4 sm:p-6 ${mobileMenuOpen || settingsOpen ? 'overflow-hidden' : 'overflow-y-auto'}`}>
           <div className={`max-w-[1600px] mx-auto space-y-4 sm:space-y-6 ${initialLoading ? '' : 'animate-in fade-in duration-300 motion-reduce:animate-none'}`}>
             {(saveError || loadError || availabilityError) && <div className="space-y-2" role="alert">
               {saveError && <p className="rounded-lg border border-red-200 bg-white px-4 py-3 text-sm text-red-700">{saveError}</p>}

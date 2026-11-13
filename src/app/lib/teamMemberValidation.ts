@@ -11,8 +11,8 @@ export function teamMemberNameError(value: string): string | undefined {
 
 export function teamMemberEmailError(value: string): string | undefined {
   if (!value.trim()) return 'Email is required.';
-  // Preserve the Add Team Member form's existing email-format rule.
-  if (!/^\S+@\S+\.\S+$/.test(value.trim())) return 'Enter a valid email address.';
+  // Keep the form's basic email policy while rejecting extra @ signs and empty domain labels.
+  if (!/^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(value.trim())) return 'Enter a valid email address.';
 }
 
 export function validateTeamMemberFields(name: string, email: string): TeamMemberFieldErrors {

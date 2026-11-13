@@ -28,6 +28,7 @@ function setup(kind, props = {}) {
     '../../lib/db': { normaliseMobile: value => value, registerDriver: request, registerTruck: request, AssignmentActionError },
     '../../lib/philippineMobile': load('philippineMobile.ts'), '../../lib/personName': load('personName.ts'),
     '../../data/truckTypes': load('../data/truckTypes.ts'), '../TruckImage': { default: 'truck-image' },
+    './useModalFocus': { useModalFocus() {} }, './useModalBodyLock': { useModalBodyLock() {} },
   });
   const component = kind === 'driver' ? module.RegisterDriverModal : module.RegisterTruckModal;
   const render = () => { cursor = 0; const tree = component({ drivers: [], trucks: [], onServerChange: async fn => fn(), onClose: () => closed++, onCreated: item => created.push(item), ...settings }); while (effects.length) effects.shift()(); return tree; };
@@ -80,3 +81,80 @@ for (const kind of ['driver', 'truck']) {
     const app = setup(kind, { temporaryAccess: false }); fill(app); app.click(submit); await app.succeed(); assert.equal(app.created.length, 1);
   });
 }
+
+test('driver first name validates invalid characters immediately and independently', () => {
+  const app = setup('driver');
+  const first = () => app.input('e.g. Juan');
+  const last = () => app.input('e.g. dela Cruz');
+  assert.equal(first().props['aria-invalid'], false);
+  app.type('e.g. Juan', '123');
+  assert.equal(first().props['aria-invalid'], true);
+  assert.match(app.content(), /Names can only contain letters/);
+  assert.equal(last().props['aria-invalid'], false);
+  app.type('e.g. Juan', 'John@');
+  assert.equal(first().props['aria-invalid'], true);
+  app.type('e.g. Juan', 'John');
+  assert.equal(first().props['aria-invalid'], false);
+  assert.equal(first().props['aria-describedby'], undefined);
+  assert.equal(last().props['aria-invalid'], false);
+});
+
+test('driver surname validates independently and permitted Filipino names remain valid', () => {
+  const app = setup('driver');
+  app.type('e.g. Juan', 'José');
+  app.type('e.g. dela Cruz', '123Dela');
+  assert.equal(app.input('e.g. dela Cruz').props['aria-invalid'], true);
+  assert.equal(app.input('e.g. Juan').props['aria-invalid'], false);
+  app.type('e.g. dela Cruz', 'Dela@');
+  assert.equal(app.input('e.g. dela Cruz').props['aria-invalid'], true);
+  app.type('e.g. dela Cruz', 'Peña');
+  assert.equal(app.input('e.g. dela Cruz').props['aria-invalid'], false);
+  for (const name of ['Niño', 'Dela Cruz', "O'Brien", 'Anne-Marie', 'Ma. Cristina']) {
+    app.type('e.g. dela Cruz', name);
+    assert.equal(app.input('e.g. dela Cruz').props['aria-invalid'], false, name);
+  }
+});
+
+test('driver phone rejects a bad first digit on change and paste, then clears when corrected', () => {
+  const app = setup('driver');
+  const phone = () => app.input('Mobile number, ten digits after +63');
+  for (const value of ['8', '7', '0']) {
+    app.type('Mobile number, ten digits after +63', value);
+    assert.equal(phone().props['aria-invalid'], true, value);
+    assert.match(app.content(), /Philippine mobile numbers must start with 9/);
+  }
+  app.type('Mobile number, ten digits after +63', '');
+  assert.equal(phone().props['aria-invalid'], false);
+  app.type('Mobile number, ten digits after +63', '9');
+  assert.equal(phone().props['aria-invalid'], false);
+  app.type('Mobile number, ten digits after +63', '912');
+  assert.equal(phone().props['aria-invalid'], false);
+  phone().props.onBlur(); app.render();
+  assert.match(app.content(), /Enter a valid 10-digit mobile number/);
+  app.type('Mobile number, ten digits after +63', '9123456789');
+  assert.equal(phone().props['aria-invalid'], false);
+  assert.equal(phone().props.maxLength, 10);
+  phone().props.onPaste({ preventDefault() {}, clipboardData: { getData: () => '0123456789' } }); app.render();
+  assert.equal(phone().props.value, '0123456789');
+  assert.equal(phone().props['aria-invalid'], true);
+  phone().props.onPaste({ preventDefault() {}, clipboardData: { getData: () => '9123456789' } }); app.render();
+  assert.equal(phone().props.value, '9123456789');
+  assert.equal(phone().props['aria-invalid'], false);
+});
+
+test('driver submit still rejects invalid fields and valid values still allow PIN generation', () => {
+  const app = setup('driver');
+  app.click('Generate PIN');
+  assert.equal(app.input('e.g. Juan').props['aria-invalid'], true);
+  assert.equal(app.input('e.g. dela Cruz').props['aria-invalid'], true);
+  assert.equal(app.input('Mobile number, ten digits after +63').props['aria-invalid'], true);
+  app.type('e.g. Juan', 'John1');
+  app.type('e.g. dela Cruz', 'Peña');
+  app.type('Mobile number, ten digits after +63', '9123456789');
+  app.click('Generate PIN');
+  assert.equal(app.requests.length, 0);
+  assert.equal(app.input('e.g. Juan').props['aria-invalid'], true);
+  app.type('e.g. Juan', 'John');
+  app.click('Generate PIN');
+  assert.match(app.content(), /Share this PIN with the driver privately/);
+});

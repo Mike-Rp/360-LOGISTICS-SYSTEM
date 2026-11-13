@@ -178,7 +178,7 @@ export function DateField({ value, onChange, hasError, minIso, maxIso, id, label
 const WHEEL_HOURS = Array.from({ length: 12 }, (_, i) => i + 1);
 const WHEEL_MINS  = Array.from({ length: 60 }, (_, i) => i);
 
-export function TimeField({ value, onChange, hasError, id, label, layer = false, describedBy, compact = false, popoverSide }: {
+export function TimeField({ value, onChange, hasError, id, label, layer = false, describedBy, compact = false, popoverSide, isolateWheel = false }: {
   value: string; onChange: (v: string) => void; hasError?: boolean;
   id?: string;
   label?: string;
@@ -186,6 +186,8 @@ export function TimeField({ value, onChange, hasError, id, label, layer = false,
   layer?: boolean;
   compact?: boolean;
   popoverSide?: 'top' | 'bottom';
+  /** Keep wheel events in the portaled picker when it is opened from a modal. */
+  isolateWheel?: boolean;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -235,7 +237,8 @@ export function TimeField({ value, onChange, hasError, id, label, layer = false,
           {/* Hours */}
           <div className="w-[52px]">
             <p className={colHead}>HH</p>
-            <div className={`max-h-40 overflow-y-auto space-y-0.5 pr-1 ${thinScroll}`}>
+            <div onWheel={isolateWheel ? (event) => event.stopPropagation() : undefined}
+              className={`max-h-40 overflow-y-auto space-y-0.5 pr-1 ${isolateWheel ? 'overscroll-y-contain' : ''} ${thinScroll}`}>
               {WHEEL_HOURS.map((h) => (
                 <button key={h} type="button" onClick={() => commit(h, min, ampm)}
                   className={colBtn(h === hour12 && !!value)}>
@@ -248,7 +251,8 @@ export function TimeField({ value, onChange, hasError, id, label, layer = false,
           {/* Minutes */}
           <div className="w-[52px] border-l border-border pl-1.5">
             <p className={colHead}>MM</p>
-            <div className={`max-h-40 overflow-y-auto space-y-0.5 pr-1 ${thinScroll}`}>
+            <div onWheel={isolateWheel ? (event) => event.stopPropagation() : undefined}
+              className={`max-h-40 overflow-y-auto space-y-0.5 pr-1 ${isolateWheel ? 'overscroll-y-contain' : ''} ${thinScroll}`}>
               {WHEEL_MINS.map((m) => (
                 <button key={m} type="button" onClick={() => commit(hour12, m, ampm)}
                   className={colBtn(m === min && !!value)}>

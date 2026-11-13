@@ -24,6 +24,8 @@ import MonthlyPrintReport from './MonthlyPrintReport';
 import DelayPrintReport from './DelayPrintReport';
 import FleetUtilizationPrintReport from './FleetUtilizationPrintReport';
 import DeliveryStatusDonut from './DeliveryStatusDonut';
+import { useModalFocus } from './useModalFocus';
+import { useModalBodyLock } from './useModalBodyLock';
 
 const REPORT_PAGE_SIZE = 8;
 const INCIDENT_PAGE_SIZE = 10;
@@ -570,6 +572,9 @@ function PreviewModal({
   trucks: { plateNumber: string; classification?: string }[];
   onClose: () => void;
 }) {
+  const modalRef = useRef<HTMLDivElement>(null);
+  useModalFocus(true, modalRef);
+  useModalBodyLock(true);
   const weekBounds  = isoWeekBounds(new Date());
   const weeklyRows  = buildWeeklyRows(assignments, completed, weekBounds);
   const delayRows   = buildDelayRows(assignments, completed, cancelled);
@@ -780,8 +785,8 @@ function PreviewModal({
   return (
     <>
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4">
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className={`relative min-w-0 max-w-full bg-white rounded-xl sm:rounded-2xl shadow-2xl w-full xl:max-w-6xl max-h-[94vh] sm:max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-200 ${selectedCount > (reportKey === 'delay' ? INCIDENT_PAGE_SIZE : REPORT_PAGE_SIZE) ? 'h-[94vh] sm:h-[90vh]' : ''}`}>
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" aria-hidden="true" />
+      <div ref={modalRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={config.title} className={`relative min-w-0 max-w-full bg-white rounded-xl sm:rounded-2xl shadow-2xl w-full xl:max-w-6xl max-h-[94vh] sm:max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-200 ${selectedCount > (reportKey === 'delay' ? INCIDENT_PAGE_SIZE : REPORT_PAGE_SIZE) ? 'h-[94vh] sm:h-[90vh]' : ''}`}>
 
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border px-4 py-3 sm:px-6 flex-shrink-0">
@@ -789,7 +794,7 @@ function PreviewModal({
             <h3 className="text-lg font-semibold text-foreground">{config.title}</h3>
             <p className="text-xs text-muted-foreground mt-0.5">{config.subtitle}</p>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-accent transition-colors text-muted-foreground">
+          <button type="button" onClick={onClose} aria-label="Close report preview" className="p-1.5 rounded-lg hover:bg-accent transition-colors text-muted-foreground">
             <X className="w-5 h-5" />
           </button>
         </div>

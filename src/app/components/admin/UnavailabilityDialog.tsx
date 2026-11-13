@@ -7,6 +7,7 @@ import {
 import { toLocalInputValue } from '../../lib/fleetDelegation';
 import { PHILIPPINE_TIME_LABEL, persistedTimestamp, philippineDateKey } from '../../lib/philippineTime';
 import { useModalFocus } from './useModalFocus';
+import { useModalBodyLock } from './useModalBodyLock';
 import DiscardChangesDialog from './DiscardChangesDialog';
 import { DateField, TimeField } from './ScheduleFields';
 import { expectedReturnError, withExpectedReturnDate, withExpectedReturnTime } from './expectedReturnValue';
@@ -69,7 +70,8 @@ export default function UnavailabilityDialog({
     if (reason !== original.current.reason || note !== original.current.note || returnValue !== original.current.returnValue) setConfirmDiscard(true);
     else onCancel();
   };
-  useModalFocus(true, modalRef, requestClose);
+  useModalFocus(true, modalRef);
+  useModalBodyLock(true);
 
   const title = mode === 'edit' ? 'Edit details' : isDriver ? 'Mark driver unavailable' : 'Put truck under maintenance';
   const Icon = isDriver ? UserX : Wrench;
@@ -100,7 +102,7 @@ export default function UnavailabilityDialog({
 
   return (
     <><div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={requestClose} />
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" aria-hidden="true" />
       <form ref={modalRef} tabIndex={-1} noValidate onSubmit={(e) => { e.preventDefault(); void handleSubmit(); }} role="dialog" aria-modal="true" aria-labelledby="unavailability-title"
         className="relative flex max-h-[92dvh] min-w-0 w-full max-w-md flex-col rounded-2xl border border-border bg-white shadow-2xl animate-in fade-in zoom-in-95 duration-200 motion-reduce:animate-none">
         <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-5 py-4">

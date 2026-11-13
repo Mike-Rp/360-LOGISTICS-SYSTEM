@@ -21,6 +21,7 @@ import { useCoverageLookup } from '../../lib/useCoverageLookup';
 import { DateField, TimeField } from './ScheduleFields';
 import { formatPhilippineTimestamp, PHILIPPINE_TIME_LABEL } from '../../lib/philippineTime';
 import { useModalFocus } from './useModalFocus';
+import { useModalBodyLock } from './useModalBodyLock';
 import DiscardChangesDialog from './DiscardChangesDialog';
 import TeamMemberPhotoPreview, { memberInitials } from './TeamMemberPhotoPreview';
 
@@ -135,10 +136,11 @@ function ModalShell({ title, onClose, children, footer }: {
   title: string; onClose: () => void; children: React.ReactNode; footer?: React.ReactNode;
 }) {
   const modalRef = useRef<HTMLDivElement>(null);
-  useModalFocus(true, modalRef, onClose);
+  useModalFocus(true, modalRef);
+  useModalBodyLock(true);
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" aria-hidden="true" />
       <div ref={modalRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={title} className="relative bg-white rounded-2xl shadow-2xl min-w-0 w-full max-w-md flex flex-col max-h-[90dvh] animate-in fade-in zoom-in-95 duration-200 motion-reduce:animate-none">
         <div className="flex items-center justify-between gap-2 px-5 sm:px-6 py-4 border-b border-border flex-shrink-0">
           <h3 className="min-w-0 text-lg font-semibold text-foreground">{title}</h3>
@@ -241,7 +243,7 @@ function AddMemberModal({ onClose, onAdded }: {
               aria-invalid={!!fieldErrors.name || undefined} aria-describedby={fieldErrors.name ? 'team-member-name-error' : undefined}
               onChange={(e) => {
                 setName(e.target.value); setError('');
-                setFieldErrors((previous) => previous.name ? { ...previous, name: teamMemberNameError(e.target.value) } : previous);
+                setFieldErrors((previous) => ({ ...previous, name: e.target.value || previous.name ? teamMemberNameError(e.target.value) : undefined }));
               }}
               placeholder="e.g. Sofia Petrov"
               className={`w-full px-4 py-3 rounded-xl border text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-60 ${fieldErrors.name ? 'border-red-400 bg-red-50' : 'border-border bg-white'}`}
@@ -422,6 +424,7 @@ function CoverageModal({ members, onClose, onContinue }: {
             <label htmlFor="coverage-phone" className="block text-sm font-medium text-foreground mb-1.5">Number drivers should call <span className="text-red-500">*</span></label>
             <MobileNumberField id="coverage-phone" value={phone} error={phoneError} ariaLabel="Mobile number drivers should call, ten digits after +63"
               onChange={(digits) => { setPhone(digits); setError(''); }} onError={setPhoneError}
+              validateOnChange={(digits) => digits && !digits.startsWith('9') ? 'Mobile number must start with 9 (e.g. 9XX XXX XXXX).' : ''}
               onBlur={() => { if (phone && subscriberProblem(phone)) setPhoneError(subscriberProblem(phone)); }} />
             <p className="mt-1 text-sm text-muted-foreground">
               A driver who forgot their PIN sees this number on the login screen while this coverage is active (usually the covering CSR&apos;s mobile). Afterwards the screen goes back to the usual number.
@@ -533,7 +536,8 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
   const [revokeTarget, setRevokeTarget] = useState<FleetDelegation | null>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const tabsRef = useRef<HTMLDivElement>(null);
-  useModalFocus(open, workspaceRef, onClose);
+  useModalFocus(open, workspaceRef);
+  useModalBodyLock(open);
 
   useEffect(() => {
     const tabs = tabsRef.current;
@@ -667,11 +671,6 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
     }
   };
 
-  /* ── Body scroll lock ── */
-  useEffect(() => {
-    document.body.style.overflow = open ? 'hidden' : '';
-    return () => { document.body.style.overflow = ''; };
-  }, [open]);
 
   const handleMemberAdded = (member: TeamMember) => {
     setMembers((p) => [...p, member]);
@@ -804,7 +803,7 @@ export default function WorkspaceSettingsPanel({ open, onClose, targetRequestId,
 
   return (
     <>
-      <div className="fixed inset-0 z-40 bg-black/40 backdrop-blur-[2px]" onClick={onClose} />
+      <div className="fixed inset-0 z-40 bg-black/40 backdrop-blur-[2px]" aria-hidden="true" />
 
       <div ref={workspaceRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="workspace-settings-title" className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 pointer-events-none">
       <div className="pointer-events-auto flex h-[94dvh] w-[calc(100vw-16px)] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl sm:h-[min(84dvh,840px)] sm:w-[min(950px,calc(100vw-32px))]">

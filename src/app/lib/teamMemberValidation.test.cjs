@@ -41,10 +41,11 @@ function setup(t) {
     'lucide-react': new Proxy({}, { get: () => 'svg' }),
     '../../lib/db': { createTeamMember }, '../../lib/teamMemberValidation': validation,
     '../../lib/fleetDelegation': {}, './ConfirmPasswordDialog': {}, './Pagination': {},
-    './useModalFocus': { useModalFocus() {} }, './DiscardChangesDialog': { default: 'discard-confirmation' },
+    './useModalFocus': { useModalFocus() {} }, './useModalBodyLock': { useModalBodyLock() {} }, './DiscardChangesDialog': { default: 'discard-confirmation' },
     '../../lib/adminNavigation': {}, '../../lib/pendingPasswordResetRequests': {},
     '../../lib/philippineMobile': {}, './MobileNumberField': {}, '../../lib/useCoverageLookup': {},
     './ScheduleFields': {}, '../../lib/philippineTime': {},
+    './TeamMemberPhotoPreview': { default: 'photo-preview', memberInitials: () => 'TM' },
   }, '\nexports.AddMemberModal = AddMemberModal;');
   function nodes(node) {
     if (Array.isArray(node)) return node.flatMap(nodes);
@@ -95,12 +96,36 @@ test('validation preserves the 100-character boundary and accepts Ñ/ñ', () => 
   assert.match(validateTeamMemberFields('A'.repeat(101), 'csr@example.invalid').name, /100/);
 });
 
-test('no aggressive errors appear before submitting, even after typing an invalid value', (t) => {
+test('untouched Name is quiet; invalid characters show immediately without touching Email', (t) => {
   const app = setup(t);
-  app.type('name', '123#');
   assert.equal(app.error('name'), undefined);
+  for (const name of ['1', '123456', 'John2', 'John@']) {
+    app.type('name', name);
+    assert.match(app.error('name').props.children, /letters/);
+    assert.match(app.input('name').props.className, /border-red-400/);
+    assert.equal(app.input('name').props['aria-describedby'], 'team-member-name-error');
+    assert.equal(app.error('email'), undefined);
+  }
+  for (const name of ['John Smith', 'Michael Peña', 'Niño Dela Cruz', "O'Neill-Smith Jr."]) {
+    app.type('name', name);
+    assert.equal(app.error('name'), undefined);
+  }
   assert.equal(app.input('name').props['aria-invalid'], undefined);
   assert.equal(app.calls.length, 0);
+});
+
+test('Email rejects malformed structures, preserves trimming, and blocks invalid submission', (t) => {
+  const app = setup(t);
+  app.type('name', 'Sofia Petrov');
+  for (const email of ['johnexample.com', '@example.com', 'john@', 'john@example', 'john @example.com', 'a@@b.com', 'a@b..com']) {
+    app.type('email', email); app.submit();
+    assert.match(app.error('email').props.children, /valid email/);
+    assert.equal(app.calls.length, 0);
+  }
+  app.type('email', ' john+team@example.com ');
+  assert.equal(app.error('email'), undefined);
+  app.submit();
+  assert.deepEqual(app.calls, [{ name: 'Sofia Petrov', email: 'john+team@example.com', role: 'csr' }]);
 });
 
 for (const [name, message] of [['', /required/], ['Sofia@123', /letters/], ['A'.repeat(101), /100/]]) {

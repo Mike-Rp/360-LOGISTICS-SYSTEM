@@ -3,7 +3,7 @@ import { parsePhilippineMobile } from '../../lib/philippineMobile';
 /* "+63 [ten digits]" field, behaving like the mobile field in Register Driver: digits only, stops at
    10, a counter, and pasted numbers (0917…, +63 917…) are cleaned up to the ten digits. `value` is
    just those ten digits. The parent owns the error text so it can also set it on submit. */
-export default function MobileNumberField({ id, value, onChange, error, onError, ariaLabel, onBlur, disabled }: {
+export default function MobileNumberField({ id, value, onChange, error, onError, ariaLabel, onBlur, disabled, validateOnChange }: {
   id: string;
   value: string;
   onChange: (digits: string) => void;
@@ -12,22 +12,24 @@ export default function MobileNumberField({ id, value, onChange, error, onError,
   ariaLabel: string;
   onBlur?: () => void;
   disabled?: boolean;
+  /** Optional immediate check for forms that need feedback before blur. */
+  validateOnChange?: (digits: string) => string;
 }) {
   const handleInput = (raw: string) => {
     const digits = raw.replace(/\D/g, '');
     const mobile = parsePhilippineMobile(raw);
-    if (mobile && digits.length > 10) { onChange(mobile.subscriber); onError(''); return; }   // e.g. a pasted +63 917… or 0917…
+    if (mobile && digits.length > 10) { onChange(mobile.subscriber); onError(validateOnChange?.(mobile.subscriber) ?? ''); return; }   // e.g. a pasted +63 917… or 0917…
     if (digits.length > 10) { onError('Enter only the 10-digit mobile number after +63.'); return; }
     onChange(digits);
-    onError('');
+    onError(validateOnChange?.(digits) ?? '');
   };
 
   const handlePaste = (event: React.ClipboardEvent<HTMLInputElement>) => {
     event.preventDefault();
     const pasted = event.clipboardData.getData('text').trim();
     const mobile = parsePhilippineMobile(pasted);
-    if (mobile) { onChange(mobile.subscriber); onError(''); }
-    else if (/^\d{1,10}$/.test(pasted)) { onChange(pasted); onError(''); }
+    if (mobile) { onChange(mobile.subscriber); onError(validateOnChange?.(mobile.subscriber) ?? ''); }
+    else if (/^\d{1,10}$/.test(pasted)) { onChange(pasted); onError(validateOnChange?.(pasted) ?? ''); }
     else onError('Paste a valid Philippine mobile number.');
   };
 

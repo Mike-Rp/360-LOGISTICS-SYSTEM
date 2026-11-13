@@ -10,7 +10,7 @@ const source = ts.transpileModule(readFileSync(join(__dirname, '../components/ad
 }).outputText;
 const mod = { exports: {} };
 const imports = {
-  react: { useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}] },
+  react: { useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}], useEffect() {} },
   'react/jsx-runtime': require('react/jsx-runtime'),
   'lucide-react': { Calendar: 'svg', Clock: 'svg', ChevronLeft: 'svg', ChevronRight: 'svg' },
   '../ui/popover': { Popover: 'popover', PopoverAnchor: 'anchor', PopoverContent: 'popup' },

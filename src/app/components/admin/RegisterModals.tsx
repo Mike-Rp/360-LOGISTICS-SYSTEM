@@ -9,6 +9,8 @@ import { parsePhilippineMobile } from '../../lib/philippineMobile';
 import { PERSON_NAME_PATTERN } from '../../lib/personName';
 import { TRUCK_CLASSIFICATIONS, formatCapacity, capacityKgOnly } from '../../data/truckTypes';
 import TruckImage from '../TruckImage';
+import { useModalFocus } from './useModalFocus';
+import { useModalBodyLock } from './useModalBodyLock';
 
 /* ── Helpers ── */
 const generatePin = () => String(Math.floor(1000 + Math.random() * 9000));
@@ -85,13 +87,16 @@ export const TRUCK_CAPACITIES = [
 function ModalShell({ title, onClose, layer = false, wide = false, children, footer }: {
   title: string; onClose: () => void; layer?: boolean; wide?: boolean; children: React.ReactNode; footer?: React.ReactNode;
 }) {
+  const modalRef = useRef<HTMLDivElement>(null);
+  useModalFocus(true, modalRef);
+  useModalBodyLock(true);
   return (
     <div className={`fixed inset-0 flex items-center justify-center p-4 ${layer ? 'z-[70]' : 'z-50'}`}>
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className={`relative bg-white rounded-2xl shadow-2xl w-full ${wide ? 'max-w-2xl' : 'max-w-md'} flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200`}>
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" aria-hidden="true" />
+      <div ref={modalRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={title} className={`relative bg-white rounded-2xl shadow-2xl w-full ${wide ? 'max-w-2xl' : 'max-w-md'} flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200`}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-border flex-shrink-0">
           <h3 className="text-lg font-semibold text-foreground">{title}</h3>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-accent transition-colors text-muted-foreground">
+          <button type="button" onClick={onClose} aria-label={`Close ${title.toLowerCase()}`} className="p-1.5 rounded-lg hover:bg-accent transition-colors text-muted-foreground">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -133,6 +138,8 @@ export function RegisterDriverModal({ drivers = [], onServerChange, onClose, onC
   const [phoneNumber,  setPhoneNumber]  = useState('');
   const [phoneError,   setPhoneError]   = useState('');
   const [generatedPin, setGeneratedPin] = useState('');
+  const [firstNameError, setFirstNameError] = useState('');
+  const [surnameError, setSurnameError] = useState('');
   const [nameError,    setNameError]    = useState('');
   const [registered,   setRegistered]   = useState(false);
   const [registering,  setRegistering]  = useState(false);
@@ -144,13 +151,17 @@ export function RegisterDriverModal({ drivers = [], onServerChange, onClose, onC
   /* Full name as it will be stored, so the duplicate check compares like with like. */
   const fullName = () => `${firstName.trim()} ${surname.trim()}`;
   const fullPhone = () => parsePhilippineMobile(phoneNumber)?.international ?? '';
+  const invalidNameCharacters = (value: string) => value.trim() && !NAME_PATTERN.test(value.trim())
+    ? 'Names can only contain letters, spaces, apostrophes, hyphens and periods.' : '';
+  const invalidPhonePrefix = (digits: string) => digits && !digits.startsWith('9')
+    ? 'Philippine mobile numbers must start with 9.' : '';
 
   const handlePhoneInput = (value: string) => {
     const digits = value.replace(/\D/g, '');
     const mobile = parsePhilippineMobile(value);
     if (mobile && digits.length > 10) {
       setPhoneNumber(mobile.subscriber);
-      setPhoneError('');
+      setPhoneError(invalidPhonePrefix(mobile.subscriber));
       return;
     }
     if (digits.length > 10) {
@@ -158,7 +169,7 @@ export function RegisterDriverModal({ drivers = [], onServerChange, onClose, onC
       return;
     }
     setPhoneNumber(digits);
-    setPhoneError('');
+    setPhoneError(invalidPhonePrefix(digits));
   };
 
   const handlePhonePaste = (event: React.ClipboardEvent<HTMLInputElement>) => {
@@ -167,10 +178,10 @@ export function RegisterDriverModal({ drivers = [], onServerChange, onClose, onC
     const mobile = parsePhilippineMobile(pasted);
     if (mobile) {
       setPhoneNumber(mobile.subscriber);
-      setPhoneError('');
+      setPhoneError(invalidPhonePrefix(mobile.subscriber));
     } else if (/^\d{1,10}$/.test(pasted)) {
       setPhoneNumber(pasted);
-      setPhoneError('');
+      setPhoneError(invalidPhonePrefix(pasted));
     } else {
       setPhoneError('Paste a valid Philippine mobile number.');
     }
@@ -178,15 +189,15 @@ export function RegisterDriverModal({ drivers = [], onServerChange, onClose, onC
 
   /* Shared by the blur handlers and by submit, so the same rules apply either way. */
   const validateDriver = (): boolean => {
-    if (!surname.trim() || !firstName.trim()) { setNameError('Both surname and first name are required.'); return false; }
-    if (!NAME_PATTERN.test(firstName.trim()) || !NAME_PATTERN.test(surname.trim())) {
-      setNameError('Names can only contain letters, spaces, apostrophes, hyphens and periods.');
-      return false;
-    }
-    if (phoneNumber.length !== 10) { setPhoneError('Enter a valid 10-digit mobile number.'); return false; }
+    const firstError = !firstName.trim() ? 'First Name is required.' : invalidNameCharacters(firstName);
+    const lastError = !surname.trim() ? 'Surname is required.' : invalidNameCharacters(surname);
+    setFirstNameError(firstError);
+    setSurnameError(lastError);
     /* The login screen only accepts numbers starting with 9, so without this a driver
        could be registered who is permanently unable to sign in. */
-    if (!phoneNumber.startsWith('9')) { setPhoneError('Mobile number must start with 9 (e.g. 9XX XXX XXXX).'); return false; }
+    const phoneIssue = invalidPhonePrefix(phoneNumber) || (phoneNumber.length !== 10 ? 'Enter a valid 10-digit mobile number.' : '');
+    setPhoneError(phoneIssue);
+    if (firstError || lastError || phoneIssue) return false;
 
     const dup = findDuplicateDriver(drivers, { phone: fullPhone(), name: fullName() });
     if (dup) {
@@ -202,18 +213,15 @@ export function RegisterDriverModal({ drivers = [], onServerChange, onClose, onC
      about a field they have not filled in yet. */
   const checkPhoneOnBlur = () => {
     if (!phoneNumber) return;
+    if (invalidPhonePrefix(phoneNumber)) { setPhoneError(invalidPhonePrefix(phoneNumber)); return; }
     if (phoneNumber.length !== 10) { setPhoneError('Enter a valid 10-digit mobile number.'); return; }
-    if (!phoneNumber.startsWith('9')) { setPhoneError('Mobile number must start with 9 (e.g. 9XX XXX XXXX).'); return; }
     const dup = findDuplicateDriver(drivers, { phone: fullPhone() });
     setPhoneError(dup?.field === 'phone' ? dup.message : '');
   };
 
   const checkNameOnBlur = () => {
     if (!surname.trim() || !firstName.trim()) return;
-    if (!NAME_PATTERN.test(firstName.trim()) || !NAME_PATTERN.test(surname.trim())) {
-      setNameError('Names can only contain letters, spaces, apostrophes, hyphens and periods.');
-      return;
-    }
+    if (invalidNameCharacters(firstName) || invalidNameCharacters(surname)) return;
     const dup = findDuplicateDriver(drivers, { name: fullName() });
     setNameError(dup?.field === 'name' ? dup.message : '');
   };
@@ -263,24 +271,28 @@ export function RegisterDriverModal({ drivers = [], onServerChange, onClose, onC
             </label>
             <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
               <div className="space-y-1">
-                <span className="text-xs text-muted-foreground">First Name</span>
+                <label htmlFor="register-driver-first-name" className="text-xs text-muted-foreground">First Name</label>
                 <input
-                  type="text" value={firstName}
-                  onChange={(e) => { setFirstName(e.target.value); setNameError(''); }}
+                  id="register-driver-first-name" type="text" value={firstName}
+                  aria-invalid={!!firstNameError} aria-describedby={firstNameError ? 'register-driver-first-name-error' : undefined}
+                  onChange={(e) => { setFirstName(e.target.value); setFirstNameError(invalidNameCharacters(e.target.value)); setNameError(''); }}
                   onBlur={checkNameOnBlur}
                   placeholder="e.g. Juan"
-                  className={`w-full px-4 py-3 rounded-xl border text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 text-sm ${nameError ? 'border-red-400 bg-red-50' : 'border-border bg-white'}`}
+                  className={`w-full px-4 py-3 rounded-xl border text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 text-sm ${firstNameError ? 'border-red-400 bg-red-50' : 'border-border bg-white'}`}
                 />
+                {firstNameError && <p id="register-driver-first-name-error" role="alert" className="text-xs text-red-500">{firstNameError}</p>}
               </div>
               <div className="space-y-1">
-                <span className="text-xs text-muted-foreground">Surname</span>
+                <label htmlFor="register-driver-surname" className="text-xs text-muted-foreground">Surname</label>
                 <input
-                  type="text" value={surname}
-                  onChange={(e) => { setSurname(e.target.value); setNameError(''); }}
+                  id="register-driver-surname" type="text" value={surname}
+                  aria-invalid={!!surnameError} aria-describedby={surnameError ? 'register-driver-surname-error' : undefined}
+                  onChange={(e) => { setSurname(e.target.value); setSurnameError(invalidNameCharacters(e.target.value)); setNameError(''); }}
                   onBlur={checkNameOnBlur}
                   placeholder="e.g. dela Cruz"
-                  className={`w-full px-4 py-3 rounded-xl border text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 text-sm ${nameError ? 'border-red-400 bg-red-50' : 'border-border bg-white'}`}
+                  className={`w-full px-4 py-3 rounded-xl border text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 text-sm ${surnameError ? 'border-red-400 bg-red-50' : 'border-border bg-white'}`}
                 />
+                {surnameError && <p id="register-driver-surname-error" role="alert" className="text-xs text-red-500">{surnameError}</p>}
               </div>
             </div>
             {nameError && <p className="text-xs text-red-500 mt-1.5">{nameError}</p>}
@@ -296,6 +308,7 @@ export function RegisterDriverModal({ drivers = [], onServerChange, onClose, onC
               <input
                 type="text" inputMode="numeric" value={phoneNumber}
                 aria-label="Mobile number, ten digits after +63"
+                aria-invalid={!!phoneError} aria-describedby={phoneError ? 'register-driver-phone-error' : undefined}
                 onChange={(e) => handlePhoneInput(e.target.value)}
                 onPaste={handlePhonePaste}
                 onBlur={checkPhoneOnBlur}
@@ -307,7 +320,7 @@ export function RegisterDriverModal({ drivers = [], onServerChange, onClose, onC
                 {phoneNumber.length}/10
               </span>
             </div>
-            {phoneError && <p className="text-xs text-red-500 mt-1.5">{phoneError}</p>}
+            {phoneError && <p id="register-driver-phone-error" role="alert" className="text-xs text-red-500 mt-1.5">{phoneError}</p>}
           </div>
 
           {/* Generate PIN */}

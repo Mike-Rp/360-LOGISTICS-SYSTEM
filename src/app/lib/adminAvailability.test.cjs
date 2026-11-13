@@ -140,6 +140,7 @@ function renderAdminAvailability(overrides = {}) {
     react: React,
     'react/jsx-runtime': require('react/jsx-runtime'),
     '../../lib/adminNavigation': { adminPageFromUrl: () => 'Monitor' },
+    '../../lib/mainModuleScroll': { moveMainModuleScroll() {} },
     '../../lib/staffPermissions': { canDispatchAssignments: () => true, canManageFleetAccounts: () => false },
     '../../lib/notificationEvents': {},
     '../../lib/notificationSound': { notificationSoundEnabled: () => false },

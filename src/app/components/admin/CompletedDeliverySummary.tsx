@@ -49,7 +49,9 @@ export default function CompletedDeliverySummary({ assignment, truck, onClose }:
 
   return <Dialog open={!!assignment} onOpenChange={(open) => { if (!open) onClose(); }}>
     <DialogContent aria-describedby="delivery-summary-description"
-      onEscapeKeyDown={(event) => { if (preview) { event.preventDefault(); setPreview(null); } }}
+      onPointerDownOutside={(event) => event.preventDefault()}
+      onInteractOutside={(event) => event.preventDefault()}
+      onEscapeKeyDown={(event) => event.preventDefault()}
       className="top-0 left-0 flex h-dvh max-h-dvh w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 p-0 sm:top-1/2 sm:left-1/2 sm:h-[min(88vh,820px)] sm:max-h-[820px] sm:w-[94vw] sm:max-w-[960px] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl sm:border">
       <DialogHeader className="shrink-0 gap-1 border-b border-border px-5 py-4 pr-12 text-left sm:px-6 sm:py-5">
         <DialogTitle className="text-xl">Delivery Summary</DialogTitle>
@@ -100,7 +102,7 @@ export default function CompletedDeliverySummary({ assignment, truck, onClose }:
       </div>
       {preview && <UploadedFilePreviewModal key={`${preview.assignmentId}:${preview.slotKey}`} url={preview.photo.url}
         title={preview.title} kind="image" timestamp={preview.photo.timestamp} operationalPhoto={preview.photo}
-        assignmentId={preview.assignmentId} onClose={() => setPreview(null)} />}
+        assignmentId={preview.assignmentId} onClose={() => setPreview(null)} staffModal />}
     </DialogContent>
   </Dialog>;
 }

@@ -720,7 +720,7 @@ export default function DocumentArchive({ assignments, completed, cancelled = []
 
       {preview && (
         <UploadedFilePreviewModal url={preview.url} title={preview.type} kind="document"
-          timestamp={preview.timestamp} assignmentId={preview.assignmentId} onClose={() => setPreview(null)} />
+          timestamp={preview.timestamp} assignmentId={preview.assignmentId} onClose={() => setPreview(null)} staffModal />
       )}
     </div>
   );

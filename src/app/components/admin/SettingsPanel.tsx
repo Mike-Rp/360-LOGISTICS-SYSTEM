@@ -13,15 +13,25 @@ import MobileNumberField from './MobileNumberField';
 import ConfirmPasswordDialog from './ConfirmPasswordDialog';
 import { playNotificationSound } from '../../lib/notificationSound';
 import { useModalFocus } from './useModalFocus';
+import { useModalBodyLock } from './useModalBodyLock';
 import { useFloatingPanelPresence } from './useFloatingPanelPresence';
 import type { StaffSession } from '../../lib/db';
-import { PERSON_NAME_PATTERN } from '../../lib/personName';
+import { PERSON_NAME_PATTERN, PERSON_NAME_MAX_LENGTH } from '../../lib/personName';
 import AccountRoleBadge from './AccountRoleBadge';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
 import { passwordUpdateError, validatePasswordForm, type PasswordFormError } from '../../lib/passwordFormError';
 
 /* Mirrors update_own_display_name()'s server-side rule exactly. */
 const NAME_PATTERN = PERSON_NAME_PATTERN;
+const NAME_CHARACTERS_ERROR = 'Enter a valid name — letters, spaces, apostrophes, hyphens and periods only.';
+const liveNameProblem = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  if (trimmed.length > PERSON_NAME_MAX_LENGTH) return `Name can be at most ${PERSON_NAME_MAX_LENGTH} characters.`;
+  return NAME_PATTERN.test(trimmed) ? '' : NAME_CHARACTERS_ERROR;
+};
+const livePhonePrefixProblem = (digits: string) => digits && !digits.startsWith('9')
+  ? 'Mobile number must start with 9 (e.g. 9XX XXX XXXX).' : '';
 
 /* ── Field row ── */
 const Field = ({ label, htmlFor, children }: { label: string; htmlFor?: string; children: React.ReactNode }) => (
@@ -61,6 +71,7 @@ export default function SettingsPanel({ open, onClose, profile, avatarUrl, onPro
   /* Focus moves into the modal on open, Tab stays inside, returns to the opener on close */
   const modalRef = useRef<HTMLDivElement>(null);
   useModalFocus(open, modalRef);
+  useModalBodyLock(open);
 
   /* ── Password state ── */
   const [curPass,     setCurPass]     = useState('');
@@ -91,26 +102,59 @@ export default function SettingsPanel({ open, onClose, profile, avatarUrl, onPro
   const isOpm = profile?.role === 'opm';
   const savedPhone = profile?.phone ? profile.phone.slice(1) : '';
   const [phoneInput,   setPhoneInput]   = useState(savedPhone);
+  const [savedPhoneInput, setSavedPhoneInput] = useState(savedPhone);
   const [phoneError,   setPhoneError]   = useState('');
   const [phoneSaved,   setPhoneSaved]   = useState(false);
   const [confirmPhone, setConfirmPhone] = useState(false);
-  const phoneChanged = phoneInput !== savedPhone;
-  useEffect(() => { setPhoneInput(savedPhone); setPhoneError(''); }, [savedPhone, open]);
+  const [phoneBusy, setPhoneBusy] = useState(false);
+  const phoneSavingRef = useRef(false);
+  const profileIdRef = useRef(profile?.id);
+  profileIdRef.current = profile?.id;
+  const phoneChanged = phoneInput !== savedPhoneInput;
+  useEffect(() => {
+    setSavedPhoneInput(savedPhone);
+    setPhoneInput(savedPhone);
+    setPhoneError('');
+    setPhoneSaved(false);
+    setConfirmPhone(false);
+  }, [savedPhone, open, profile?.id]);
 
   /* The number can never be emptied: drivers must always have someone to call. */
   const phoneProblem = () => !phoneInput ? 'Enter the mobile number drivers should call.' : subscriberProblem(phoneInput);
   const requestSavePhone = () => {
+    if (!isOpm || phoneSavingRef.current || confirmPhone || !phoneChanged) return;
     setPhoneSaved(false);
     const problem = phoneProblem();
     if (problem) { setPhoneError(problem); return; }
     setConfirmPhone(true);
   };
   const handleConfirmPhone = async () => {
-    const result = await setOwnPhone(`0${phoneInput}`);
-    onProfileUpdated({ phone: result.phone });
-    setConfirmPhone(false);
-    setPhoneSaved(true);
-    setTimeout(() => setPhoneSaved(false), 4000);
+    if (phoneSavingRef.current || !isOpm) return;
+    const problem = phoneProblem();
+    if (!phoneChanged || problem) {
+      setPhoneError(problem);
+      setConfirmPhone(false);
+      return;
+    }
+    phoneSavingRef.current = true;
+    setPhoneBusy(true);
+    const accountId = profile?.id;
+    try {
+      const result = await setOwnPhone(`0${phoneInput}`);
+      if (profileIdRef.current !== accountId) return;
+      if (!result.phone) throw new Error('phone_required');
+      const confirmed = result.phone.slice(1);
+      setSavedPhoneInput(confirmed);
+      setPhoneInput(confirmed);
+      setPhoneError('');
+      onProfileUpdated({ phone: result.phone });
+      setConfirmPhone(false);
+      setPhoneSaved(true);
+      setTimeout(() => setPhoneSaved(false), 4000);
+    } finally {
+      phoneSavingRef.current = false;
+      setPhoneBusy(false);
+    }
   };
   const phoneErrorText = (err: unknown): string => {
     const m = err instanceof Error ? err.message : '';
@@ -138,7 +182,11 @@ export default function SettingsPanel({ open, onClose, profile, avatarUrl, onPro
     // Same rule update_own_display_name() enforces server-side — catches it before
     // a round trip, but the server is the real gate (never trust this check alone).
     if (!NAME_PATTERN.test(trimmed)) {
-      setNameError('Enter a valid name — letters, spaces, apostrophes, hyphens and periods only.');
+      setNameError(NAME_CHARACTERS_ERROR);
+      return;
+    }
+    if (trimmed.length > PERSON_NAME_MAX_LENGTH) {
+      setNameError(`Name can be at most ${PERSON_NAME_MAX_LENGTH} characters.`);
       return;
     }
     setNameBusy(true);
@@ -150,7 +198,7 @@ export default function SettingsPanel({ open, onClose, profile, avatarUrl, onPro
       console.error('[updateOwnDisplayName] error:', e);
       const message = e instanceof Error ? e.message : '';
       setNameError(message.includes('invalid_name')
-        ? 'Enter a valid name — letters, spaces, apostrophes, hyphens and periods only.'
+        ? NAME_CHARACTERS_ERROR
         : 'Could not update your name. Check your connection and try again.');
     } finally {
       setNameBusy(false);
@@ -202,20 +250,6 @@ export default function SettingsPanel({ open, onClose, profile, avatarUrl, onPro
     }
   };
 
-  /* ── Close on Esc ── */
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented && !profileMenuOpen && !confirmPhone) onClose(); };
-    if (open) document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [open, onClose, profileMenuOpen, confirmPhone]);
-
-  /* ── Body scroll lock ── */
-  useEffect(() => {
-    if (!open) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = previousOverflow; };
-  }, [open]);
 
   const handleSavePassword = async () => {
     if (passBusy) return;
@@ -252,7 +286,7 @@ export default function SettingsPanel({ open, onClose, profile, avatarUrl, onPro
       {/* Backdrop */}
       <div
         className={`absolute inset-0 z-0 bg-black/40 transition-opacity motion-reduce:transition-none sm:transition-none ${visible ? 'opacity-100 duration-[225ms]' : 'opacity-0 duration-200 sm:opacity-100'}`}
-        onClick={onClose}
+        aria-hidden="true"
       />
 
       {/* Centred modal — the wrapper ignores clicks so they fall through to the backdrop */}
@@ -336,15 +370,16 @@ export default function SettingsPanel({ open, onClose, profile, avatarUrl, onPro
               <div className="mt-5 max-w-sm space-y-3">
                 <Field label="Display Name" htmlFor="settings-display-name">
                   <input id="settings-display-name" value={nameInput}
-                    onChange={(e) => { setNameInput(e.target.value); setNameError(''); }}
+                    onChange={(e) => { setNameInput(e.target.value); setNameError(liveNameProblem(e.target.value)); }}
+                    aria-invalid={!!nameError} aria-describedby={nameError ? 'settings-display-name-error' : undefined}
                     className={inputCls(!!nameError)} autoFocus />
                 </Field>
-                {nameError && <p className="text-sm text-red-600" role="alert">{nameError}</p>}
+                {nameError && <p id="settings-display-name-error" className="text-sm text-red-600" role="alert">{nameError}</p>}
                 <div className="flex flex-wrap justify-end gap-2">
                   <button type="button" disabled={nameBusy}
                     onClick={() => { setEditingName(false); setNameInput(profile?.name ?? ''); setNameError(''); }}
                     className="min-h-10 rounded-lg border border-border px-3 text-sm font-medium text-foreground hover:bg-muted/40 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-60">Cancel</button>
-                  <button type="button" onClick={handleSaveName} disabled={nameBusy || !nameChanged}
+                  <button type="button" onClick={handleSaveName} disabled={nameBusy || !nameChanged || !!liveNameProblem(nameInput)}
                     className="min-h-10 rounded-lg bg-primary px-3 text-sm font-medium text-white hover:bg-primary/90 focus-visible:outline-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-60">
                     {nameBusy ? 'Saving…' : 'Save Changes'}
                   </button>
@@ -366,16 +401,21 @@ export default function SettingsPanel({ open, onClose, profile, avatarUrl, onPro
                 <MobileNumberField id="settings-contact-phone" value={phoneInput} error={phoneError}
                   ariaLabel="Your mobile number, ten digits after +63"
                   onChange={(digits) => { setPhoneInput(digits); setPhoneSaved(false); }} onError={setPhoneError}
-                  onBlur={() => { if (phoneInput ? subscriberProblem(phoneInput) : savedPhone) setPhoneError(phoneProblem()); }} />
+                  validateOnChange={livePhonePrefixProblem} disabled={phoneBusy || confirmPhone}
+                  onBlur={() => { if (phoneInput ? subscriberProblem(phoneInput) : savedPhoneInput) setPhoneError(phoneProblem()); }} />
               </Field>
               <p className="text-xs text-muted-foreground">
                 Drivers see this number on the login screen under &ldquo;Forgot your PIN?&rdquo;. While a CSR is covering your leave, they see the number you set for that coverage instead.
                 Drivers always need someone to call, so once saved this number can be changed but not removed.
               </p>
               {phoneSaved && <p role="status" className="flex items-center gap-1 text-xs text-green-600"><CheckCircle2 className="w-3.5 h-3.5" /> Contact number saved</p>}
-              <div className="flex justify-end">
-                <button type="button" onClick={requestSavePhone} disabled={!phoneChanged || !phoneInput}
-                  className="min-h-11 w-full rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-primary sm:w-auto">
+              <div className="flex flex-wrap gap-2 sm:justify-end">
+                {phoneChanged && <button type="button" onClick={() => { setPhoneInput(savedPhoneInput); setPhoneError(''); setPhoneSaved(false); }} disabled={phoneBusy || confirmPhone}
+                  className="min-h-11 flex-1 rounded-xl border border-border px-4 py-2.5 text-sm font-medium text-foreground hover:bg-muted/40 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-primary sm:flex-none">
+                  Revert
+                </button>}
+                <button type="button" onClick={requestSavePhone} disabled={!phoneChanged || !!phoneProblem() || phoneBusy || confirmPhone}
+                  className="min-h-11 flex-1 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-primary sm:flex-none">
                   Save Number
                 </button>
               </div>

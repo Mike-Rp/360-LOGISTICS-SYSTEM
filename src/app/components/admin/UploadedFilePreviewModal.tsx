@@ -7,7 +7,7 @@ import { getPhotoEvidenceDetails } from '../../lib/photoEvidenceDetails';
 import ZoomableImage from './ZoomableImage';
 
 /** Viewer for the signed Storage URLs saved with photos and documents. */
-export default function UploadedFilePreviewModal({ url, title, kind, timestamp, assignmentId, operationalPhoto, onClose, labels }: {
+export default function UploadedFilePreviewModal({ url, title, kind, timestamp, assignmentId, operationalPhoto, onClose, labels, staffModal = false }: {
   url: string;
   title: string;
   kind: 'image' | 'document';
@@ -16,6 +16,7 @@ export default function UploadedFilePreviewModal({ url, title, kind, timestamp, 
   /** Present only when this image came from a selected operational photo slot. */
   operationalPhoto?: StatusPhoto;
   onClose: () => void;
+  staffModal?: boolean;
   labels?: Partial<{
     close: string; dateUnavailable: string; download: string; downloading: string;
     downloadError: string; previewUnavailable: string;
@@ -69,6 +70,9 @@ export default function UploadedFilePreviewModal({ url, title, kind, timestamp, 
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay className="fixed inset-0 z-[70] bg-slate-950/30" />
       <DialogPrimitive.Content aria-describedby={undefined}
+        onPointerDownOutside={staffModal ? (event) => event.preventDefault() : undefined}
+        onInteractOutside={staffModal ? (event) => event.preventDefault() : undefined}
+        onEscapeKeyDown={staffModal ? (event) => event.preventDefault() : undefined}
         className="fixed left-1/2 top-1/2 z-[71] flex h-[calc(100dvh-24px)] w-[calc(100vw-24px)] max-w-[1200px] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-border bg-white shadow-xl focus:outline-none sm:h-[min(88dvh,900px)] sm:w-[88vw] sm:rounded-2xl">
         <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border px-4 py-3 sm:px-5">
           <div className="min-w-0">
