@@ -670,7 +670,6 @@ function PhotoSheet({ status, title, instruction, qualityCheck, existingPhoto, o
   const [selectedAt, setSelectedAt] = useState<string | null>(null);
   const [locationError, setLocationError] = useState(false);
   const [locationStale, setLocationStale] = useState(false);
-  const [withoutLocation, setWithoutLocation] = useState(false);
   const attemptRef = useRef(0);
   const locationRequestRef = useRef(0);
   const staleLocationTimer = useRef<number | null>(null);
@@ -689,7 +688,6 @@ function PhotoSheet({ status, title, instruction, qualityCheck, existingPhoto, o
     const isCurrent = () => isCurrentPhotoLocationRequest(attempt, request, attemptRef.current, locationRequestRef.current);
     setLocLoading(true);
     setLocationError(false);
-    setWithoutLocation(false);
     void readFreshPhotoLocation().then(({ location, coords, accuracy, observedAt }) => {
       if (isCurrent()) {
         setGpsAccuracy(accuracy);
@@ -724,7 +722,6 @@ function PhotoSheet({ status, title, instruction, qualityCheck, existingPhoto, o
     setLocationObservedAt(null);
     setLocationError(false);
     setLocationStale(false);
-    setWithoutLocation(false);
     setSaveError('');
     setQualityError(null);
     setPhoto(null);
@@ -770,23 +767,23 @@ function PhotoSheet({ status, title, instruction, qualityCheck, existingPhoto, o
   const canConfirm = !!photo && !!meta && meta.url === photo && !checking && !qualityError && !locLoading && !saving;
   const confirmPhoto = async () => {
     if (!canConfirm || !meta || !source) return;
-    if (!withoutLocation && meta.coords
-      && (!locationObservedAt || isPhotoLocationStale(locationObservedAt, Date.now()))) {
-      setLocationStale(true);
+    // A photo is only accepted with a fresh device location — there is no way to skip it.
+    if (!meta.coords) {
+      setLocationError(true);
       return;
     }
-    if (!withoutLocation && source === 'gallery' && !meta.coords) {
-      setLocationError(true);
+    if (!locationObservedAt || isPhotoLocationStale(locationObservedAt, Date.now())) {
+      setLocationStale(true);
       return;
     }
     setSaving(true);
     setSaveError('');
-    const base = withoutLocation ? { ...meta, location: '', coords: undefined } : meta;
+    const base = meta;
     // The preview already reads these; they were never carried into what gets saved.
     const submission: StatusPhoto = {
       ...base,
-      gpsAccuracyM: withoutLocation ? null : gpsAccuracy,
-      gpsObservedAt: withoutLocation ? null : locationObservedAt,
+      gpsAccuracyM: gpsAccuracy,
+      gpsObservedAt: locationObservedAt,
     };
     try {
       await onConfirm(submission, source);
@@ -818,15 +815,13 @@ function PhotoSheet({ status, title, instruction, qualityCheck, existingPhoto, o
     setSelectedAt(null);
     setLocationError(false);
     setLocationStale(false);
-    setWithoutLocation(false);
     setChecking(false);
     setLocLoading(false);
     setQualityError(null);
     setSaveError('');
   };
   const qualityMessage = qualityError ? t(`photo.${qualityError}`) : null;
-  const canSubmitPrimary = canConfirm && (withoutLocation
-    || (!locationStale && !(source === 'gallery' && !meta?.coords)));
+  const canSubmitPrimary = canConfirm && !locationStale && !!meta?.coords;
 
   return (
     <DriverBottomSheet label={title ?? (status === 'Delivered' ? t('photo.deliveryRequired') : t('photo.take'))} onBackdrop={cancelPhoto}>
@@ -933,12 +928,6 @@ function PhotoSheet({ status, title, instruction, qualityCheck, existingPhoto, o
              saving       ? t('photo.saving') :
              status === 'Delivered' ? t('photo.confirmDelivered') : t('photo.confirmUpload')}
           </button>
-          {((source === 'gallery' && locationError && !meta?.coords) || locationStale) && !withoutLocation && <button type="button" disabled={saving || locLoading}
-            onClick={() => setWithoutLocation(true)}
-            className="mt-2 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-4 text-sm font-semibold text-gray-700 hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-green-700">
-            {t('photo.continueWithoutLocation')}
-          </button>}
-          {withoutLocation && <p role="status" className="mt-2 text-center text-sm text-gray-600">{t('photo.locationOmitted')}</p>}
         </div>}
     </DriverBottomSheet>
   );
