@@ -35,6 +35,7 @@ import { PaginationFooter, usePagination, useStablePageHeight } from './Paginati
 import { sortNewestFirst, markLocalRecordAdded } from '../../lib/recordOrdering';
 import { advanceDispatchHighlight, dispatchHighlightPage, type DispatchHighlight } from '../../lib/dispatchHighlight';
 import { hasUnsavedDispatchDetails } from '../../lib/dispatchDraft';
+import { dispatchAreaError } from '../../lib/dispatchAreaValidation';
 import { ADMIN_NAVIGATION_EVENT, pushAdminNavigation } from '../../lib/adminNavigation';
 import type { ActionFeedbackToast, ActivityKey } from '../../lib/notificationEvents';
 import { getBlockingIssueSummary, hasOpenBlockingIssue } from '../../lib/issueWorkflow';
@@ -1981,9 +1982,13 @@ export default function DriversManagement({
     if (!driverAvailable || availabilityLoading || availabilityError) e.driver = 'Select an available driver.';
     if (!truckAvailable || availabilityLoading || availabilityError) e.truck = 'Select an available truck.';
     if (!taskPickupLocation.trim()) e.pickupLocation = 'Enter a pickup location.';
-    if (!taskFrom.trim()) e.from = 'Enter an origin area.';
+    const originError = dispatchAreaError(taskFrom, 'Enter an origin area.', true);
+    if (originError) e.from = originError;
     if (!taskTo.trim()) e.to = 'Enter a delivery location.';
-    if (destinationAreaEnabled && !taskDestinationArea.trim()) e.destinationArea = 'Enter a destination area.';
+    if (destinationAreaEnabled) {
+      const destinationError = dispatchAreaError(taskDestinationArea, 'Enter a destination area.', true);
+      if (destinationError) e.destinationArea = destinationError;
+    }
     if (!taskCompany.trim())        e.company        = 'Enter a client name.';
     setTaskErrors(e);
     return Object.keys(e).length === 0;
@@ -2782,10 +2787,11 @@ export default function DriversManagement({
                     <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Pickup</p>
                     <div>
                       <FieldLabel required>Origin Area</FieldLabel>
-                      <input type="text" value={taskFrom}
-                        onChange={(event) => { setTaskFrom(event.target.value); setTaskErrors((p) => ({ ...p, from: '' })); }}
+                      <input type="text" value={taskFrom} aria-label="Origin Area"
+                        aria-invalid={!!taskErrors.from || undefined} aria-describedby={taskErrors.from ? 'dispatch-origin-area-error' : undefined}
+                        onChange={(event) => { const value = event.target.value; setTaskFrom(value); setTaskErrors((p) => ({ ...p, from: dispatchAreaError(value, 'Enter an origin area.') })); }}
                         placeholder="Enter origin city or area" className={`${fieldBase} ${fieldTone(!!taskErrors.from)}`} />
-                      {taskErrors.from && <p className="text-xs text-red-500 mt-1">{taskErrors.from}</p>}
+                      {taskErrors.from && <p id="dispatch-origin-area-error" className="text-xs text-red-500 mt-1">{taskErrors.from}</p>}
                     </div>
                     <div>
                       <FieldLabel required>Pickup Location</FieldLabel>
@@ -2800,11 +2806,12 @@ export default function DriversManagement({
                     <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Delivery</p>
                     {destinationAreaEnabled && <div>
                       <FieldLabel required>Destination Area</FieldLabel>
-                      <input type="text" value={taskDestinationArea}
-                        onChange={(event) => { setTaskDestinationArea(event.target.value); setTaskErrors((p) => ({ ...p, destinationArea: '' })); }}
+                      <input type="text" value={taskDestinationArea} aria-label="Destination Area"
+                        aria-invalid={!!taskErrors.destinationArea || undefined} aria-describedby={taskErrors.destinationArea ? 'dispatch-destination-area-error' : undefined}
+                        onChange={(event) => { const value = event.target.value; setTaskDestinationArea(value); setTaskErrors((p) => ({ ...p, destinationArea: dispatchAreaError(value, 'Enter a destination area.') })); }}
                         placeholder="Enter destination city or area"
                         className={`${fieldBase} ${fieldTone(!!taskErrors.destinationArea)}`} />
-                      {taskErrors.destinationArea && <p className="text-xs text-red-500 mt-1">{taskErrors.destinationArea}</p>}
+                      {taskErrors.destinationArea && <p id="dispatch-destination-area-error" className="text-xs text-red-500 mt-1">{taskErrors.destinationArea}</p>}
                     </div>}
                     <div>
                       <FieldLabel required>Delivery Location</FieldLabel>
@@ -2902,7 +2909,7 @@ export default function DriversManagement({
                     />
                     {taskErrors.scheduledArrivalTime
                       ? <p id="dispatch-sta-time-error" className="text-xs text-red-500 mt-1">{taskErrors.scheduledArrivalTime}</p>
-                      : <p className="text-[12px] text-muted-foreground mt-1.5">Estimated Time of Arrival</p>}
+                      : <p className="text-[12px] text-muted-foreground mt-1.5">Planned arrival time</p>}
                   </div>
                 </div>
 

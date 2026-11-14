@@ -1730,6 +1730,9 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   const [focusedIssueNotification, setFocusedIssueNotification] = useState<DriverNotificationRecord | null>(null);
   const taskScrollRef = useRef<HTMLDivElement>(null);
   const taskHeaderRef = useRef<HTMLElement>(null);
+  const deliveryDetailsRef = useRef<HTMLDetailsElement>(null);
+  const detailsCueSeen = useRef(new Set<string>());
+  const [highlightDeliveryDetails, setHighlightDeliveryDetails] = useState(false);
   const stickyActionRef = useRef<HTMLDivElement>(null);
   const photoHighlightTimer = useRef<number | null>(null);
   const scrollHideTimer = useRef<number | null>(null);
@@ -1836,6 +1839,45 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
   }, [screen, data?.assignment?.id]);
 
   useEffect(() => { setStageRemark(''); }, [data?.assignment?.id]);
+
+  useEffect(() => {
+    const assignment = data?.assignment;
+    if (screen !== 'task' || !assignment || assignment.taskStatus !== 'Assigned') return;
+    const key = `360_driver_details_seen:${driverId}:${assignment.id}`;
+    if (detailsCueSeen.current.has(key)) return;
+    try { if (sessionStorage.getItem(key)) return; } catch { /* Use in-memory tracking if storage is unavailable. */ }
+    const details = deliveryDetailsRef.current;
+    const content = taskScrollRef.current;
+    if (!details || !content) return;
+    const focused = document.activeElement;
+    const editing = focused instanceof HTMLElement &&
+      (focused.matches('input, textarea, select, [contenteditable="true"]'));
+    if (editing || document.visibilityState === 'hidden' || activeDrawer || photoTarget || operationalPhotoTarget ||
+        delaySheet || issueSheet || logoutDlg || selectedHistoryId || completionNotice) {
+      detailsCueSeen.current.add(key);
+      try { sessionStorage.setItem(key, '1'); } catch { /* The current mount still remembers it. */ }
+      return;
+    }
+    detailsCueSeen.current.add(key);
+    try { sessionStorage.setItem(key, '1'); } catch { /* The current mount still remembers it. */ }
+    details.open = true;
+    setHighlightDeliveryDetails(true);
+    const frame = window.requestAnimationFrame(() => {
+      if (!details.isConnected || screen !== 'task') return;
+      const currentFocus = document.activeElement;
+      if (currentFocus instanceof HTMLElement && currentFocus.matches('input, textarea, select, [contenteditable="true"]')) return;
+      const scroller = content.scrollHeight > content.clientHeight + 1 ? content : window;
+      const visibleTop = Math.max(taskHeaderRef.current?.getBoundingClientRect().bottom ?? 0,
+        window.visualViewport?.offsetTop ?? 0) + 12;
+      const delta = details.getBoundingClientRect().top - visibleTop;
+      if (Math.abs(delta) > 8) scroller.scrollBy({
+        top: delta,
+        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
+      });
+    });
+    const timer = window.setTimeout(() => setHighlightDeliveryDetails(false), 2200);
+    return () => { window.cancelAnimationFrame(frame); window.clearTimeout(timer); setHighlightDeliveryDetails(false); };
+  }, [screen, driverId, data?.assignment?.id, data?.assignment?.taskStatus]);
 
   useEffect(() => {
     const action = stickyActionRef.current;
@@ -3273,7 +3315,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
             {phase === 'delivery_pending' && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">{t('workflow.deliveryPending')}</p>}
 
             {/* Supplementary assignment data stays available without crowding the current action. */}
-            <details className="group rounded-2xl border border-gray-200 bg-white shadow-sm">
+            <details ref={deliveryDetailsRef} className={`group rounded-2xl border shadow-sm transition-colors duration-500 motion-reduce:transition-none ${highlightDeliveryDetails ? 'border-green-500 bg-green-50/40' : 'border-gray-200 bg-white'}`}>
               <summary className="flex min-h-16 cursor-pointer list-none items-center justify-between gap-3 px-5 py-3 focus-visible:outline-2 focus-visible:outline-green-700 [&::-webkit-details-marker]:hidden">
                 <span className="min-w-0">
                   <span className="block text-base font-bold text-gray-900">{t('task.details')}</span>
@@ -3292,6 +3334,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
                 <DetailRow label={t('task.pickupDate')} value={a.pickedUpDate} />
                 <DetailRow label={t('task.pickupTime')} value={a.pickupTime} />
                 <DetailRow label={t('task.deliveryDate')} value={a.deliveryDate} />
+                <DetailRow label={t('task.sta')} value={a.scheduledArrivalTime?.trim() || t('task.staNotProvided')} />
                 <DetailRow label={t('task.deliveryDue')} value={a.ata ?? a.scheduledArrivalTime} />
                 <DetailRow label={t('task.instructions')} value={a.remarks} />
               </div>
