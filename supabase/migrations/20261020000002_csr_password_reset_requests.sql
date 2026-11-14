@@ -95,31 +95,59 @@ language sql stable security definer set search_path = '' as $$
   );
 $$;
 
--- The credential-change boundary: Supabase Auth updates auth.users through its
--- normal API, and this trigger refuses a CSR password change without an approved,
--- unexpired request. Consuming approval and auditing occur in the same transaction.
+-- The credential-change boundary — scoped to the CSR Forgot Password flow only.
+--
+-- How Supabase Auth writes passwords (github.com/supabase/auth, read 2026-10-20):
+-- * A real password change — PUT /user (the browser's auth.updateUser) and the
+--   Admin API PUT /admin/users/{id} alike — runs User.UpdatePassword(): ONE
+--   UPDATE that sets encrypted_password and also clears recovery_token (and the
+--   other one-time tokens). Then, in the same transaction, it deletes the user's
+--   other sessions: PUT /user keeps only the caller's session, the Admin API
+--   (no session) deletes them all.
+-- * Sign-in hash re-encryption writes encrypted_password alone; Recover() /
+--   token clean-up write recovery_token without changing the password.
+-- * Each session's sign-in methods are in auth.mfa_amr_claims. Auth itself treats
+--   'otp', 'magiclink' and 'recovery' as a recovery session
+--   (AuthenticationMethod.IsRecovery); a Forgot Password link signs in that way.
+--
+-- So this check fires only for statements that target recovery_token (password
+-- changes, not sign-in re-encryption), only when the hash really changed, only
+-- for an active CSR, and — evaluated at COMMIT, after Auth removed the other
+-- sessions — only when a recovery session survives, i.e. the change was made
+-- FROM a recovery session. That case needs the one approved, unexpired request,
+-- which is consumed (completed) in the same transaction as the password change;
+-- otherwise the whole change rolls back. Not affected: the Admin API / Dashboard
+-- (all sessions removed), a CSR signed in with their current password, staff
+-- other than CSRs, drivers, sign-in, and SQL maintenance that sets
+-- encrypted_password without touching recovery_token. No role name is assumed.
 create function public.enforce_csr_password_reset() returns trigger
 language plpgsql security definer set search_path = '' as $$
 declare
   v_request public.csr_password_reset_requests%rowtype;
   v_name text;
 begin
-  if new.encrypted_password is not distinct from old.encrypted_password then return new; end if;
+  if new.encrypted_password is not distinct from old.encrypted_password then return null; end if;
   if not exists (select 1 from public.profiles
-    where id = new.id and role = 'csr' and status = 'active') then return new; end if;
-  select * into v_request from public.csr_password_reset_requests
-    where user_id = new.id and status = 'approved' and expires_at > now()
-    order by reviewed_at desc limit 1 for update;
-  if not found then raise exception 'approval_not_available' using errcode = '42501'; end if;
+    where id = new.id and role = 'csr' and status = 'active') then return null; end if;
+  if not exists (select 1 from auth.sessions s
+    join auth.mfa_amr_claims c on c.session_id = s.id
+    where s.user_id = new.id and c.authentication_method in ('otp', 'magiclink', 'recovery')) then
+    return null;
+  end if;
+  -- At most one open request per user (csr_password_reset_one_open_per_user);
+  -- the row lock makes a concurrent second change find it already completed.
   update public.csr_password_reset_requests set status = 'completed', completed_at = now()
-    where id = v_request.id;
+    where user_id = new.id and status = 'approved' and expires_at > now()
+    returning * into v_request;
+  if not found then raise exception 'approval_not_available' using errcode = '42501'; end if;
   select name into v_name from public.profiles where id = v_request.user_id;
   insert into public.activity_log(id, type, ts, member_name, member_email)
     values (gen_random_uuid()::text, 'password_changed', now(), v_name, v_request.requested_email);
-  return new;
+  return null;
 end $$;
-create trigger enforce_csr_password_reset_before_update
-  before update of encrypted_password on auth.users
+create constraint trigger enforce_csr_password_reset_at_commit
+  after update of recovery_token on auth.users
+  deferrable initially deferred
   for each row execute function public.enforce_csr_password_reset();
 
 revoke all on function public.request_csr_password_reset(text),
