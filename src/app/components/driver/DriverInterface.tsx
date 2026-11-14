@@ -11,7 +11,7 @@ import { OPERATIONAL_STEPS } from '../../lib/assignmentOperational';
 import {
   loadDriverData, loadDriverCompletedDelivery, driverUpdate, advanceDriverStage, reportAssignmentIssue, uploadImage,
   markDriverNotificationRead, markAllDriverNotificationsRead, type DriverNotificationRecord,
-  uploadOperationalPhoto, DuplicatePhotoError,
+  uploadOperationalPhoto, DuplicatePhotoError, LocationRequiredError,
 } from '../../lib/db';
 import { getDeliveryTimingStatus, getPickupTimingStatus, type DeliveryTimingStatus } from '../../lib/assignmentTiming';
 import { assignmentDisplayStatusConfig, getAssignmentDisplayStatus, getAssignmentDocumentProgress, getDocumentAgingState } from '../../lib/assignmentWorkflow';
@@ -791,6 +791,7 @@ function PhotoSheet({ status, title, instruction, qualityCheck, existingPhoto, o
     catch (err) {
       console.error('[status photo] save failed:', err);
       setSaveError(err instanceof DuplicatePhotoError ? t('photo.duplicateError')
+        : err instanceof LocationRequiredError ? t('photo.locationError')
         : status === 'Delivered' ? t('photo.deliveryError') : t('photo.saveError'));
     } finally { setSaving(false); }
   };
@@ -2214,7 +2215,7 @@ function DriverInterfaceContent({ driverId, driverName, onLogout, onCheckSession
       }
     } catch (error) {
       // Let PhotoSheet show its own specific message instead of the generic banner.
-      if (error instanceof DuplicatePhotoError) throw error;
+      if (error instanceof DuplicatePhotoError || error instanceof LocationRequiredError) throw error;
       if (!await onCheckSession() || !sessionActiveRef.current) throw error;
       console.error('[operational photo] save failed:', error);
       setActionError(t('workflow.photoFailed'));
