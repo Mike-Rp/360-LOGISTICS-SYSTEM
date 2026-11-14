@@ -53,3 +53,18 @@ test('preview GPS freshness uses the actual reading time', () => {
   assert.equal(isPhotoLocationStale('invalid', now), true);
   assert.equal(isPhotoLocationStale(null, now), false);
 });
+
+test('a photo cannot be uploaded without a fresh device location, and there is no way to skip it', () => {
+  const screen = readFileSync(join(__dirname, 'DriverInterface.tsx'), 'utf8');
+  const words = readFileSync(join(__dirname, 'driverI18n.tsx'), 'utf8');
+  assert.doesNotMatch(screen, /withoutLocation|continueWithoutLocation|locationOmitted/);
+  assert.doesNotMatch(words, /continueWithoutLocation|locationOmitted/);
+  // the confirm button needs coordinates and a fresh reading, for camera and gallery photos alike
+  assert.match(screen, /const canSubmitPrimary = canConfirm && !locationStale && !!meta\?\.coords;/);
+  // and confirmPhoto itself refuses (not just the disabled button)
+  assert.match(screen, /if \(!meta\.coords\) \{\s*setLocationError\(true\);\s*return;\s*\}/);
+  // the saved photo always carries the measured accuracy/time, never an emptied location
+  assert.match(screen, /gpsAccuracyM: gpsAccuracy,\s*gpsObservedAt: locationObservedAt,/);
+  assert.match(words, /Location is required to upload a photo/);
+  assert.match(words, /Kailangan ang lokasyon para makapag-upload ng litrato/);
+});
