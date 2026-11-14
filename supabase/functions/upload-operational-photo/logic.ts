@@ -16,7 +16,7 @@ export const OPERATIONAL_PHOTO_CATEGORIES = [
 ] as const;
 export type OperationalPhotoCategory = typeof OPERATIONAL_PHOTO_CATEGORIES[number];
 
-export type UploadError = 'invalid_request' | 'not_authorized' | 'duplicate_photo' | 'upload_failed';
+export type UploadError = 'invalid_request' | 'not_authorized' | 'duplicate_photo' | 'location_required' | 'upload_failed';
 
 export interface UploadResult {
   status: number;
@@ -75,6 +75,14 @@ export function validateRequest(body: unknown): { ok: true; input: ParsedInput }
   };
 }
 
+/** True only for a real, in-range coordinate pair. A photo is evidence of WHERE it was taken, so the server
+ * refuses one that arrives without it — the app also blocks this, but a modified client could skip the app. */
+export function hasUsableCoordinates(lat: number | null, lng: number | null): boolean {
+  return typeof lat === 'number' && typeof lng === 'number'
+    && Number.isFinite(lat) && Number.isFinite(lng)
+    && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+}
+
 export async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', bytes);
   return Array.from(new Uint8Array(digest), (x) => x.toString(16).padStart(2, '0')).join('');
@@ -106,6 +114,9 @@ export async function handleUpload(body: unknown, deps: UploadDeps): Promise<Upl
 
   const assignment = await deps.getOwnAssignment(input.assignmentId);
   if (!assignment) return { status: 403, body: { error: 'not_authorized' } };
+
+  // After the ownership check (a stranger still gets 403), before any hashing, upload or save.
+  if (!hasUsableCoordinates(input.lat, input.lng)) return { status: 400, body: { error: 'location_required' } };
 
   const hash = await sha256Hex(decoded.bytes);
   if (await deps.hashExists(hash)) return { status: 409, body: { error: 'duplicate_photo' } };
