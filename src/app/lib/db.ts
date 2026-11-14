@@ -1619,6 +1619,11 @@ export class DuplicatePhotoError extends Error {
   constructor() { super('duplicate_photo'); }
 }
 
+/** The server refused a photo that arrived without a device location. */
+export class LocationRequiredError extends Error {
+  constructor() { super('location_required'); }
+}
+
 /** Operational evidence photos only. Routes the save through the
  * upload-operational-photo Edge Function, which computes the file's hash itself
  * from the bytes it actually receives (never trusting a client-supplied hash),
@@ -1643,6 +1648,7 @@ export async function uploadOperationalPhoto(
     let code: string | undefined;
     try { code = context ? (await context.json())?.error : undefined; } catch { /* non-JSON body */ }
     if (code === 'duplicate_photo') throw new DuplicatePhotoError();
+    if (code === 'location_required') throw new LocationRequiredError();
     throw new Error(`upload: ${code ?? error.message}`);
   }
   const path = (data as { ok?: true; url?: string } | null)?.url;
