@@ -68,3 +68,12 @@ test('a photo cannot be uploaded without a fresh device location, and there is n
   assert.match(words, /Location is required to upload a photo/);
   assert.match(words, /Kailangan ang lokasyon para makapag-upload ng litrato/);
 });
+
+test('the server also refuses a photo without a location, and the driver screen shows the location message for it', () => {
+  const screen = readFileSync(join(__dirname, 'DriverInterface.tsx'), 'utf8');
+  const db = readFileSync(join(__dirname, '../../lib/db.ts'), 'utf8');
+  assert.match(db, /class LocationRequiredError extends Error/);
+  assert.match(db, /if \(code === 'location_required'\) throw new LocationRequiredError\(\);/);
+  assert.match(screen, /err instanceof LocationRequiredError \? t\('photo\.locationError'\)/);
+  assert.match(screen, /error instanceof DuplicatePhotoError \|\| error instanceof LocationRequiredError\) throw error;/);
+});
