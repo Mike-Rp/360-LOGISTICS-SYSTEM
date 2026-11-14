@@ -109,3 +109,33 @@ test('handleUpload: a storage failure surfaces as upload_failed, not a raw excep
   const result = await logic.handleUpload(VALID_BODY, deps);
   assert.deepEqual(result, { status: 500, body: { error: 'upload_failed' } });
 });
+
+test('handleUpload: a photo without coordinates is refused by the server — nothing is hashed, uploaded or saved', async () => {
+  for (const missing of [
+    { lat: null, lng: null }, { lat: 14.1, lng: null }, { lat: null, lng: 121.1 },
+    { lat: undefined, lng: undefined }, { lat: '14.1', lng: '121.1' }, { lat: NaN, lng: 121.1 },
+  ]) {
+    const { deps, state } = fakeDeps();
+    const result = await logic.handleUpload({ ...VALID_BODY, ...missing }, deps);
+    assert.deepEqual(result, { status: 400, body: { error: 'location_required' } }, JSON.stringify(missing));
+    assert.equal(state.uploaded, null);
+    assert.equal(state.saved, null);
+  }
+});
+
+test('handleUpload: out-of-range coordinates are refused, real ones (including 0) are accepted', async () => {
+  for (const bad of [{ lat: 91, lng: 121 }, { lat: -91, lng: 121 }, { lat: 14, lng: 181 }, { lat: 14, lng: -181 }]) {
+    const { deps, state } = fakeDeps();
+    const result = await logic.handleUpload({ ...VALID_BODY, ...bad }, deps);
+    assert.deepEqual(result, { status: 400, body: { error: 'location_required' } }, JSON.stringify(bad));
+    assert.equal(state.saved, null);
+  }
+  const { deps } = fakeDeps();
+  assert.equal((await logic.handleUpload({ ...VALID_BODY, lat: 0, lng: 0 }, deps)).status, 200);
+});
+
+test('handleUpload: a stranger\'s assignment is still 403 even when the coordinates are missing', async () => {
+  const { deps } = fakeDeps({ owns: false });
+  const result = await logic.handleUpload({ ...VALID_BODY, lat: null, lng: null }, deps);
+  assert.deepEqual(result, { status: 403, body: { error: 'not_authorized' } });
+});
