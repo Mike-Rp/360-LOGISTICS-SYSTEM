@@ -659,6 +659,16 @@ project, plus one Edge Function deployed.
 
 **Approval:** Approved — local development (2026-10-25).
 
+**2026-11-15 — operational photos now need a device location, enforced on the server (Edge Function change, no
+migration):** the driver app already refuses to submit a photo without a fresh device location (the "Continue
+without location" option was removed). `upload-operational-photo` now enforces the same rule itself: a request with
+missing, non-numeric or out-of-range `lat`/`lng` is refused with `400 location_required` — after the ownership check
+(a stranger still gets 403) and before any hashing, upload or save, so nothing is stored. The app maps that refusal to
+the existing "Location is required to upload a photo" message (`LocationRequiredError` in `db.ts`). Scope is the 12
+operational photo categories only; the 6 formal documents and legacy milestone photos are unchanged (the milestone
+photos still rely on the app-side rule). Tests: `logic.test.cjs` 11/11 (3 new), `driverPhotoEvidence.test.cjs` (1 new).
+Deploy: `npx supabase functions deploy upload-operational-photo`.
+
 **2026-10-26 — bug found and fixed (frontend only, no new migration):** live
 testing surfaced gallery-sourced operational photos saving with a blank
 `taken_at`. Cause: a gallery pick's `photo.timestamp` starts empty
