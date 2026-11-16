@@ -35,7 +35,9 @@ import { PaginationFooter, usePagination, useStablePageHeight } from './Paginati
 import { sortNewestFirst, markLocalRecordAdded } from '../../lib/recordOrdering';
 import { advanceDispatchHighlight, dispatchHighlightPage, type DispatchHighlight } from '../../lib/dispatchHighlight';
 import { hasUnsavedDispatchDetails } from '../../lib/dispatchDraft';
-import { dispatchAreaError } from '../../lib/dispatchAreaValidation';
+import { CompactAddressSummary, PhilippineAddressFields, usePsgcArea } from './PhilippineAddressFields';
+import { EMPTY_GEO_SELECTION, confirmGeoAddress, formatGeoArea, geoSelectionErrors, resolveGeoSelection,
+  type GeoCityPath, type GeoSelection, type SavedGeoAddress } from '../../lib/philippineAddress';
 import { ADMIN_NAVIGATION_EVENT, pushAdminNavigation } from '../../lib/adminNavigation';
 import type { ActionFeedbackToast, ActivityKey } from '../../lib/notificationEvents';
 import { getBlockingIssueSummary, hasOpenBlockingIssue } from '../../lib/issueWorkflow';
@@ -1868,9 +1870,18 @@ export default function DriversManagement({
   const [taskStep,        setTaskStep]        = useState<1 | 2>(1);
   const [taskDriverId,    setTaskDriverId]    = useState('');
   const [taskTruckId,     setTaskTruckId]     = useState('');
-  const [taskFrom,        setTaskFrom]        = useState('');
+  const [pickupGeo, setPickupGeo] = useState<GeoSelection>(EMPTY_GEO_SELECTION);
+  const [deliveryGeo, setDeliveryGeo] = useState<GeoSelection>(EMPTY_GEO_SELECTION);
+  const [pickupCityPath, setPickupCityPath] = useState<GeoCityPath>('province');
+  const [deliveryCityPath, setDeliveryCityPath] = useState<GeoCityPath>('province');
+  const [pickupAddressCompact, setPickupAddressCompact] = useState(false);
+  const [deliveryAddressCompact, setDeliveryAddressCompact] = useState(false);
+  const [pickupConfirmed, setPickupConfirmed] = useState<SavedGeoAddress | null>(null);
+  const [deliveryConfirmed, setDeliveryConfirmed] = useState<SavedGeoAddress | null>(null);
+  const pickupAddressSectionRef = useRef<HTMLDivElement>(null);
+  const deliveryAddressSectionRef = useRef<HTMLDivElement>(null);
+  const addressEditFocusRef = useRef<'pickup' | 'delivery' | null>(null);
   const [taskTo,          setTaskTo]          = useState('');
-  const [taskDestinationArea, setTaskDestinationArea] = useState('');
   const [taskCompany,     setTaskCompany]     = useState('');
   /* Dates as "YYYY-MM-DD" — the value the native date input uses */
   const [taskDate,        setTaskDate]        = useState('');
@@ -1884,6 +1895,116 @@ export default function DriversManagement({
   const [taskBadDates,    setTaskBadDates]    = useState<BadDates>({ pickup: false, delivery: false });
   const [taskSaving, setTaskSaving] = useState(false);
   const taskSavingRef = useRef(false);
+  const pickupPsgc = usePsgcArea(pickupGeo, showAssignTask);
+  const deliveryPsgc = usePsgcArea(deliveryGeo, showAssignTask);
+  const taskFrom = formatGeoArea(pickupGeo, pickupPsgc.area);
+  const taskDestinationArea = formatGeoArea(deliveryGeo, deliveryPsgc.area);
+  useLayoutEffect(() => {
+    if (addressEditFocusRef.current === 'pickup' && !pickupAddressCompact) pickupAddressSectionRef.current?.focus();
+    if (addressEditFocusRef.current === 'delivery' && !deliveryAddressCompact) deliveryAddressSectionRef.current?.focus();
+    addressEditFocusRef.current = null;
+  }, [pickupAddressCompact, deliveryAddressCompact]);
+  const updateGeo = (kind: 'pickup' | 'delivery', next: GeoSelection) => {
+    const current = kind === 'pickup' ? pickupGeo : deliveryGeo;
+    const area = kind === 'pickup' ? pickupPsgc.area : deliveryPsgc.area;
+    const cityPath = kind === 'pickup' ? pickupCityPath : deliveryCityPath;
+    const prefix = kind === 'pickup' ? 'pickup' : 'delivery';
+    if (current.regionCode !== next.regionCode) {
+      if (kind === 'pickup') setPickupCityPath('province'); else setDeliveryCityPath('province');
+    }
+    if (kind === 'pickup') setPickupGeo(next); else setDeliveryGeo(next);
+    setTaskErrors((previous) => {
+      const result = { ...previous };
+      for (const key of ['Region', 'Province', 'City', 'Barangay']) delete result[`${prefix}${key}`];
+      if (resolveGeoSelection(current, area) || ['Region', 'Province', 'City', 'Barangay']
+          .some((key) => !!previous[`${prefix}${key}`])) {
+        Object.assign(result, geoSelectionErrors(next, area, prefix, cityPath));
+      }
+      return result;
+    });
+  };
+  const addressDraftErrors = (kind: 'pickup' | 'delivery') => {
+    const selection = kind === 'pickup' ? pickupGeo : deliveryGeo;
+    const psgc = kind === 'pickup' ? pickupPsgc : deliveryPsgc;
+    const specific = kind === 'pickup' ? taskPickupLocation : taskTo;
+    const cityPath = kind === 'pickup' ? pickupCityPath : deliveryCityPath;
+    const errors = geoSelectionErrors(selection, psgc.area, kind, cityPath);
+    if (psgc.error) errors[`${kind}City`] = psgc.error;
+    if (!specific.trim()) errors[kind === 'pickup' ? 'pickupLocation' : 'to'] =
+      kind === 'pickup' ? 'Enter a pickup location.' : 'Enter a delivery location.';
+    return errors;
+  };
+  const saveAddress = (kind: 'pickup' | 'delivery') => {
+    const selection = kind === 'pickup' ? pickupGeo : deliveryGeo;
+    const psgc = kind === 'pickup' ? pickupPsgc : deliveryPsgc;
+    const specific = kind === 'pickup' ? taskPickupLocation : taskTo;
+    const cityPath = kind === 'pickup' ? pickupCityPath : deliveryCityPath;
+    const errors = addressDraftErrors(kind);
+    const confirmed = Object.keys(errors).length ? null : confirmGeoAddress(specific, selection, psgc.area, cityPath);
+    if (!confirmed && !Object.keys(errors).length) errors[`${kind}City`] = 'Select a valid city and barangay.';
+    setTaskErrors((previous) => {
+      const next = { ...previous };
+      for (const key of ['Region', 'Province', 'City', 'Barangay', 'Confirm']) delete next[`${kind}${key}`];
+      delete next[kind === 'pickup' ? 'pickupLocation' : 'to'];
+      return { ...next, ...errors };
+    });
+    if (!confirmed) {
+      const first = Object.keys(errors)[0];
+      const section = kind === 'pickup' ? pickupAddressSectionRef.current : deliveryAddressSectionRef.current;
+      const label = first.endsWith('Region') ? 'Region' : first.endsWith('Province') ? 'Province'
+        : first.endsWith('City') ? 'City / Municipality' : first.endsWith('Barangay') ? 'Barangay' : '';
+      const field = label ? section?.querySelector<HTMLElement>(`[aria-label="${kind} ${label}"]`)
+        : section?.querySelector<HTMLInputElement>('input[type="text"]');
+      if (field && !('disabled' in field && field.disabled)) field.focus(); else section?.focus();
+      return;
+    }
+    if (kind === 'pickup') { setPickupConfirmed(confirmed); setPickupAddressCompact(true); }
+    else { setDeliveryConfirmed(confirmed); setDeliveryAddressCompact(true); }
+  };
+  const cancelAddressEditing = (kind: 'pickup' | 'delivery') => {
+    const confirmed = kind === 'pickup' ? pickupConfirmed : deliveryConfirmed;
+    if (!confirmed) return;
+    if (kind === 'pickup') {
+      setPickupGeo(confirmed.selection); setTaskPickupLocation(confirmed.specific);
+      setPickupCityPath(confirmed.cityPath); setPickupAddressCompact(true);
+    } else {
+      setDeliveryGeo(confirmed.selection); setTaskTo(confirmed.specific);
+      setDeliveryCityPath(confirmed.cityPath); setDeliveryAddressCompact(true);
+    }
+    setTaskErrors((previous) => {
+      const next = { ...previous };
+      for (const key of ['Region', 'Province', 'City', 'Barangay', 'Confirm']) delete next[`${kind}${key}`];
+      delete next[kind === 'pickup' ? 'pickupLocation' : 'to'];
+      return next;
+    });
+  };
+  const editAddress = (kind: 'pickup' | 'delivery') => {
+    const confirmed = kind === 'pickup' ? pickupConfirmed : deliveryConfirmed;
+    if (!confirmed) return;
+    addressEditFocusRef.current = kind;
+    if (kind === 'pickup') {
+      setPickupGeo(confirmed.selection); setTaskPickupLocation(confirmed.specific);
+      setPickupCityPath(confirmed.cityPath); setPickupAddressCompact(false);
+    } else {
+      setDeliveryGeo(confirmed.selection); setTaskTo(confirmed.specific);
+      setDeliveryCityPath(confirmed.cityPath); setDeliveryAddressCompact(false);
+    }
+  };
+  useEffect(() => {
+    if (!showAssignTask) return;
+    setTaskErrors((previous) => {
+      const next = { ...previous };
+      for (const [prefix, selection, area, cityPath] of [
+        ['pickup', pickupGeo, pickupPsgc.area, pickupCityPath],
+        ['delivery', deliveryGeo, deliveryPsgc.area, deliveryCityPath],
+      ] as const) {
+        if (!['Region', 'Province', 'City', 'Barangay'].some((key) => !!previous[`${prefix}${key}`])) continue;
+        for (const key of ['Region', 'Province', 'City', 'Barangay']) delete next[`${prefix}${key}`];
+        Object.assign(next, geoSelectionErrors(selection, area, prefix, cityPath));
+      }
+      return JSON.stringify(next) === JSON.stringify(previous) ? previous : next;
+    });
+  }, [showAssignTask, pickupPsgc.area, deliveryPsgc.area, pickupCityPath, deliveryCityPath]);
   const taskSchedule = (changes: Partial<Parameters<typeof scheduleErrors>[0]> = {}) => ({
     pickup: taskPickedUpDate, delivery: taskDate, pickupTime: taskPickupTime,
     scheduledArrivalTime: taskScheduledArrivalTime, remarks: taskRemarks, bad: taskBadDates, ...changes,
@@ -1912,8 +2033,8 @@ export default function DriversManagement({
   }, [showAssignTask, taskStep, taskPickedUpDate, taskDate, taskPickupTime, taskScheduledArrivalTime, taskBadDates]);
   const dispatchDirty = hasUnsavedDispatchDetails({
     driverId: taskDriverId, truckId: taskTruckId,
-    originArea: taskFrom, pickupLocation: taskPickupLocation,
-    destinationArea: taskDestinationArea, deliveryLocation: taskTo,
+    originArea: taskFrom || pickupGeo.regionCode || pickupGeo.cityCode, pickupLocation: taskPickupLocation,
+    destinationArea: taskDestinationArea || deliveryGeo.regionCode || deliveryGeo.cityCode, deliveryLocation: taskTo,
     company: taskCompany, pickupDate: taskPickedUpDate, deliveryDate: taskDate,
     pickupTime: taskPickupTime, scheduledArrivalTime: taskScheduledArrivalTime, remarks: taskRemarks,
     pickupDateInvalid: taskBadDates.pickup, deliveryDateInvalid: taskBadDates.delivery,
@@ -1951,9 +2072,13 @@ export default function DriversManagement({
           : null;
 
   const resetAssignTask = () => {
+    addressEditFocusRef.current = null;
     setConfirmDiscardDispatch(false);
     setShowAssignTask(false); setTaskStep(1); setTaskDriverId(''); setTaskTruckId('');
-    setTaskFrom(''); setTaskTo(''); setTaskDestinationArea('');
+    setPickupGeo(EMPTY_GEO_SELECTION); setDeliveryGeo(EMPTY_GEO_SELECTION); setTaskTo('');
+    setPickupCityPath('province'); setDeliveryCityPath('province');
+    setPickupAddressCompact(false); setDeliveryAddressCompact(false);
+    setPickupConfirmed(null); setDeliveryConfirmed(null);
     setTaskCompany(''); setTaskDate(''); setTaskPickedUpDate(''); setTaskRemarks('');
     setTaskPickupLocation('');
     setTaskPickupTime(''); setTaskScheduledArrivalTime('');
@@ -1981,13 +2106,15 @@ export default function DriversManagement({
     const e: Record<string, string> = {};
     if (!driverAvailable || availabilityLoading || availabilityError) e.driver = 'Select an available driver.';
     if (!truckAvailable || availabilityLoading || availabilityError) e.truck = 'Select an available truck.';
-    if (!taskPickupLocation.trim()) e.pickupLocation = 'Enter a pickup location.';
-    const originError = dispatchAreaError(taskFrom, 'Enter an origin area.', true);
-    if (originError) e.from = originError;
-    if (!taskTo.trim()) e.to = 'Enter a delivery location.';
-    if (destinationAreaEnabled) {
-      const destinationError = dispatchAreaError(taskDestinationArea, 'Enter a destination area.', true);
-      if (destinationError) e.destinationArea = destinationError;
+    if (!pickupConfirmed || !pickupAddressCompact) {
+      const draftErrors = addressDraftErrors('pickup');
+      Object.assign(e, draftErrors);
+      if (!Object.keys(draftErrors).length) e.pickupConfirm = 'Save Pickup Address before continuing.';
+    }
+    if (!deliveryConfirmed || !deliveryAddressCompact) {
+      const draftErrors = addressDraftErrors('delivery');
+      Object.assign(e, draftErrors);
+      if (!Object.keys(draftErrors).length) e.deliveryConfirm = 'Save Delivery Address before continuing.';
     }
     if (!taskCompany.trim())        e.company        = 'Enter a client name.';
     setTaskErrors(e);
@@ -2005,6 +2132,7 @@ export default function DriversManagement({
 
     /* Step 1 is already validated, but re-check in case state changed behind us */
     if (!validateStep1()) { setTaskStep(1); return; }
+    if (!pickupConfirmed || !deliveryConfirmed) return;
 
     taskSavingRef.current = true;
     setTaskSaving(true);
@@ -2015,11 +2143,11 @@ export default function DriversManagement({
         newId = await dispatchAssignment({
           driverId: taskDriverId,
           truckId: taskTruckId,
-          destination: `${taskFrom.trim()} → ${taskTo.trim()}`,
-          destinationArea: taskDestinationArea.trim(),
+          destination: `${pickupConfirmed.areaLabel} → ${deliveryConfirmed.fullLocation}`,
+          destinationArea: deliveryConfirmed.areaLabel,
           company: taskCompany.trim(),
-          pickupLocation: taskPickupLocation.trim(),
-          deliveryLocation: taskTo.trim(),
+          pickupLocation: pickupConfirmed.fullLocation,
+          deliveryLocation: deliveryConfirmed.fullLocation,
           pickupTime: time24ToDisplay(taskPickupTime),
           pickedUpDate: isoToDisplay(taskPickedUpDate),
           scheduledArrivalTime: time24ToDisplay(taskScheduledArrivalTime),
@@ -2705,7 +2833,7 @@ export default function DriversManagement({
       <Dialog open={showAssignTask && !isViewOnly}>
         <DialogContent hideCloseButton aria-describedby={undefined}
           overlayClassName="bg-black/40 backdrop-blur-sm"
-          className="flex max-h-[94dvh] w-[calc(100%-1.5rem)] max-w-md flex-col gap-0 overflow-hidden rounded-xl border-0 bg-white p-0 shadow-2xl sm:max-h-[92dvh] sm:rounded-2xl"
+          className="flex max-h-[94dvh] w-[calc(100%-1.5rem)] max-w-md flex-col gap-0 overflow-visible rounded-xl border-0 bg-white p-0 shadow-2xl sm:max-h-[92dvh] sm:rounded-2xl"
           onPointerDownOutside={(event) => event.preventDefault()}
           onInteractOutside={(event) => event.preventDefault()}
           onEscapeKeyDown={(event) => event.preventDefault()}
@@ -2723,7 +2851,7 @@ export default function DriversManagement({
               <X className="h-5 w-5" aria-hidden="true" />
             </button>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5 sm:p-7">
+          <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain p-5 sm:p-7">
           <StepProgress step={taskStep} />
           {taskErrors.submit && <p role="alert" className="text-xs text-red-700 mb-4">{taskErrors.submit}</p>}
 
@@ -2781,46 +2909,61 @@ export default function DriversManagement({
                   ) : null;
                 })()}
 
-                {/* Dispatch enters route areas and exact addresses manually. */}
+                {/* Geographic selections populate the existing route fields; exact addresses remain editable. */}
                 <div className="space-y-4">
-                  <div className="space-y-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Pickup</p>
-                    <div>
-                      <FieldLabel required>Origin Area</FieldLabel>
-                      <input type="text" value={taskFrom} aria-label="Origin Area"
-                        aria-invalid={!!taskErrors.from || undefined} aria-describedby={taskErrors.from ? 'dispatch-origin-area-error' : undefined}
-                        onChange={(event) => { const value = event.target.value; setTaskFrom(value); setTaskErrors((p) => ({ ...p, from: dispatchAreaError(value, 'Enter an origin area.') })); }}
-                        placeholder="Enter origin city or area" className={`${fieldBase} ${fieldTone(!!taskErrors.from)}`} />
-                      {taskErrors.from && <p id="dispatch-origin-area-error" className="text-xs text-red-500 mt-1">{taskErrors.from}</p>}
-                    </div>
-                    <div>
-                      <FieldLabel required>Pickup Location</FieldLabel>
-                      <input type="text" value={taskPickupLocation}
-                        onChange={(event) => { setTaskPickupLocation(event.target.value); setTaskErrors((p) => ({ ...p, pickupLocation: '' })); }}
-                        placeholder="Enter pickup address or location"
-                        className={`${fieldBase} ${fieldTone(!!taskErrors.pickupLocation)}`} />
-                      {taskErrors.pickupLocation && <p className="text-xs text-red-500 mt-1">{taskErrors.pickupLocation}</p>}
-                    </div>
+                  <div ref={pickupAddressSectionRef} tabIndex={-1} className="space-y-3">
+                    {pickupAddressCompact && pickupConfirmed ? <CompactAddressSummary kind="pickup"
+                      address={pickupConfirmed} onEdit={() => editAddress('pickup')} /> : <>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Pickup</p>
+                      <PhilippineAddressFields kind="pickup" selection={pickupGeo} onChange={(next) => updateGeo('pickup', next)}
+                        cityPath={pickupCityPath} onCityPathChange={setPickupCityPath}
+                        area={pickupPsgc.area} loading={pickupPsgc.loading} error={pickupPsgc.error} retry={pickupPsgc.retry} fieldErrors={taskErrors} />
+                      <div>
+                        <FieldLabel required>Pickup Location</FieldLabel>
+                        <input type="text" value={taskPickupLocation} aria-invalid={!!taskErrors.pickupLocation || undefined}
+                          aria-describedby={taskErrors.pickupLocation ? 'dispatch-pickup-location-error' : undefined}
+                          onChange={(event) => { setTaskPickupLocation(event.target.value); setTaskErrors((p) => ({ ...p, pickupLocation: '' })); }}
+                          placeholder="Enter pickup address or location"
+                          className={`${fieldBase} ${fieldTone(!!taskErrors.pickupLocation)}`} />
+                        {taskErrors.pickupLocation && <p id="dispatch-pickup-location-error" className="text-xs text-red-500 mt-1">{taskErrors.pickupLocation}</p>}
+                      </div>
+                      <div className="flex flex-col-reverse gap-2 sm:flex-row">
+                        {pickupConfirmed && <button type="button" onClick={() => cancelAddressEditing('pickup')}
+                          className="min-h-11 rounded-[10px] border border-border px-3 text-sm font-medium text-foreground hover:bg-accent focus-visible:outline-2 focus-visible:outline-[#1DBF73]">Cancel Editing</button>}
+                        <button type="button" onClick={() => saveAddress('pickup')}
+                          className="min-h-11 flex-1 rounded-[10px] bg-[#1DBF73] px-4 text-sm font-semibold text-white hover:bg-[#19a865] active:bg-[#168f58] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1DBF73]">
+                          Save Pickup Address
+                        </button>
+                      </div>
+                      {taskErrors.pickupConfirm && <p role="alert" className="text-xs text-red-500">{taskErrors.pickupConfirm}</p>}
+                    </>}
                   </div>
-                  <div className="space-y-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Delivery</p>
-                    {destinationAreaEnabled && <div>
-                      <FieldLabel required>Destination Area</FieldLabel>
-                      <input type="text" value={taskDestinationArea} aria-label="Destination Area"
-                        aria-invalid={!!taskErrors.destinationArea || undefined} aria-describedby={taskErrors.destinationArea ? 'dispatch-destination-area-error' : undefined}
-                        onChange={(event) => { const value = event.target.value; setTaskDestinationArea(value); setTaskErrors((p) => ({ ...p, destinationArea: dispatchAreaError(value, 'Enter a destination area.') })); }}
-                        placeholder="Enter destination city or area"
-                        className={`${fieldBase} ${fieldTone(!!taskErrors.destinationArea)}`} />
-                      {taskErrors.destinationArea && <p id="dispatch-destination-area-error" className="text-xs text-red-500 mt-1">{taskErrors.destinationArea}</p>}
-                    </div>}
-                    <div>
-                      <FieldLabel required>Delivery Location</FieldLabel>
-                      <input type="text" value={taskTo}
-                        onChange={(event) => { setTaskTo(event.target.value); setTaskErrors((p) => ({ ...p, to: '' })); }}
-                        placeholder="Enter delivery address or location"
-                        className={`${fieldBase} ${fieldTone(!!taskErrors.to)}`} />
-                      {taskErrors.to && <p className="text-xs text-red-500 mt-1">{taskErrors.to}</p>}
-                    </div>
+                  <div ref={deliveryAddressSectionRef} tabIndex={-1} className="space-y-3">
+                    {deliveryAddressCompact && deliveryConfirmed ? <CompactAddressSummary kind="delivery"
+                      address={deliveryConfirmed} onEdit={() => editAddress('delivery')} /> : <>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Delivery</p>
+                      <PhilippineAddressFields kind="delivery" selection={deliveryGeo} onChange={(next) => updateGeo('delivery', next)}
+                        cityPath={deliveryCityPath} onCityPathChange={setDeliveryCityPath}
+                        area={deliveryPsgc.area} loading={deliveryPsgc.loading} error={deliveryPsgc.error} retry={deliveryPsgc.retry} fieldErrors={taskErrors} />
+                      <div>
+                        <FieldLabel required>Delivery Location</FieldLabel>
+                        <input type="text" value={taskTo} aria-invalid={!!taskErrors.to || undefined}
+                          aria-describedby={taskErrors.to ? 'dispatch-delivery-location-error' : undefined}
+                          onChange={(event) => { setTaskTo(event.target.value); setTaskErrors((p) => ({ ...p, to: '' })); }}
+                          placeholder="Enter delivery address or location"
+                          className={`${fieldBase} ${fieldTone(!!taskErrors.to)}`} />
+                        {taskErrors.to && <p id="dispatch-delivery-location-error" className="text-xs text-red-500 mt-1">{taskErrors.to}</p>}
+                      </div>
+                      <div className="flex flex-col-reverse gap-2 sm:flex-row">
+                        {deliveryConfirmed && <button type="button" onClick={() => cancelAddressEditing('delivery')}
+                          className="min-h-11 rounded-[10px] border border-border px-3 text-sm font-medium text-foreground hover:bg-accent focus-visible:outline-2 focus-visible:outline-[#1DBF73]">Cancel Editing</button>}
+                        <button type="button" onClick={() => saveAddress('delivery')}
+                          className="min-h-11 flex-1 rounded-[10px] bg-[#1DBF73] px-4 text-sm font-semibold text-white hover:bg-[#19a865] active:bg-[#168f58] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1DBF73]">
+                          Save Delivery Address
+                        </button>
+                      </div>
+                      {taskErrors.deliveryConfirm && <p role="alert" className="text-xs text-red-500">{taskErrors.deliveryConfirm}</p>}
+                    </>}
                   </div>
                 </div>
 

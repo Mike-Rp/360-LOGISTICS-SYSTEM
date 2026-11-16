@@ -6,7 +6,7 @@ const ts = require('typescript');
 
 function loadTs(file, imports = {}) {
   const js = ts.transpileModule(readFileSync(file, 'utf8'), {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
   }).outputText;
   const mod = { exports: {} };
   new Function('require', 'module', 'exports', js)((id) => {
@@ -122,11 +122,25 @@ test('the actual Dispatch Step 2 field displays and updates the screenshot picku
     useLayoutEffect() { cursor++; },
   };
   const noop = () => null;
+  const CompactAddressSummary = () => null;
+  const geo = loadTs(join(__dirname, 'philippineAddress.ts'), {
+    '../data/psgcIndex.json': require('../data/psgcIndex.json'),
+  });
+  const pickupArea = JSON.parse(readFileSync(join(__dirname, '../../../public/psgc/areas/0403400000.json'), 'utf8'));
   const fallback = new Proxy({}, { get: (_, key) => key === 'default' ? noop : noop });
   const imports = new Proxy({
     react: hooks,
     'react/jsx-runtime': require('react/jsx-runtime'),
     './ScheduleFields': { DateField: noop, TimeField: noop },
+    './PhilippineAddressFields': {
+      PhilippineAddressFields: noop,
+      CompactAddressSummary,
+      usePsgcArea: (selection) => ({
+        area: selection.provinceCode === pickupArea.code ? pickupArea : null,
+        loading: false, error: '', retry: noop,
+      }),
+    },
+    '../../lib/philippineAddress': geo,
     '../../lib/philippineTime': manila,
     './Pagination': { PaginationFooter: noop, usePagination: () => ({ page: 1, setPage: noop, pageItems: [] }), useStablePageHeight: () => ({}) },
     '../../data/assignmentRoute': { destinationAreaEnabled: false, getAssignmentRoute: noop, getDeliveryLocation: noop },
@@ -186,14 +200,84 @@ test('the actual Dispatch Step 2 field displays and updates the screenshot picku
     const truck = nodes(tree).find((node) => node.props.placeholder === 'Select a truck…');
     driver.props.onChange('driver-1');
     truck.props.onChange('truck-1');
-    typeInto(tree, 'Enter origin city or area', 'Demo origin');
     typeInto(tree, 'Enter pickup address or location', 'Demo pickup');
     typeInto(tree, 'Enter delivery address or location', 'Demo delivery');
     typeInto(tree, 'Client or company name', 'Demo client');
     tree = render();
     button(tree, 'Next').props.onClick();
     tree = render();
+    assert.equal(field(tree, 'dispatch-pickup-time'), undefined, 'missing geographic selection blocks Next');
+    button(tree, 'Save Pickup Address').props.onClick();
+    tree = render();
+    assert.equal(nodes(tree).filter((node) => node.type === CompactAddressSummary).length, 0,
+      'incomplete addresses cannot be confirmed');
+    const pickupPicker = nodes(tree).find((node) => node.props.kind === 'pickup');
+    const deliveryPicker = nodes(tree).find((node) => node.props.kind === 'delivery');
+    assert.ok(pickupPicker);
+    assert.ok(deliveryPicker);
+    const selectedAddress = { regionCode: '0400000000', provinceCode: '0403400000',
+      cityCode: '0403428000', barangayCode: '0403428002' };
+    pickupPicker.props.onChange(selectedAddress);
+    deliveryPicker.props.onChange(selectedAddress);
+    tree = render();
+    assert.equal(nodes(tree).filter((node) => node.type === CompactAddressSummary).length, 0,
+      'completed drafts do not collapse automatically');
+    assert.equal(button(tree, 'Use Address'), undefined);
+    button(tree, 'Next').props.onClick();
+    tree = render();
+    assert.equal(field(tree, 'dispatch-pickup-time'), undefined, 'valid but unconfirmed addresses cannot advance');
+    typeInto(tree, 'Enter pickup address or location', 'Draft pickup');
+    tree = render();
+    assert.equal(nodes(tree).filter((node) => node.type === CompactAddressSummary).length, 0,
+      'typing alone does not collapse the address');
+    button(tree, 'Save Pickup Address').props.onClick();
+    tree = render();
+    assert.equal(nodes(tree).filter((node) => node.type === CompactAddressSummary && node.props.kind === 'pickup').length, 1);
+    assert.equal(nodes(tree).filter((node) => node.type === CompactAddressSummary && node.props.kind === 'delivery').length, 0,
+      'pickup and delivery collapse independently');
+    const pickupSummary = nodes(tree).find((node) => node.type === CompactAddressSummary && node.props.kind === 'pickup');
+    assert.equal(pickupSummary.props.address.specific, 'Draft pickup');
+    assert.equal(pickupSummary.props.address.barangay, 'Balibago');
+    assert.equal(pickupSummary.props.address.province, 'Laguna');
+    pickupSummary.props.onEdit();
+    tree = render();
+    assert.deepEqual(nodes(tree).find((node) => node.props.kind === 'pickup' && node.type === noop).props.selection, selectedAddress,
+      'Edit restores the selected geographic values');
+    typeInto(tree, 'Enter pickup address or location', '');
+    tree = render();
+    button(tree, 'Save Pickup Address').props.onClick();
+    tree = render();
+    assert.equal(nodes(tree).filter((node) => node.type === CompactAddressSummary && node.props.kind === 'pickup').length, 0,
+      'invalid edited address cannot be saved');
+    button(tree, 'Cancel Editing').props.onClick();
+    tree = render();
+    assert.equal(nodes(tree).find((node) => node.type === CompactAddressSummary && node.props.kind === 'pickup').props.address.specific,
+      'Draft pickup', 'Cancel Editing restores the last confirmed address');
+    nodes(tree).find((node) => node.type === CompactAddressSummary && node.props.kind === 'pickup').props.onEdit();
+    tree = render();
+    typeInto(tree, 'Enter pickup address or location', 'Revised pickup');
+    tree = render();
+    assert.equal(nodes(tree).filter((node) => node.type === CompactAddressSummary && node.props.kind === 'pickup').length, 0,
+      'unsaved revisions stay expanded');
+    button(tree, 'Next').props.onClick();
+    tree = render();
+    assert.equal(field(tree, 'dispatch-pickup-time'), undefined, 'an edited but unconfirmed address cannot advance');
+    button(tree, 'Save Pickup Address').props.onClick();
+    tree = render();
+    assert.equal(nodes(tree).find((node) => node.type === CompactAddressSummary && node.props.kind === 'pickup').props.address.specific,
+      'Revised pickup');
+    button(tree, 'Save Delivery Address').props.onClick();
+    tree = render();
+    assert.equal(nodes(tree).filter((node) => node.type === CompactAddressSummary).length, 2);
+    button(tree, 'Next').props.onClick();
+    tree = render();
     assert.ok(field(tree, 'dispatch-pickup-time'), 'Step 2 opened with no premature required error');
+    button(tree, 'Back').props.onClick();
+    tree = render();
+    assert.equal(nodes(tree).filter((node) => node.type === CompactAddressSummary).length, 2,
+      'Back from Step 2 preserves both compact addresses');
+    button(tree, 'Next').props.onClick();
+    tree = render();
     assert.equal(field(tree, 'dispatch-pickup-time').props.hasError, false);
     assert.equal(field(tree, 'dispatch-pickup-time').props.isolateWheel, true);
     assert.equal(field(tree, 'dispatch-sta-time').props.isolateWheel, true);
