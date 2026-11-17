@@ -17,7 +17,7 @@ export function filterDispatchResources(options: ResourceOption[], query: string
 
 export default function DispatchResourceSelect({ label, value, onChange, options, placeholder, searchPlaceholder,
   emptyLabel, noResultsLabel, disabled = false, hasError, compactSearch = false }: {
-  label: 'Driver Name' | 'Truck'; value: string; onChange: (id: string) => void;
+  label: string; value: string; onChange: (id: string) => void;
   options: ResourceOption[]; placeholder: string; searchPlaceholder: string;
   emptyLabel: string; noResultsLabel: string; disabled?: boolean; hasError?: boolean; compactSearch?: boolean;
 }) {

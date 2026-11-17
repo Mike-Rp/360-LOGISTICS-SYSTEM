@@ -2555,6 +2555,17 @@ negative test (impersonating a real CSR with a valid session, wrapped in its
 own rolled-back transaction) confirmed both a direct insert and a direct
 `state = 'completed'` update are now rejected with `not_authorized`.
 
+**2026-11-17 — Continuing Dispatch follow-up (Pending; no backend change made):**
+The current `dispatch_assignment(p_fields jsonb)` accepts only the normal route,
+schedule, driver, and truck fields. It checks resource availability and creates
+a new ASN, but cannot receive or verify a previous Completed assignment ID,
+its six approved documents, or an exact same-driver/same-truck continuation.
+It also cannot reject a stale or reused continuation source. The frontend may
+show a locked-pair review, but must not submit Continuing Dispatch until an
+authorized server operation enforces those rules transactionally. Normal
+Dispatch and the implemented REQ-011 behavior remain unchanged. A server-side
+source relationship and location/proximity policy require a separate decision.
+
 ---
 
 ## [REQ-012] REQ — PER-ACCOUNT PROFILE PERSISTENCE

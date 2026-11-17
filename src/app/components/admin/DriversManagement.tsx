@@ -35,6 +35,7 @@ import { PaginationFooter, usePagination, useStablePageHeight } from './Paginati
 import { sortNewestFirst, markLocalRecordAdded } from '../../lib/recordOrdering';
 import { advanceDispatchHighlight, dispatchHighlightPage, type DispatchHighlight } from '../../lib/dispatchHighlight';
 import { hasUnsavedDispatchDetails } from '../../lib/dispatchDraft';
+import { continuationCandidate, latestRecordedPhotoLocation } from '../../lib/continuingDispatch';
 import { CompactAddressSummary, PhilippineAddressFields, usePsgcArea } from './PhilippineAddressFields';
 import DispatchResourceSelect from './DispatchResourceSelect';
 import { EMPTY_GEO_SELECTION, confirmGeoAddress, formatGeoArea, geoSelectionErrors, resolveGeoSelection,
@@ -1869,6 +1870,9 @@ export default function DriversManagement({
 
   /* ── Assign Task wizard ── */
   const [taskStep,        setTaskStep]        = useState<1 | 2>(1);
+  const [dispatchMode, setDispatchMode] = useState<'new' | 'continuing'>('new');
+  const [previousAssignmentId, setPreviousAssignmentId] = useState('');
+  const [choosingPrevious, setChoosingPrevious] = useState(true);
   const [taskDriverId,    setTaskDriverId]    = useState('');
   const [taskTruckId,     setTaskTruckId]     = useState('');
   const [pickupGeo, setPickupGeo] = useState<GeoSelection>(EMPTY_GEO_SELECTION);
@@ -2051,6 +2055,12 @@ export default function DriversManagement({
   /* Not dispatchable: on another delivery, marked Unavailable (sick, leave…), or a truck Under maintenance */
   const availableDrivers  = drivers.filter((d) => !assignedDriverIds.has(d.id) && !d.unavailable);
   const availableTrucks   = trucks.filter((t)  => t.status === 'Available' && !t.unavailable);
+  const continuationSnapshot = { completed, active: assignments, cancelled, drivers, trucks };
+  const eligiblePrevious = completed.filter((item) => continuationCandidate(item, continuationSnapshot));
+  const previousAssignment = eligiblePrevious.find((item) => item.id === previousAssignmentId);
+  const lockedDriver = previousAssignment && drivers.find((item) => item.id === previousAssignment.driverId);
+  const lockedTruck = previousAssignment && trucks.find((item) => item.id === previousAssignment.truckId);
+  const recordedLocation = previousAssignment ? latestRecordedPhotoLocation(previousAssignment) : null;
   const driverAvailable = availableDrivers.some((d) => d.id === taskDriverId);
   const truckAvailable = availableTrucks.some((t) => t.id === taskTruckId);
   const resourcesMissing = availableDrivers.length === 0 || availableTrucks.length === 0;
@@ -2081,6 +2091,7 @@ export default function DriversManagement({
   const resetAssignTask = () => {
     addressEditFocusRef.current = null;
     setConfirmDiscardDispatch(false);
+    setDispatchMode('new'); setPreviousAssignmentId(''); setChoosingPrevious(true);
     setShowAssignTask(false); setTaskStep(1); setTaskDriverId(''); setTaskTruckId('');
     setPickupGeo(EMPTY_GEO_SELECTION); setDeliveryGeo(EMPTY_GEO_SELECTION); setTaskTo('');
     setPickupCityPath('province'); setDeliveryCityPath('province');
@@ -2111,6 +2122,10 @@ export default function DriversManagement({
   /* ── Step 1: Assignment info ── */
   const validateStep1 = () => {
     const e: Record<string, string> = {};
+    if (dispatchMode === 'continuing' && (!previousAssignment ||
+        taskDriverId !== previousAssignment.driverId || taskTruckId !== previousAssignment.truckId)) {
+      e.previous = 'Select an eligible completed assignment to lock its driver and truck.';
+    }
     if (!driverAvailable || availabilityLoading || availabilityError) e.driver = 'Select an available driver.';
     if (!truckAvailable || availabilityLoading || availabilityError) e.truck = 'Select an available truck.';
     if (!pickupConfirmed || !pickupAddressCompact) {
@@ -2132,6 +2147,10 @@ export default function DriversManagement({
 
   const handleAssignTask = async () => {
     if (isViewOnly || taskSavingRef.current) return;
+    if (dispatchMode === 'continuing') {
+      setTaskErrors((previous) => ({ ...previous, submit: 'Continuing Dispatch needs server verification before it can create an assignment.' }));
+      return;
+    }
     /* Same rules as the live check, re-run on submit (typed dates skip the calendar's limits) */
     const e = scheduleErrors(taskSchedule(), { philippineTime: true });
 
@@ -2865,14 +2884,55 @@ export default function DriversManagement({
           {/* ══════════ STEP 1 — Assignment ══════════ */}
           {taskStep === 1 && (
             <div>
+              <div role="group" aria-label="Dispatch mode" className="mb-5 grid grid-cols-2 gap-2 rounded-lg bg-slate-100 p-1">
+                {(['new', 'continuing'] as const).map((mode) => <button key={mode} type="button"
+                  aria-pressed={dispatchMode === mode}
+                  onClick={() => { if (dispatchMode === mode) return; setDispatchMode(mode); setPreviousAssignmentId(''); setChoosingPrevious(true); setTaskDriverId(''); setTaskTruckId(''); setTaskErrors({}); }}
+                  className={`min-h-10 rounded-md px-2 text-xs font-semibold sm:text-sm ${dispatchMode === mode ? 'bg-white text-green-700 shadow-sm' : 'text-slate-600 hover:bg-white/70'}`}>
+                  {mode === 'new' ? 'New Dispatch' : 'Continuing Dispatch'}
+                </button>)}
+              </div>
               <SectionHeader>Assignment</SectionHeader>
 
               <div className="space-y-4">
+                {dispatchMode === 'continuing' && <>
+                  <div>
+                    <FieldLabel required>Previous Completed Assignment</FieldLabel>
+                    {choosingPrevious || !previousAssignment ? <DispatchResourceSelect
+                      label="Previous Completed Assignment" value={previousAssignment?.id ?? ''}
+                      onChange={(id) => {
+                        const source = eligiblePrevious.find((item) => item.id === id);
+                        setPreviousAssignmentId(source?.id ?? '');
+                        setTaskDriverId(source?.driverId ?? ''); setTaskTruckId(source?.truckId ?? '');
+                        setChoosingPrevious(!source); setTaskErrors((previous) => ({ ...previous, previous: '', driver: '', truck: '' }));
+                      }}
+                      options={eligiblePrevious.map((item) => ({ id: item.id, label: `${item.id} · ${item.driverName} · ${item.truckPlate} · ${item.destinationArea || getDeliveryLocation(item)}` }))}
+                      placeholder="Select completed ASN…" searchPlaceholder="Search ASN, driver or truck..."
+                      emptyLabel="No eligible completed assignments" noResultsLabel="No matching completed assignments"
+                      disabled={availabilityLoading || availabilityError} hasError={!!taskErrors.previous} />
+                      : <button type="button" onClick={() => setChoosingPrevious(true)}
+                        className="min-h-10 rounded-lg border border-border px-3 text-sm font-medium text-green-700 hover:bg-slate-50">Change Previous Assignment</button>}
+                    {taskErrors.previous && <p role="alert" className="mt-1 text-xs text-red-500">{taskErrors.previous}</p>}
+                  </div>
+                  {previousAssignment && <div className="space-y-1 rounded-xl border border-green-200 bg-green-50/50 p-3 text-xs text-slate-700">
+                    <p className="font-semibold text-slate-900">Previous Assignment: {previousAssignment.id} · Completed</p>
+                    <p>Driver: {previousAssignment.driverName} · Truck: {previousAssignment.truckPlate}</p>
+                    <p>Previous destination: {previousAssignment.destinationArea || getDeliveryLocation(previousAssignment)}</p>
+                    <p>{recordedLocation ? `Last recorded photo location: ${recordedLocation.location} · ${new Date(recordedLocation.observedAt).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' })} PHT` : 'Last recorded photo location unavailable.'}</p>
+                    <p className="text-slate-500">Photo location is historical and may be outdated; current position and truck possession are unverified.</p>
+                  </div>}
+                  <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                    Continuing Dispatch can be reviewed here, but submission requires server-side verification of the completed source and locked pair.
+                  </div>
+                </>}
                 {/* Driver + Truck */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <FieldLabel required>Driver Name</FieldLabel>
-                    <DispatchResourceSelect label="Driver Name" searchPlaceholder="Search driver..." noResultsLabel="No matching drivers"
+                    <FieldLabel required>{dispatchMode === 'continuing' ? 'Driver — Locked' : 'Driver Name'}</FieldLabel>
+                    {dispatchMode === 'continuing' ? <div aria-label={`Locked driver: ${lockedDriver?.name ?? 'Select a completed assignment'}`}
+                      className="flex min-h-11 items-center justify-between rounded-lg border border-gray-200 bg-slate-50 px-3 text-sm text-slate-700">
+                      <span className="min-w-0 truncate">{lockedDriver?.name ?? 'Select a completed assignment'}</span><Lock className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    </div> : <DispatchResourceSelect label="Driver Name" searchPlaceholder="Search driver..." noResultsLabel="No matching drivers"
                       value={driverAvailable ? taskDriverId : ''}
                       onChange={(v) => { setTaskDriverId(v); setTaskErrors((p) => ({ ...p, driver: '' })); }}
                       options={availableDrivers.map((d) => ({ id: d.id, label: d.name }))}
@@ -2880,12 +2940,15 @@ export default function DriversManagement({
                       emptyLabel={availabilityLoading ? 'Loading availability…' : availabilityError ? 'Unable to load availability' : 'No available drivers'}
                       disabled={availabilityLoading || availabilityError}
                       hasError={!!taskErrors.driver}
-                    />
+                    />}
                     {taskErrors.driver && <p className="text-xs text-red-500 mt-1">{taskErrors.driver}</p>}
                   </div>
                   <div>
-                    <FieldLabel required>Truck</FieldLabel>
-                    <DispatchResourceSelect label="Truck" searchPlaceholder="Search plate number..." noResultsLabel="No matching trucks" compactSearch
+                    <FieldLabel required>{dispatchMode === 'continuing' ? 'Truck — Locked' : 'Truck'}</FieldLabel>
+                    {dispatchMode === 'continuing' ? <div aria-label={`Locked truck: ${lockedTruck?.plateNumber ?? 'Select a completed assignment'}`}
+                      className="flex min-h-11 items-center justify-between rounded-lg border border-gray-200 bg-slate-50 px-3 text-sm text-slate-700">
+                      <span className="min-w-0 truncate">{lockedTruck?.plateNumber ?? 'Select a completed assignment'}</span><Lock className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    </div> : <DispatchResourceSelect label="Truck" searchPlaceholder="Search plate number..." noResultsLabel="No matching trucks" compactSearch
                       value={truckAvailable ? taskTruckId : ''}
                       onChange={(v) => { setTaskTruckId(v); setTaskErrors((p) => ({ ...p, truck: '' })); }}
                       options={availableTrucks.map((t) => ({ id: t.id, label: t.plateNumber }))}
@@ -2893,11 +2956,11 @@ export default function DriversManagement({
                       emptyLabel={availabilityLoading ? 'Loading availability…' : availabilityError ? 'Unable to load availability' : 'No available trucks'}
                       disabled={availabilityLoading || availabilityError}
                       hasError={!!taskErrors.truck}
-                    />
+                    />}
                     {taskErrors.truck && <p className="text-xs text-red-500 mt-1">{taskErrors.truck}</p>}
                   </div>
                 </div>
-                {resourceNotice && <div role="status" className="flex items-start gap-2 rounded-lg border border-border bg-slate-50 px-3 py-2.5 text-sm text-slate-600">
+                {dispatchMode === 'new' && resourceNotice && <div role="status" className="flex items-start gap-2 rounded-lg border border-border bg-slate-50 px-3 py-2.5 text-sm text-slate-600">
                   <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
                   <div className="min-w-0">
                     <p className="font-semibold text-foreground">{resourceNotice.title}</p>
@@ -2991,7 +3054,7 @@ export default function DriversManagement({
 
               {/* Buttons */}
               <div className="flex flex-col-reverse sm:flex-row gap-3 pt-6 sm:pt-7">
-                <button onClick={handleNextStep} disabled={availabilityLoading || availabilityError || resourcesMissing || !driverAvailable || !truckAvailable}
+                <button onClick={handleNextStep} disabled={availabilityLoading || availabilityError || (dispatchMode === 'new' && resourcesMissing) || !driverAvailable || !truckAvailable || (dispatchMode === 'continuing' && !previousAssignment)}
                   className="flex-1 px-5 py-2.5 bg-[#1DBF73] text-white rounded-[10px] hover:bg-[#19a865] transition-all shadow-sm hover:shadow active:scale-[0.99] text-sm font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[#1DBF73] disabled:hover:shadow-none">
                   Next <ArrowRight className="w-4 h-4" />
                 </button>
@@ -3003,6 +3066,19 @@ export default function DriversManagement({
           {taskStep === 2 && (
             <div>
               <SectionHeader>Schedule</SectionHeader>
+
+              {dispatchMode === 'continuing' && <div className="mb-5 space-y-1 rounded-xl border border-green-200 bg-green-50/50 p-3 text-xs text-slate-700">
+                <p className="font-semibold text-slate-900">Continuing Dispatch review · {previousAssignment?.id ?? 'Source unavailable'}</p>
+                <p>Original pair: {lockedDriver?.name ?? 'Unavailable'} · {lockedTruck?.plateNumber ?? 'Unavailable'}</p>
+                <p>Previous destination: {previousAssignment?.destinationArea || (previousAssignment ? getDeliveryLocation(previousAssignment) : 'Unavailable')}</p>
+                <p>{recordedLocation ? `Last recorded photo location: ${recordedLocation.location} (${new Date(recordedLocation.observedAt).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' })} PHT)` : 'Last recorded photo location unavailable.'}</p>
+                <p>New pickup: {pickupConfirmed?.fullLocation ?? 'Not saved'}</p>
+                <p>New delivery: {deliveryConfirmed?.fullLocation ?? 'Not saved'}</p>
+                <p>Client: {taskCompany.trim() || 'Not entered'}</p>
+                <p>New schedule: {taskPickedUpDate || '—'} {taskPickupTime || '—'} → {taskDate || '—'} {taskScheduledArrivalTime || '—'} (PHT)</p>
+                <p className="pt-1 font-medium text-slate-900">A new assignment will be created using the same driver and truck after server support is added.</p>
+                <p className="text-amber-800">Submission is unavailable: the server does not verify the previous completed assignment or its driver–truck pair.</p>
+              </div>}
 
               <div className="space-y-4">
                 {/* Row 1 — pickup. The two date pickers still bound each other live via
@@ -3085,7 +3161,7 @@ export default function DriversManagement({
                   <ArrowLeft className="w-4 h-4" /> Back
                 </button>
                 {/* Blocked while a date is invalid — the error is shown under the field */}
-                <button onClick={handleAssignTask} disabled={taskSaving || !!(taskErrors.pickedUpDate || taskErrors.date)}
+                <button onClick={handleAssignTask} disabled={dispatchMode === 'continuing' || taskSaving || !!(taskErrors.pickedUpDate || taskErrors.date)}
                   className="flex-1 px-5 py-2.5 bg-[#1DBF73] text-white rounded-[10px] hover:bg-[#19a865] transition-all shadow-sm hover:shadow active:scale-[0.99] text-sm font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
                   <CheckCircle2 className="w-4 h-4" /> {taskSaving ? 'Saving…' : 'Dispatch Truck'}
                 </button>
