@@ -63,6 +63,12 @@ test('province selection is required before province-based cities; independent c
   assert.match(component, /cityPath=\{deliveryCityPath\}/);
 });
 
+test('independent-city and reverse buttons span each address section without changing visibility', () => {
+  assert.match(picker, /independentOptions\.length > 0 && cityPath !== 'independent'[\s\S]*?className="flex min-h-11 w-full[^\"]*"[\s\S]*?Choose independent city/);
+  assert.match(picker, /cityPath !== 'province'[\s\S]*?className="flex min-h-11 w-full[^\"]*"[\s\S]*?Choose province instead/);
+  assert.match(picker, /region && provinceOptions\.length > 0 && \(independentOptions\.length > 0 \|\| regionCityOptions\.length > 0\)/);
+});
+
 test('addresses collapse only after a valid local save and summaries preserve confirmed values', () => {
   assert.match(component, /\[pickupAddressCompact, setPickupAddressCompact\]/);
   assert.match(component, /\[deliveryAddressCompact, setDeliveryAddressCompact\]/);

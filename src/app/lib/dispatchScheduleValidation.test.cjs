@@ -126,7 +126,11 @@ test('the actual Dispatch Step 2 field displays and updates the screenshot picku
   const geo = loadTs(join(__dirname, 'philippineAddress.ts'), {
     '../data/psgcIndex.json': require('../data/psgcIndex.json'),
   });
-  const pickupArea = JSON.parse(readFileSync(join(__dirname, '../../../public/psgc/areas/0403400000.json'), 'utf8'));
+  const areaFor = (selection) => {
+    const code = geo.selectedGeoAreaCode(selection);
+    if (!code) return null;
+    return JSON.parse(readFileSync(join(__dirname, `../../../public/psgc/areas/${code}.json`), 'utf8'));
+  };
   const fallback = new Proxy({}, { get: (_, key) => key === 'default' ? noop : noop });
   const imports = new Proxy({
     react: hooks,
@@ -135,10 +139,7 @@ test('the actual Dispatch Step 2 field displays and updates the screenshot picku
     './PhilippineAddressFields': {
       PhilippineAddressFields: noop,
       CompactAddressSummary,
-      usePsgcArea: (selection) => ({
-        area: selection.provinceCode === pickupArea.code ? pickupArea : null,
-        loading: false, error: '', retry: noop,
-      }),
+      usePsgcArea: (selection) => ({ area: areaFor(selection), loading: false, error: '', retry: noop }),
     },
     '../../lib/philippineAddress': geo,
     '../../lib/philippineTime': manila,
@@ -159,8 +160,10 @@ test('the actual Dispatch Step 2 field displays and updates the screenshot picku
   const render = () => {
     cursor = 0;
     return mod.exports.default({
-      drivers: [{ id: 'driver-1', name: 'Demo Driver', status: 'Active' }],
-      trucks: [{ id: 'truck-1', plateNumber: 'ABC 1234', status: 'Available' }],
+      drivers: [{ id: 'driver-1', name: 'Demo Driver', status: 'Active' },
+        { id: 'driver-2', name: 'Unavailable Driver', status: 'Active', unavailable: true }],
+      trucks: [{ id: 'truck-1', plateNumber: 'ABC 1234', status: 'Available' },
+        { id: 'truck-2', plateNumber: 'XYZ 9999', status: 'Under maintenance' }],
       assignments: [], completed: [], cancelled: [], notifications: [], activityLog: [],
       search: '', onSearchChange: noop, onServerChange: async (action) => action(), onActionFeedback: noop,
     });
@@ -198,6 +201,8 @@ test('the actual Dispatch Step 2 field displays and updates the screenshot picku
     assert.equal(nodes(tree).find((node) => node.props.open === true && node.type !== 'button') !== undefined, true);
     const driver = nodes(tree).find((node) => node.props.placeholder === 'Select a driver…');
     const truck = nodes(tree).find((node) => node.props.placeholder === 'Select a truck…');
+    assert.deepEqual(driver.props.options.map((option) => option.id), ['driver-1']);
+    assert.deepEqual(truck.props.options.map((option) => option.id), ['truck-1']);
     driver.props.onChange('driver-1');
     truck.props.onChange('truck-1');
     typeInto(tree, 'Enter pickup address or location', 'Demo pickup');
@@ -207,8 +212,8 @@ test('the actual Dispatch Step 2 field displays and updates the screenshot picku
     button(tree, 'Next').props.onClick();
     tree = render();
     assert.equal(field(tree, 'dispatch-pickup-time'), undefined, 'missing geographic selection blocks Next');
-    button(tree, 'Save Pickup Address').props.onClick();
-    tree = render();
+    assert.equal(button(tree, 'Save Pickup Address'), undefined, 'missing region hides Pickup save');
+    assert.equal(button(tree, 'Save Delivery Address'), undefined, 'missing region hides Delivery save');
     assert.equal(nodes(tree).filter((node) => node.type === CompactAddressSummary).length, 0,
       'incomplete addresses cannot be confirmed');
     const pickupPicker = nodes(tree).find((node) => node.props.kind === 'pickup');
@@ -217,8 +222,45 @@ test('the actual Dispatch Step 2 field displays and updates the screenshot picku
     assert.ok(deliveryPicker);
     const selectedAddress = { regionCode: '0400000000', provinceCode: '0403400000',
       cityCode: '0403428000', barangayCode: '0403428002' };
-    pickupPicker.props.onChange(selectedAddress);
-    deliveryPicker.props.onChange(selectedAddress);
+    const pickupSelection = (selection) => nodes(tree).find((node) => node.props.kind === 'pickup').props.onChange(selection);
+    pickupSelection({ regionCode: selectedAddress.regionCode, provinceCode: '', cityCode: '', barangayCode: '' });
+    tree = render();
+    assert.equal(button(tree, 'Save Pickup Address'), undefined, 'province required after region');
+    pickupSelection({ ...selectedAddress, cityCode: '', barangayCode: '' });
+    tree = render();
+    assert.equal(button(tree, 'Save Pickup Address'), undefined, 'city required after province');
+    pickupSelection({ ...selectedAddress, barangayCode: '' });
+    tree = render();
+    assert.equal(button(tree, 'Save Pickup Address'), undefined, 'barangay required after city');
+    pickupSelection(selectedAddress);
+    tree = render();
+    assert.ok(button(tree, 'Save Pickup Address'), 'complete Pickup shows Save');
+    assert.equal(button(tree, 'Save Delivery Address'), undefined, 'Delivery is independent');
+    typeInto(tree, 'Enter pickup address or location', '   ');
+    tree = render();
+    assert.equal(button(tree, 'Save Pickup Address'), undefined, 'whitespace-only location hides Save');
+    typeInto(tree, 'Enter pickup address or location', 'Demo pickup');
+    tree = render();
+    assert.ok(button(tree, 'Save Pickup Address'), 'correcting location immediately restores Save');
+    nodes(tree).find((node) => node.props.kind === 'delivery').props.onChange(selectedAddress);
+    tree = render();
+    assert.ok(button(tree, 'Save Delivery Address'), 'complete Delivery shows Save independently');
+    const ncr = { regionCode: '1300000000', provinceCode: '', cityCode: '1381300000', barangayCode: '1381300001' };
+    nodes(tree).find((node) => node.props.kind === 'delivery').props.onChange(ncr);
+    tree = render();
+    assert.ok(button(tree, 'Save Delivery Address'), 'NCR does not require a province');
+    const baguio = { regionCode: '1400000000', provinceCode: '', cityCode: '1430300000', barangayCode: '1430300125' };
+    nodes(tree).find((node) => node.props.kind === 'delivery').props.onChange({
+      regionCode: baguio.regionCode, provinceCode: '', cityCode: '', barangayCode: '',
+    });
+    tree = render();
+    nodes(tree).find((node) => node.props.kind === 'delivery').props.onCityPathChange('independent');
+    tree = render();
+    nodes(tree).find((node) => node.props.kind === 'delivery').props.onChange(baguio);
+    tree = render();
+    assert.ok(button(tree, 'Save Delivery Address'), 'independent city path does not require a province');
+    nodes(tree).find((node) => node.props.kind === 'delivery').props.onCityPathChange('province');
+    nodes(tree).find((node) => node.props.kind === 'delivery').props.onChange(selectedAddress);
     tree = render();
     assert.equal(nodes(tree).filter((node) => node.type === CompactAddressSummary).length, 0,
       'completed drafts do not collapse automatically');
@@ -245,8 +287,7 @@ test('the actual Dispatch Step 2 field displays and updates the screenshot picku
       'Edit restores the selected geographic values');
     typeInto(tree, 'Enter pickup address or location', '');
     tree = render();
-    button(tree, 'Save Pickup Address').props.onClick();
-    tree = render();
+    assert.equal(button(tree, 'Save Pickup Address'), undefined, 'clearing an edited location hides Save');
     assert.equal(nodes(tree).filter((node) => node.type === CompactAddressSummary && node.props.kind === 'pickup').length, 0,
       'invalid edited address cannot be saved');
     button(tree, 'Cancel Editing').props.onClick();
@@ -276,6 +317,8 @@ test('the actual Dispatch Step 2 field displays and updates the screenshot picku
     tree = render();
     assert.equal(nodes(tree).filter((node) => node.type === CompactAddressSummary).length, 2,
       'Back from Step 2 preserves both compact addresses');
+    assert.equal(nodes(tree).find((node) => node.props.placeholder === 'Select a driver…').props.value, 'driver-1');
+    assert.equal(nodes(tree).find((node) => node.props.placeholder === 'Select a truck…').props.value, 'truck-1');
     button(tree, 'Next').props.onClick();
     tree = render();
     assert.equal(field(tree, 'dispatch-pickup-time').props.hasError, false);

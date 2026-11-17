@@ -129,20 +129,20 @@ export function PhilippineAddressFields({ kind, selection, onChange, cityPath, o
       error={fieldErrors[`${prefix}Province`]} required
       onChange={update('provinceCode')} />}
     {region && provinceOptions.length > 0 && (independentOptions.length > 0 || regionCityOptions.length > 0) &&
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-col gap-2">
         {independentOptions.length > 0 && cityPath !== 'independent' && <button type="button"
           onClick={() => { onChange(changeGeoSelection(selection, 'provinceCode', '')); onCityPathChange('independent'); }}
-          className="min-h-11 rounded-lg border border-[#1DBF73]/50 bg-white px-3 text-xs font-semibold text-[#0d8f5d] hover:bg-green-50 active:bg-green-100 focus-visible:outline-2 focus-visible:outline-[#0d8f5d]">
+          className="flex min-h-11 w-full items-center justify-center rounded-lg border border-[#1DBF73]/50 bg-white px-3 text-center text-xs font-semibold text-[#0d8f5d] hover:bg-green-50 active:bg-green-100 focus-visible:outline-2 focus-visible:outline-[#0d8f5d]">
           Choose independent city
         </button>}
         {regionCityOptions.length > 0 && cityPath !== 'regionCity' && <button type="button"
           onClick={() => { onChange(changeGeoSelection(selection, 'provinceCode', '')); onCityPathChange('regionCity'); }}
-          className="min-h-11 rounded-lg border border-border bg-white px-3 text-xs font-semibold text-foreground hover:bg-accent active:bg-muted focus-visible:outline-2 focus-visible:outline-[#0d8f5d]">
+          className="flex min-h-11 w-full items-center justify-center rounded-lg border border-border bg-white px-3 text-center text-xs font-semibold text-foreground hover:bg-accent active:bg-muted focus-visible:outline-2 focus-visible:outline-[#0d8f5d]">
           Choose city without province
         </button>}
         {cityPath !== 'province' && <button type="button"
           onClick={() => { onChange(changeGeoSelection(selection, 'provinceCode', '')); onCityPathChange('province'); }}
-          className="min-h-11 rounded-lg border border-border bg-white px-3 text-xs font-semibold text-foreground hover:bg-accent active:bg-muted focus-visible:outline-2 focus-visible:outline-[#0d8f5d]">
+          className="flex min-h-11 w-full items-center justify-center rounded-lg border border-border bg-white px-3 text-center text-xs font-semibold text-foreground hover:bg-accent active:bg-muted focus-visible:outline-2 focus-visible:outline-[#0d8f5d]">
           Choose province instead
         </button>}
       </div>}

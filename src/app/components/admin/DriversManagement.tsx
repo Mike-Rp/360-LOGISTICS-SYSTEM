@@ -36,6 +36,7 @@ import { sortNewestFirst, markLocalRecordAdded } from '../../lib/recordOrdering'
 import { advanceDispatchHighlight, dispatchHighlightPage, type DispatchHighlight } from '../../lib/dispatchHighlight';
 import { hasUnsavedDispatchDetails } from '../../lib/dispatchDraft';
 import { CompactAddressSummary, PhilippineAddressFields, usePsgcArea } from './PhilippineAddressFields';
+import DispatchResourceSelect from './DispatchResourceSelect';
 import { EMPTY_GEO_SELECTION, confirmGeoAddress, formatGeoArea, geoSelectionErrors, resolveGeoSelection,
   type GeoCityPath, type GeoSelection, type SavedGeoAddress } from '../../lib/philippineAddress';
 import { ADMIN_NAVIGATION_EVENT, pushAdminNavigation } from '../../lib/adminNavigation';
@@ -1934,6 +1935,12 @@ export default function DriversManagement({
       kind === 'pickup' ? 'Enter a pickup location.' : 'Enter a delivery location.';
     return errors;
   };
+  const canSaveAddress = (kind: 'pickup' | 'delivery') => {
+    if (Object.keys(addressDraftErrors(kind)).length) return false;
+    return kind === 'pickup'
+      ? !!confirmGeoAddress(taskPickupLocation, pickupGeo, pickupPsgc.area, pickupCityPath)
+      : !!confirmGeoAddress(taskTo, deliveryGeo, deliveryPsgc.area, deliveryCityPath);
+  };
   const saveAddress = (kind: 'pickup' | 'delivery') => {
     const selection = kind === 'pickup' ? pickupGeo : deliveryGeo;
     const psgc = kind === 'pickup' ? pickupPsgc : deliveryPsgc;
@@ -2865,7 +2872,7 @@ export default function DriversManagement({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <FieldLabel required>Driver Name</FieldLabel>
-                    <ResourceSelect
+                    <DispatchResourceSelect label="Driver Name" searchPlaceholder="Search driver..." noResultsLabel="No matching drivers"
                       value={driverAvailable ? taskDriverId : ''}
                       onChange={(v) => { setTaskDriverId(v); setTaskErrors((p) => ({ ...p, driver: '' })); }}
                       options={availableDrivers.map((d) => ({ id: d.id, label: d.name }))}
@@ -2878,7 +2885,7 @@ export default function DriversManagement({
                   </div>
                   <div>
                     <FieldLabel required>Truck</FieldLabel>
-                    <ResourceSelect
+                    <DispatchResourceSelect label="Truck" searchPlaceholder="Search plate number..." noResultsLabel="No matching trucks" compactSearch
                       value={truckAvailable ? taskTruckId : ''}
                       onChange={(v) => { setTaskTruckId(v); setTaskErrors((p) => ({ ...p, truck: '' })); }}
                       options={availableTrucks.map((t) => ({ id: t.id, label: t.plateNumber }))}
@@ -2930,10 +2937,10 @@ export default function DriversManagement({
                       <div className="flex flex-col-reverse gap-2 sm:flex-row">
                         {pickupConfirmed && <button type="button" onClick={() => cancelAddressEditing('pickup')}
                           className="min-h-11 rounded-[10px] border border-border px-3 text-sm font-medium text-foreground hover:bg-accent focus-visible:outline-2 focus-visible:outline-[#1DBF73]">Cancel Editing</button>}
-                        <button type="button" onClick={() => saveAddress('pickup')}
+                        {canSaveAddress('pickup') && <button type="button" onClick={() => saveAddress('pickup')}
                           className="min-h-11 flex-1 rounded-[10px] bg-[#1DBF73] px-4 text-sm font-semibold text-white hover:bg-[#19a865] active:bg-[#168f58] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1DBF73]">
                           Save Pickup Address
-                        </button>
+                        </button>}
                       </div>
                       {taskErrors.pickupConfirm && <p role="alert" className="text-xs text-red-500">{taskErrors.pickupConfirm}</p>}
                     </>}
@@ -2957,10 +2964,10 @@ export default function DriversManagement({
                       <div className="flex flex-col-reverse gap-2 sm:flex-row">
                         {deliveryConfirmed && <button type="button" onClick={() => cancelAddressEditing('delivery')}
                           className="min-h-11 rounded-[10px] border border-border px-3 text-sm font-medium text-foreground hover:bg-accent focus-visible:outline-2 focus-visible:outline-[#1DBF73]">Cancel Editing</button>}
-                        <button type="button" onClick={() => saveAddress('delivery')}
+                        {canSaveAddress('delivery') && <button type="button" onClick={() => saveAddress('delivery')}
                           className="min-h-11 flex-1 rounded-[10px] bg-[#1DBF73] px-4 text-sm font-semibold text-white hover:bg-[#19a865] active:bg-[#168f58] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1DBF73]">
                           Save Delivery Address
-                        </button>
+                        </button>}
                       </div>
                       {taskErrors.deliveryConfirm && <p role="alert" className="text-xs text-red-500">{taskErrors.deliveryConfirm}</p>}
                     </>}
