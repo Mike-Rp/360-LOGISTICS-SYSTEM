@@ -35,10 +35,10 @@ import { PaginationFooter, usePagination, useStablePageHeight } from './Paginati
 import { sortNewestFirst, markLocalRecordAdded } from '../../lib/recordOrdering';
 import { advanceDispatchHighlight, dispatchHighlightPage, type DispatchHighlight } from '../../lib/dispatchHighlight';
 import { hasUnsavedDispatchDetails } from '../../lib/dispatchDraft';
-import { continuationCandidate, latestRecordedPhotoLocation } from '../../lib/continuingDispatch';
+import { canSuggestPickupRegion, continuationCandidate, latestRecordedPhotoLocation, suggestedPickupRegionCode } from '../../lib/continuingDispatch';
 import { CompactAddressSummary, PhilippineAddressFields, usePsgcArea } from './PhilippineAddressFields';
 import DispatchResourceSelect from './DispatchResourceSelect';
-import { EMPTY_GEO_SELECTION, confirmGeoAddress, formatGeoArea, geoSelectionErrors, resolveGeoSelection,
+import { EMPTY_GEO_SELECTION, PSGC_REGIONS, confirmGeoAddress, formatGeoArea, geoSelectionErrors, resolveGeoSelection,
   type GeoCityPath, type GeoSelection, type SavedGeoAddress } from '../../lib/philippineAddress';
 import { ADMIN_NAVIGATION_EVENT, pushAdminNavigation } from '../../lib/adminNavigation';
 import type { ActionFeedbackToast, ActivityKey } from '../../lib/notificationEvents';
@@ -47,7 +47,8 @@ import { TRUCK_CLASSIFICATIONS, truckFullImageFor, capacityKgOnly } from '../../
 import { destinationAreaEnabled, getAssignmentRoute, getDeliveryLocation } from '../../data/assignmentRoute';
 import {
   verifyOwnPassword, editAssignment, cancelAssignment, notifyAssignmentCancelled, loadAdminData,
-  dispatchAssignment, completeAssignment, resolveAssignmentIssue, approveDocument, rejectDocument, AssignmentActionError,
+  dispatchAssignment, dispatchContinuingAssignment, continuingDispatchAvailable,
+  completeAssignment, resolveAssignmentIssue, approveDocument, rejectDocument, AssignmentActionError,
   type AssignmentActionErrorCode, type AssignmentEdit, type AssignmentLocationEdit,
 } from '../../lib/db';
 
@@ -258,6 +259,14 @@ const actionMessage = (code: AssignmentActionErrorCode): string => ({
   note_required:     'Add a short note for "Other".',
   note_too_long:     'The note is too long (200 characters at most).',
   invalid_return:    'The return time must be in the future.',
+  source_required:   'Select a previous completed assignment.',
+  source_not_found:  'That completed assignment could not be found. Refresh and choose again.',
+  source_not_completed: 'The previous assignment is not officially Completed.',
+  source_documents_not_approved: 'The previous assignment no longer has all six documents approved.',
+  source_pair_missing: 'The previous assignment has no valid driver and truck pair.',
+  source_pair_mismatch: 'The locked driver and truck no longer match the previous assignment.',
+  source_stale: 'This completed assignment has already been followed by another assignment. Choose a newer source.',
+  operational_review_required: 'Confirm the driver, truck, and proposed pickup before dispatching.',
   invalid:          'The server rejected one of the values. Check the form and try again.',
   network:           'Couldn\'t reach the server. Check your connection and try again.',
 }[code]);
@@ -1873,6 +1882,22 @@ export default function DriversManagement({
   const [dispatchMode, setDispatchMode] = useState<'new' | 'continuing'>('new');
   const [previousAssignmentId, setPreviousAssignmentId] = useState('');
   const [choosingPrevious, setChoosingPrevious] = useState(true);
+  const [continuingCapability, setContinuingCapability] = useState<'idle' | 'checking' | 'ready' | 'unavailable'>('idle');
+  const [operationalReviewConfirmed, setOperationalReviewConfirmed] = useState(false);
+  const [currentLocationConfirmed, setCurrentLocationConfirmed] = useState(false);
+  const [tripReviewOpen, setTripReviewOpen] = useState(false);
+  const [locationDetailsOpen, setLocationDetailsOpen] = useState(false);
+  const [pickupRegionAutoSuggested, setPickupRegionAutoSuggested] = useState(false);
+  const [pickupRegionHint, setPickupRegionHint] = useState('');
+  useEffect(() => {
+    if (!showAssignTask || dispatchMode !== 'continuing' || isViewOnly) return;
+    let active = true;
+    setContinuingCapability('checking');
+    continuingDispatchAvailable()
+      .then((available) => { if (active) setContinuingCapability(available ? 'ready' : 'unavailable'); })
+      .catch(() => { if (active) setContinuingCapability('unavailable'); });
+    return () => { active = false; };
+  }, [showAssignTask, dispatchMode, isViewOnly]);
   const [taskDriverId,    setTaskDriverId]    = useState('');
   const [taskTruckId,     setTaskTruckId]     = useState('');
   const [pickupGeo, setPickupGeo] = useState<GeoSelection>(EMPTY_GEO_SELECTION);
@@ -1917,7 +1942,15 @@ export default function DriversManagement({
     if (current.regionCode !== next.regionCode) {
       if (kind === 'pickup') setPickupCityPath('province'); else setDeliveryCityPath('province');
     }
-    if (kind === 'pickup') setPickupGeo(next); else setDeliveryGeo(next);
+    if (kind === 'pickup') {
+      setPickupGeo(next);
+      setCurrentLocationConfirmed(false);
+      setOperationalReviewConfirmed(false);
+      if (current.regionCode !== next.regionCode) {
+        setPickupRegionAutoSuggested(false);
+        setPickupRegionHint('');
+      }
+    } else setDeliveryGeo(next);
     setTaskErrors((previous) => {
       const result = { ...previous };
       for (const key of ['Region', 'Province', 'City', 'Barangay']) delete result[`${prefix}${key}`];
@@ -1971,6 +2004,8 @@ export default function DriversManagement({
     }
     if (kind === 'pickup') { setPickupConfirmed(confirmed); setPickupAddressCompact(true); }
     else { setDeliveryConfirmed(confirmed); setDeliveryAddressCompact(true); }
+    setOperationalReviewConfirmed(false);
+    if (kind === 'pickup') setCurrentLocationConfirmed(false);
   };
   const cancelAddressEditing = (kind: 'pickup' | 'delivery') => {
     const confirmed = kind === 'pickup' ? pickupConfirmed : deliveryConfirmed;
@@ -2061,6 +2096,37 @@ export default function DriversManagement({
   const lockedDriver = previousAssignment && drivers.find((item) => item.id === previousAssignment.driverId);
   const lockedTruck = previousAssignment && trucks.find((item) => item.id === previousAssignment.truckId);
   const recordedLocation = previousAssignment ? latestRecordedPhotoLocation(previousAssignment) : null;
+  const previousRegion = previousAssignment ? suggestedPickupRegionCode(previousAssignment.destinationArea,
+    previousAssignment.deliveryLocation, getDeliveryLocation(previousAssignment)) : null;
+  const photoRegion = recordedLocation ? suggestedPickupRegionCode(recordedLocation.location, null) : null;
+  const locationDisagrees = !!previousRegion && !!photoRegion && previousRegion !== photoRegion;
+  const selectPreviousAssignment = (id: string) => {
+    setLocationDetailsOpen(false);
+    const source = eligiblePrevious.find((item) => item.id === id);
+    setPreviousAssignmentId(source?.id ?? '');
+    setOperationalReviewConfirmed(false);
+    setCurrentLocationConfirmed(false);
+    setTaskDriverId(source?.driverId ?? '');
+    setTaskTruckId(source?.truckId ?? '');
+    setChoosingPrevious(!source);
+    setTaskErrors((previous) => ({ ...previous, previous: '', driver: '', truck: '', locationConfirmation: '' }));
+    if (!source) { setPickupRegionHint(''); setPickupRegionAutoSuggested(false); return; }
+    const regionCode = suggestedPickupRegionCode(source.destinationArea,
+      source.deliveryLocation, getDeliveryLocation(source));
+    const regionName = PSGC_REGIONS.find((region) => region.code === regionCode)?.name;
+    if (canSuggestPickupRegion(pickupGeo, taskPickupLocation, !!pickupConfirmed, pickupRegionAutoSuggested)) {
+      setPickupGeo({ ...EMPTY_GEO_SELECTION, regionCode: regionCode ?? '' });
+      setPickupCityPath('province');
+      setPickupRegionAutoSuggested(!!regionCode);
+      setPickupRegionHint(regionCode ? 'Suggested from the previous delivery destination.'
+        : 'Previous destination could not be matched to a region. Please select the pickup region manually.');
+    } else {
+      setPickupRegionAutoSuggested(false);
+      setPickupRegionHint(regionName
+        ? `Previous destination suggests ${regionName}. Your pickup address was kept; review it for this assignment.`
+        : 'Previous destination could not be matched to a region. Your pickup address was kept for review.');
+    }
+  };
   const driverAvailable = availableDrivers.some((d) => d.id === taskDriverId);
   const truckAvailable = availableTrucks.some((t) => t.id === taskTruckId);
   const resourcesMissing = availableDrivers.length === 0 || availableTrucks.length === 0;
@@ -2092,6 +2158,10 @@ export default function DriversManagement({
     addressEditFocusRef.current = null;
     setConfirmDiscardDispatch(false);
     setDispatchMode('new'); setPreviousAssignmentId(''); setChoosingPrevious(true);
+    setContinuingCapability('idle'); setOperationalReviewConfirmed(false); setCurrentLocationConfirmed(false);
+    setTripReviewOpen(false);
+    setLocationDetailsOpen(false);
+    setPickupRegionAutoSuggested(false); setPickupRegionHint('');
     setShowAssignTask(false); setTaskStep(1); setTaskDriverId(''); setTaskTruckId('');
     setPickupGeo(EMPTY_GEO_SELECTION); setDeliveryGeo(EMPTY_GEO_SELECTION); setTaskTo('');
     setPickupCityPath('province'); setDeliveryCityPath('province');
@@ -2143,14 +2213,10 @@ export default function DriversManagement({
     return Object.keys(e).length === 0;
   };
 
-  const handleNextStep = () => { if (validateStep1()) { setTaskErrors(liveTaskScheduleErrors()); setTaskStep(2); } };
+  const handleNextStep = () => { if (validateStep1()) { setTaskErrors(liveTaskScheduleErrors()); setTripReviewOpen(false); setTaskStep(2); } };
 
   const handleAssignTask = async () => {
     if (isViewOnly || taskSavingRef.current) return;
-    if (dispatchMode === 'continuing') {
-      setTaskErrors((previous) => ({ ...previous, submit: 'Continuing Dispatch needs server verification before it can create an assignment.' }));
-      return;
-    }
     /* Same rules as the live check, re-run on submit (typed dates skip the calendar's limits) */
     const e = scheduleErrors(taskSchedule(), { philippineTime: true });
 
@@ -2159,14 +2225,31 @@ export default function DriversManagement({
     /* Step 1 is already validated, but re-check in case state changed behind us */
     if (!validateStep1()) { setTaskStep(1); return; }
     if (!pickupConfirmed || !deliveryConfirmed) return;
+    if (dispatchMode === 'continuing' && (continuingCapability !== 'ready' || !operationalReviewConfirmed || !currentLocationConfirmed)) {
+      setTaskErrors((previous) => ({ ...previous, submit: continuingCapability !== 'ready'
+        ? 'Continuing Dispatch is not available on this database yet.'
+        : 'Confirm your review of the driver, truck, and proposed pickup.' }));
+      return;
+    }
 
     taskSavingRef.current = true;
     setTaskSaving(true);
     setTaskErrors({});
     try {
+      if (dispatchMode === 'continuing') {
+        const latest = await loadAdminData();
+        const source = latest.completed.find((item) => item.id === previousAssignmentId);
+        if (!source || !continuationCandidate(source, {
+          completed: latest.completed, active: latest.assignments, cancelled: latest.cancelled,
+          drivers: latest.drivers, trucks: latest.trucks,
+        }) || source.driverId !== taskDriverId || source.truckId !== taskTruckId) {
+          setTaskErrors({ submit: 'The previous assignment or its resources have changed. Refresh and choose again.' });
+          return;
+        }
+      }
       let newId = '';
       await onServerChange(async () => {
-        newId = await dispatchAssignment({
+        const input = {
           driverId: taskDriverId,
           truckId: taskTruckId,
           destination: `${pickupConfirmed.areaLabel} → ${deliveryConfirmed.fullLocation}`,
@@ -2179,7 +2262,10 @@ export default function DriversManagement({
           scheduledArrivalTime: time24ToDisplay(taskScheduledArrivalTime),
           deliveryDate: isoToDisplay(taskDate),
           remarks: taskRemarks.trim(),
-        });
+        };
+        newId = dispatchMode === 'continuing'
+          ? await dispatchContinuingAssignment(previousAssignmentId, input, operationalReviewConfirmed)
+          : await dispatchAssignment(input);
       });
       if (!newId) {
         setTaskErrors({ submit: 'Dispatch result could not be confirmed. Refresh before trying again.' });
@@ -2189,13 +2275,13 @@ export default function DriversManagement({
       setDispatchHighlight(null);
       setHiddenDispatchId(null);
       setPendingDispatch({ id: newId, waitForFocus: false });
-      onActionFeedback('Assignment dispatched successfully.');
+      onActionFeedback(dispatchMode === 'continuing' ? 'New continuing assignment dispatched successfully.' : 'Assignment dispatched successfully.');
       resetAssignTask();
     } catch (err) {
       const code = errorCode(err);
       setTaskErrors({ submit: actionMessage(code) });
-      if (code === 'driver_busy' || code === 'driver_archived' || code === 'driver_unavailable'
-          || code === 'truck_unavailable' || code === 'truck_archived' || code === 'truck_under_maintenance') {
+      if (dispatchMode === 'new' && (code === 'driver_busy' || code === 'driver_archived' || code === 'driver_unavailable'
+          || code === 'truck_unavailable' || code === 'truck_archived' || code === 'truck_under_maintenance')) {
         if (code === 'driver_busy' || code === 'driver_archived' || code === 'driver_unavailable') setTaskDriverId('');
         else setTaskTruckId('');
         setTaskStep(1);
@@ -2887,7 +2973,17 @@ export default function DriversManagement({
               <div role="group" aria-label="Dispatch mode" className="mb-5 grid grid-cols-2 gap-2 rounded-lg bg-slate-100 p-1">
                 {(['new', 'continuing'] as const).map((mode) => <button key={mode} type="button"
                   aria-pressed={dispatchMode === mode}
-                  onClick={() => { if (dispatchMode === mode) return; setDispatchMode(mode); setPreviousAssignmentId(''); setChoosingPrevious(true); setTaskDriverId(''); setTaskTruckId(''); setTaskErrors({}); }}
+                  onClick={() => {
+                    if (dispatchMode === mode) return;
+                    if (mode === 'new' && canSuggestPickupRegion(pickupGeo, taskPickupLocation, !!pickupConfirmed, pickupRegionAutoSuggested))
+                      setPickupGeo(EMPTY_GEO_SELECTION);
+                    setDispatchMode(mode); setPreviousAssignmentId(''); setChoosingPrevious(true);
+                    setOperationalReviewConfirmed(false); setCurrentLocationConfirmed(false);
+                    setTripReviewOpen(false);
+                    setLocationDetailsOpen(false);
+                    setPickupRegionAutoSuggested(false); setPickupRegionHint('');
+                    setTaskDriverId(''); setTaskTruckId(''); setTaskErrors({});
+                  }}
                   className={`min-h-10 rounded-md px-2 text-xs font-semibold sm:text-sm ${dispatchMode === mode ? 'bg-white text-green-700 shadow-sm' : 'text-slate-600 hover:bg-white/70'}`}>
                   {mode === 'new' ? 'New Dispatch' : 'Continuing Dispatch'}
                 </button>)}
@@ -2900,12 +2996,7 @@ export default function DriversManagement({
                     <FieldLabel required>Previous Completed Assignment</FieldLabel>
                     {choosingPrevious || !previousAssignment ? <DispatchResourceSelect
                       label="Previous Completed Assignment" value={previousAssignment?.id ?? ''}
-                      onChange={(id) => {
-                        const source = eligiblePrevious.find((item) => item.id === id);
-                        setPreviousAssignmentId(source?.id ?? '');
-                        setTaskDriverId(source?.driverId ?? ''); setTaskTruckId(source?.truckId ?? '');
-                        setChoosingPrevious(!source); setTaskErrors((previous) => ({ ...previous, previous: '', driver: '', truck: '' }));
-                      }}
+                      onChange={selectPreviousAssignment}
                       options={eligiblePrevious.map((item) => ({ id: item.id, label: `${item.id} · ${item.driverName} · ${item.truckPlate} · ${item.destinationArea || getDeliveryLocation(item)}` }))}
                       placeholder="Select completed ASN…" searchPlaceholder="Search ASN, driver or truck..."
                       emptyLabel="No eligible completed assignments" noResultsLabel="No matching completed assignments"
@@ -2914,16 +3005,41 @@ export default function DriversManagement({
                         className="min-h-10 rounded-lg border border-border px-3 text-sm font-medium text-green-700 hover:bg-slate-50">Change Previous Assignment</button>}
                     {taskErrors.previous && <p role="alert" className="mt-1 text-xs text-red-500">{taskErrors.previous}</p>}
                   </div>
-                  {previousAssignment && <div className="space-y-1 rounded-xl border border-green-200 bg-green-50/50 p-3 text-xs text-slate-700">
-                    <p className="font-semibold text-slate-900">Previous Assignment: {previousAssignment.id} · Completed</p>
-                    <p>Driver: {previousAssignment.driverName} · Truck: {previousAssignment.truckPlate}</p>
-                    <p>Previous destination: {previousAssignment.destinationArea || getDeliveryLocation(previousAssignment)}</p>
-                    <p>{recordedLocation ? `Last recorded photo location: ${recordedLocation.location} · ${new Date(recordedLocation.observedAt).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' })} PHT` : 'Last recorded photo location unavailable.'}</p>
-                    <p className="text-slate-500">Photo location is historical and may be outdated; current position and truck possession are unverified.</p>
-                  </div>}
-                  <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                    Continuing Dispatch can be reviewed here, but submission requires server-side verification of the completed source and locked pair.
-                  </div>
+                  {previousAssignment && <section className="min-w-0 rounded-xl border border-border bg-slate-50 p-3 text-slate-700">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Previous Assignment</p>
+                    <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-base font-semibold text-slate-900">{previousAssignment.id}</p>
+                      <span className="rounded-full border border-border bg-white px-2 py-0.5 text-xs font-medium text-slate-700">Completed</span>
+                    </div>
+                    <div className="mt-3 grid min-w-0 grid-cols-1 gap-2 border-t border-border pt-3 min-[360px]:grid-cols-2">
+                      <div className="min-w-0"><p className="text-[11px] font-semibold uppercase text-slate-500">Driver</p><p className="break-words text-sm font-medium text-slate-900">{previousAssignment.driverName}</p></div>
+                      <div className="min-w-0"><p className="text-[11px] font-semibold uppercase text-slate-500">Truck</p><p className="break-words text-sm font-medium text-slate-900">{previousAssignment.truckPlate}</p></div>
+                    </div>
+                    <div className="mt-3 border-t border-border pt-3">
+                      <p className="text-[11px] font-semibold uppercase text-slate-500">Previous Destination</p>
+                      <p className="break-words text-sm font-medium text-slate-900">{previousAssignment.destinationArea || getDeliveryLocation(previousAssignment)}</p>
+                    </div>
+                    <p className="mt-3 flex items-center gap-1.5 text-xs text-amber-800"><AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />Current location unverified</p>
+                    <button type="button" aria-expanded={locationDetailsOpen} aria-controls="previous-assignment-location-details"
+                      onClick={() => setLocationDetailsOpen((open) => !open)}
+                      className="mt-1 inline-flex min-h-10 items-center gap-1 text-xs font-medium text-green-700 hover:underline focus-visible:outline-2 focus-visible:outline-green-700">
+                      {locationDetailsOpen ? 'Hide location details' : 'View location details'}
+                      {locationDetailsOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                    </button>
+                    {locationDetailsOpen && <div id="previous-assignment-location-details" className="space-y-1 border-t border-border pt-2 text-xs break-words">
+                      <p><span className="font-medium">Last recorded photo location:</span> {recordedLocation?.location ?? 'Unavailable'}</p>
+                      {recordedLocation && <p><span className="font-medium">Observed at:</span> {new Date(recordedLocation.observedAt).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' })} PHT</p>}
+                      <p className="text-slate-500">This is historical photo evidence, not live tracking.</p>
+                      {locationDisagrees && <p className="text-amber-800">Previous destination and recorded photo location differ. Confirm the driver's current location.</p>}
+                    </div>}
+                    {pickupConfirmed && pickupRegionHint && <p className="mt-2 text-xs text-amber-800">{pickupRegionHint}</p>}
+                  </section>}
+                  {(continuingCapability === 'checking' || continuingCapability === 'unavailable') &&
+                    <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                      {continuingCapability === 'checking'
+                        ? 'Checking Continuing Dispatch availability…'
+                        : 'Continuing Dispatch is unavailable right now. Please contact your administrator.'}
+                    </div>}
                 </>}
                 {/* Driver + Truck */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -2986,13 +3102,20 @@ export default function DriversManagement({
                       address={pickupConfirmed} onEdit={() => editAddress('pickup')} /> : <>
                       <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Pickup</p>
                       <PhilippineAddressFields kind="pickup" selection={pickupGeo} onChange={(next) => updateGeo('pickup', next)}
-                        cityPath={pickupCityPath} onCityPathChange={setPickupCityPath}
-                        area={pickupPsgc.area} loading={pickupPsgc.loading} error={pickupPsgc.error} retry={pickupPsgc.retry} fieldErrors={taskErrors} />
+                        cityPath={pickupCityPath} onCityPathChange={(path) => {
+                          setPickupCityPath(path); setCurrentLocationConfirmed(false); setOperationalReviewConfirmed(false);
+                        }}
+                        area={pickupPsgc.area} loading={pickupPsgc.loading} error={pickupPsgc.error} retry={pickupPsgc.retry}
+                        fieldErrors={taskErrors} regionHint={dispatchMode === 'continuing' ? pickupRegionHint : undefined} />
                       <div>
                         <FieldLabel required>Pickup Location</FieldLabel>
                         <input type="text" value={taskPickupLocation} aria-invalid={!!taskErrors.pickupLocation || undefined}
                           aria-describedby={taskErrors.pickupLocation ? 'dispatch-pickup-location-error' : undefined}
-                          onChange={(event) => { setTaskPickupLocation(event.target.value); setTaskErrors((p) => ({ ...p, pickupLocation: '' })); }}
+                          onChange={(event) => {
+                            setTaskPickupLocation(event.target.value);
+                            setCurrentLocationConfirmed(false); setOperationalReviewConfirmed(false);
+                            setTaskErrors((p) => ({ ...p, pickupLocation: '', locationConfirmation: '' }));
+                          }}
                           placeholder="Enter pickup address or location"
                           className={`${fieldBase} ${fieldTone(!!taskErrors.pickupLocation)}`} />
                         {taskErrors.pickupLocation && <p id="dispatch-pickup-location-error" className="text-xs text-red-500 mt-1">{taskErrors.pickupLocation}</p>}
@@ -3066,19 +3189,6 @@ export default function DriversManagement({
           {taskStep === 2 && (
             <div>
               <SectionHeader>Schedule</SectionHeader>
-
-              {dispatchMode === 'continuing' && <div className="mb-5 space-y-1 rounded-xl border border-green-200 bg-green-50/50 p-3 text-xs text-slate-700">
-                <p className="font-semibold text-slate-900">Continuing Dispatch review · {previousAssignment?.id ?? 'Source unavailable'}</p>
-                <p>Original pair: {lockedDriver?.name ?? 'Unavailable'} · {lockedTruck?.plateNumber ?? 'Unavailable'}</p>
-                <p>Previous destination: {previousAssignment?.destinationArea || (previousAssignment ? getDeliveryLocation(previousAssignment) : 'Unavailable')}</p>
-                <p>{recordedLocation ? `Last recorded photo location: ${recordedLocation.location} (${new Date(recordedLocation.observedAt).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' })} PHT)` : 'Last recorded photo location unavailable.'}</p>
-                <p>New pickup: {pickupConfirmed?.fullLocation ?? 'Not saved'}</p>
-                <p>New delivery: {deliveryConfirmed?.fullLocation ?? 'Not saved'}</p>
-                <p>Client: {taskCompany.trim() || 'Not entered'}</p>
-                <p>New schedule: {taskPickedUpDate || '—'} {taskPickupTime || '—'} → {taskDate || '—'} {taskScheduledArrivalTime || '—'} (PHT)</p>
-                <p className="pt-1 font-medium text-slate-900">A new assignment will be created using the same driver and truck after server support is added.</p>
-                <p className="text-amber-800">Submission is unavailable: the server does not verify the previous completed assignment or its driver–truck pair.</p>
-              </div>}
 
               <div className="space-y-4">
                 {/* Row 1 — pickup. The two date pickers still bound each other live via
@@ -3154,6 +3264,52 @@ export default function DriversManagement({
                 </div>
               </div>
 
+              {dispatchMode === 'continuing' && previousAssignment && <div className="mt-5 space-y-3">
+                <section className="min-w-0 rounded-xl border border-border bg-white p-3 text-sm text-slate-700">
+                  <div className="flex flex-wrap items-center justify-between gap-1">
+                    <h3 className="font-semibold text-slate-900">Continuing Dispatch</h3>
+                    <span className="text-xs font-medium">{previousAssignment.id}</span>
+                  </div>
+                  <p className="mt-2 flex items-start gap-2 break-words"><Lock className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />{lockedDriver?.name} · {lockedTruck?.plateNumber}</p>
+                  <p className="mt-1 flex items-start gap-2 break-words"><MapPin className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />Previous destination: {previousAssignment.destinationArea || getDeliveryLocation(previousAssignment)}</p>
+                  <p className={`mt-1 flex items-start gap-2 text-xs ${locationDisagrees ? 'text-amber-800' : 'text-slate-500'}`}>
+                    <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                    {locationDisagrees ? "Previous destination and recorded photo location differ. Confirm the driver's current location." : 'Current location unverified.'}
+                  </p>
+                  <button type="button" aria-expanded={tripReviewOpen} aria-controls="continuing-trip-review"
+                    onClick={() => setTripReviewOpen((open) => !open)}
+                    className="mt-2 inline-flex min-h-10 items-center gap-1 text-sm font-medium text-green-700 hover:underline focus-visible:outline-2 focus-visible:outline-green-700">
+                    Review trip details {tripReviewOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                  </button>
+                  {tripReviewOpen && <div id="continuing-trip-review" className="mt-3 space-y-3 border-t border-border pt-3 text-xs">
+                    <div className="space-y-1 break-words">
+                      <p className="font-semibold uppercase text-slate-500">Previous completed delivery</p>
+                      <p><span className="font-medium">ASN:</span> {previousAssignment.id}</p>
+                      <p><span className="font-medium">Driver:</span> {lockedDriver?.name}</p>
+                      <p><span className="font-medium">Truck:</span> {lockedTruck?.plateNumber}</p>
+                      <p><span className="font-medium">Destination:</span> {previousAssignment.destinationArea || getDeliveryLocation(previousAssignment)}</p>
+                      {recordedLocation && <><p><span className="font-medium">Historical photo location:</span> {recordedLocation.location}</p>
+                        <p><span className="font-medium">Photo observed:</span> {new Date(recordedLocation.observedAt).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' })} PHT</p></>}
+                    </div>
+                    <div className="space-y-1 break-words">
+                      <p className="font-semibold uppercase text-slate-500">New delivery</p>
+                      {pickupConfirmed && <p><span className="font-medium">Pickup:</span> {pickupConfirmed.fullLocation}</p>}
+                      {deliveryConfirmed && <p><span className="font-medium">Delivery:</span> {deliveryConfirmed.fullLocation}</p>}
+                      {taskCompany.trim() && <p><span className="font-medium">Client:</span> {taskCompany.trim()}</p>}
+                      {taskPickedUpDate && taskPickupTime && <p><span className="font-medium">Pickup schedule:</span> {taskPickedUpDate} · {taskPickupTime} PHT</p>}
+                      {taskDate && taskScheduledArrivalTime && <p><span className="font-medium">Delivery schedule / STA:</span> {taskDate} · {taskScheduledArrivalTime} PHT</p>}
+                    </div>
+                  </div>}
+                </section>
+                <label className="flex items-start gap-2 text-sm text-slate-800">
+                  <input type="checkbox" checked={currentLocationConfirmed && operationalReviewConfirmed}
+                    onChange={(event) => { setCurrentLocationConfirmed(event.target.checked); setOperationalReviewConfirmed(event.target.checked); }}
+                    className="mt-0.5 h-4 w-4 shrink-0 accent-[#1DBF73]" />
+                  <span>I confirmed the driver and truck are together and reviewed the next pickup location.</span>
+                </label>
+                {continuingCapability !== 'ready' && <p className="text-xs text-amber-800">Continuing Dispatch is unavailable right now.</p>}
+              </div>}
+
               {/* Buttons */}
               <div className="flex flex-col-reverse sm:flex-row gap-3 pt-6 sm:pt-7">
                 <button onClick={() => { setTaskErrors({}); setTaskStep(1); }}
@@ -3161,7 +3317,8 @@ export default function DriversManagement({
                   <ArrowLeft className="w-4 h-4" /> Back
                 </button>
                 {/* Blocked while a date is invalid — the error is shown under the field */}
-                <button onClick={handleAssignTask} disabled={dispatchMode === 'continuing' || taskSaving || !!(taskErrors.pickedUpDate || taskErrors.date)}
+                <button onClick={handleAssignTask} disabled={taskSaving || !!(taskErrors.pickedUpDate || taskErrors.date)
+                  || (dispatchMode === 'continuing' && (continuingCapability !== 'ready' || !operationalReviewConfirmed || !currentLocationConfirmed || !previousAssignment))}
                   className="flex-1 px-5 py-2.5 bg-[#1DBF73] text-white rounded-[10px] hover:bg-[#19a865] transition-all shadow-sm hover:shadow active:scale-[0.99] text-sm font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
                   <CheckCircle2 className="w-4 h-4" /> {taskSaving ? 'Saving…' : 'Dispatch Truck'}
                 </button>

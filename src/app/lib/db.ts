@@ -420,6 +420,7 @@ function assignmentFromRow(r: Row, docs: Row[], photos: Row[], delays: Row[], is
     ...locationFieldsFromRow(r),
     scheduledArrivalTime: r.scheduled_arrival_time ?? '', ata: r.ata ?? '', deliveryDate: r.delivery_date ?? '', remarks: r.remarks ?? '',
     taskStatus: r.task_status, assignedAt: r.assigned_at ?? '',
+    continuationSourceId: r.continuation_source_id ?? null,
     operationalStage: r.operational_stage ?? null,
     pickupArrivedAt: r.pickup_arrived_at ?? null,
     loadingStartedAt: r.loading_started_at ?? null,
@@ -888,7 +889,9 @@ export type AssignmentActionErrorCode =
   | 'already_resolved' | 'assignment_not_active' | 'already_reviewed' | 'not_uploaded' | 'duplicate_plate'
   | 'duplicate_phone' | 'duplicate_name' | 'invalid_name'
   | 'driver_unavailable' | 'truck_under_maintenance' | 'already_unavailable' | 'not_unavailable'
-  | 'invalid_reason' | 'note_required' | 'note_too_long' | 'invalid_return';
+  | 'invalid_reason' | 'note_required' | 'note_too_long' | 'invalid_return'
+  | 'source_required' | 'source_not_found' | 'source_not_completed' | 'source_documents_not_approved'
+  | 'source_pair_missing' | 'source_pair_mismatch' | 'source_stale' | 'operational_review_required';
 export class AssignmentActionError extends Error {
   code: AssignmentActionErrorCode;
   constructor(code: AssignmentActionErrorCode, detail?: string) { super(detail ?? code); this.code = code; }
@@ -936,11 +939,13 @@ function actionFailure(error: { message?: string; code?: string }): AssignmentAc
   const known: AssignmentActionErrorCode[] = [
     'wrong_password', 'loading_completed', 'reauth_required', 'not_editable', 'not_cancellable', 'driver_busy', 'truck_unavailable', 'no_changes', 'not_authorized',
     'already_archived', 'truck_busy',
-    'already_completed', 'not_completable', 'documents_not_approved', 'driver_archived', 'truck_archived',
+    'already_completed', 'not_completable', 'source_documents_not_approved', 'documents_not_approved', 'driver_archived', 'truck_archived',
     'already_resolved', 'assignment_not_active', 'already_reviewed', 'not_uploaded',
     'duplicate_plate', 'duplicate_phone', 'duplicate_name', 'invalid_name',
     'driver_unavailable', 'truck_under_maintenance', 'already_unavailable', 'not_unavailable',
     'invalid_reason', 'note_required', 'note_too_long', 'invalid_return',
+    'source_required', 'source_not_found', 'source_not_completed',
+    'source_pair_missing', 'source_pair_mismatch', 'source_stale', 'operational_review_required',
   ];
   for (const c of known) if (m.includes(c)) return new AssignmentActionError(c, m);
   if (error.code === 'PGRST202') return new AssignmentActionError('not_deployed', m);   // function missing: migration not applied
@@ -987,11 +992,29 @@ const DISPATCH_COLUMNS: Record<keyof NewAssignment, string> = {
   pickupTime: 'pickup_time', pickedUpDate: 'picked_up_date', scheduledArrivalTime: 'scheduled_arrival_time', deliveryDate: 'delivery_date', remarks: 'remarks',
 };
 
-export async function dispatchAssignment(input: NewAssignment): Promise<string> {
-  const payload = Object.fromEntries(Object.entries(input)
+const dispatchPayload = (input: NewAssignment) => Object.fromEntries(Object.entries(input)
     .filter(([, v]) => typeof v === 'string')
     .map(([k, v]) => [DISPATCH_COLUMNS[k as keyof NewAssignment], v]));
-  const { data, error } = await supabase.rpc('dispatch_assignment', { p_fields: payload });
+
+export async function dispatchAssignment(input: NewAssignment): Promise<string> {
+  const { data, error } = await supabase.rpc('dispatch_assignment', { p_fields: dispatchPayload(input) });
+  if (error) throw actionFailure(error);
+  return data as string;
+}
+
+/** The UI remains review-only until this RPC exists in the current database. */
+export async function continuingDispatchAvailable(): Promise<boolean> {
+  const { data, error } = await supabase.rpc('continuing_dispatch_capability');
+  if (error?.code === 'PGRST202') return false;
+  if (error) throw actionFailure(error);
+  return data === true;
+}
+
+export async function dispatchContinuingAssignment(sourceId: string, input: NewAssignment, reviewConfirmed: boolean): Promise<string> {
+  if (!reviewConfirmed) throw new AssignmentActionError('operational_review_required');
+  const { data, error } = await supabase.rpc('dispatch_continuing_assignment', {
+    p_source_id: sourceId, p_fields: dispatchPayload(input), p_operational_review_confirmed: reviewConfirmed,
+  });
   if (error) throw actionFailure(error);
   return data as string;
 }

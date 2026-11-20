@@ -75,6 +75,8 @@ export interface DelayReport {
 
 export interface Assignment {
   id: string;
+  /** Persisted link to the officially Completed source of a continuing dispatch. */
+  continuationSourceId?: string | null;
   driverName: string;
   driverId: string;
   truckPlate: string;

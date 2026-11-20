@@ -2555,16 +2555,34 @@ negative test (impersonating a real CSR with a valid session, wrapped in its
 own rolled-back transaction) confirmed both a direct insert and a direct
 `state = 'completed'` update are now rejected with `not_authorized`.
 
-**2026-11-17 — Continuing Dispatch follow-up (Pending; no backend change made):**
+**2026-11-18 — Continuing Dispatch follow-up (In Progress; browser verification pending):**
 The current `dispatch_assignment(p_fields jsonb)` accepts only the normal route,
 schedule, driver, and truck fields. It checks resource availability and creates
 a new ASN, but cannot receive or verify a previous Completed assignment ID,
 its six approved documents, or an exact same-driver/same-truck continuation.
 It also cannot reject a stale or reused continuation source. The frontend may
 show a locked-pair review, but must not submit Continuing Dispatch until an
-authorized server operation enforces those rules transactionally. Normal
-Dispatch and the implemented REQ-011 behavior remain unchanged. A server-side
-source relationship and location/proximity policy require a separate decision.
+authorized server operation enforces those rules transactionally. Local
+`20261118000000_continuing_dispatch.sql` adds a dedicated RPC, a source link,
+and an operational-review audit stamp; `continuing_dispatch.test.sql` contains
+rollback-only checks. The frontend only enables submission after its capability
+RPC succeeds. User-provided SQL Editor screenshots from project
+`yeyfmyojdlqtgoqlwhsv` show the migration's capability RPC, dispatch RPC,
+source column, and reuse guard present, and the corrected rollback test
+reached `CONTINUING TESTS PASSED (19 checks) — rolled back on purpose`.
+This verifies the SQL checks shown; the authenticated CSR browser flow and
+new assignment creation remain unverified.
+The app's `.env.local` points to project `yeyfmyojdlqtgoqlwhsv`, while
+`supabase/config.toml` names `veuehobbfkwppsirapdp`; verify the intended
+environment before any database action. Current position, truck possession,
+and proximity cannot be proven by historical photo GPS; CSR review is recorded
+as an attestation, not represented as GPS verification. Normal Dispatch and
+the implemented REQ-011 behavior remain unchanged.
+The smart Pickup Region suggestion and current-location checkbox are frontend
+guidance only. The new checkbox is not sent to the RPC or stored separately;
+the existing operational-review flag continues to serve its original audit
+purpose. If current-location confirmation becomes a durable, server-enforced
+requirement, the continuing-dispatch contract needs a separate backend change.
 
 ---
 

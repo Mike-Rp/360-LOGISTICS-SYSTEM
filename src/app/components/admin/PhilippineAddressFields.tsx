@@ -107,10 +107,11 @@ export function CompactAddressSummary({ kind, address, onEdit }: {
   </div>;
 }
 
-export function PhilippineAddressFields({ kind, selection, onChange, cityPath, onCityPathChange, area, loading, error, retry, fieldErrors }: {
+export function PhilippineAddressFields({ kind, selection, onChange, cityPath, onCityPathChange, area, loading, error, retry, fieldErrors, regionHint }: {
   kind: 'pickup' | 'delivery'; selection: GeoSelection; onChange: (next: GeoSelection) => void;
   cityPath: GeoCityPath; onCityPathChange: (path: GeoCityPath) => void;
   area: GeoArea | null; loading: boolean; error: string; retry: () => void; fieldErrors: Record<string, string>;
+  regionHint?: string;
 }) {
   const region = PSGC_REGIONS.find((item) => item.code === selection.regionCode);
   const provinceOptions = geoProvinceOptions(selection.regionCode);
@@ -123,6 +124,7 @@ export function PhilippineAddressFields({ kind, selection, onChange, cityPath, o
   return <div className="space-y-3">
     <SearchableGeoSelect scope={kind} label="Region" value={selection.regionCode} options={PSGC_REGIONS}
       placeholder="Select region" error={fieldErrors[`${prefix}Region`]} onChange={update('regionCode')} />
+    {regionHint && <p className="text-xs text-muted-foreground">{regionHint}</p>}
     {region && provinceOptions.length > 0 && cityPath === 'province' && <SearchableGeoSelect scope={kind}
       label={region.code === '1900000000' ? 'Province / Special Geographic Area' : 'Province'}
       value={selection.provinceCode} options={provinceOptions} placeholder="Select province"
