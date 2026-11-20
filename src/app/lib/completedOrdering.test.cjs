@@ -48,3 +48,32 @@ test('driver history sorts real completion instants before filtering and paginat
   assert.deepEqual(loaded.exports.sortCompletedNewestFirst(records).slice(0, 2).map(record => record.id),
     ['same-day-later', 'ASN56038']);
 });
+
+test('recent completed scope includes all of today and yesterday, newest first, without the five-row preview limit', () => {
+  const now = new Date(2026, 10, 20, 12);
+  const stamp = (day, hour) => new Date(2026, 10, day, hour).toISOString();
+  const records = [
+    { id: 'old', completedAt: stamp(18, 23), completedEventAt: stamp(18, 23) },
+    ...Array.from({ length: 6 }, (_, i) => ({ id: `today-${i}`, completedAt: stamp(20, i + 1), completedEventAt: stamp(20, i + 1) })),
+    { id: 'yesterday', completedAt: stamp(19, 8), completedEventAt: stamp(19, 8) },
+    { id: 'missing', completedAt: '' },
+  ];
+  const recent = loaded.exports.recentCompletedDeliveries(records, now);
+  assert.deepEqual(recent.map(({ assignment }) => assignment.id),
+    ['today-5', 'today-4', 'today-3', 'today-2', 'today-1', 'today-0', 'yesterday']);
+  assert.equal(records[0].id, 'old');
+  assert.deepEqual(loaded.exports.recentCompletedDeliveries([...records, {
+    id: 'new-completion', completedAt: stamp(20, 11), completedEventAt: stamp(20, 11),
+  }], now).map(({ assignment }) => assignment.id)[0], 'new-completion');
+});
+
+test('recent scope uses the same completion label for membership and full completion event for ordering', () => {
+  const now = new Date(2026, 10, 20, 12);
+  const recent = loaded.exports.recentCompletedDeliveries([
+    { id: 'created-today-but-completed-earlier', createdAt: '2026-11-20T01:00:00Z',
+      completedAt: new Date(2026, 10, 18, 9).toISOString(), completedEventAt: new Date(2026, 10, 18, 9).toISOString() },
+    { id: 'latest', completedAt: new Date(2026, 10, 20, 9).toISOString(), completedEventAt: new Date(2026, 10, 20, 10).toISOString() },
+    { id: 'earlier', completedAt: new Date(2026, 10, 20, 8).toISOString(), completedEventAt: new Date(2026, 10, 20, 8).toISOString() },
+  ], now);
+  assert.deepEqual(recent.map(({ assignment }) => assignment.id), ['latest', 'earlier']);
+});

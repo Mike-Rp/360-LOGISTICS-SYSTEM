@@ -27,7 +27,7 @@ import PickupTimingNotice from './PickupTimingNotice';
 import { getDispatchTimingNotices } from '../../lib/assignmentTiming';
 import { parsePhilippineInputValue, philippineDateKey } from '../../lib/philippineTime';
 import { OPERATIONAL_STEPS, OPERATIONAL_PHOTO_GROUPS, getAdminOperationalProgress, getDeliveryActivityStates, canCancelAssignment, canCancelBeforeLoadingCompletes, formatOperationalStamp, formatOperationalDuration } from '../../lib/assignmentOperational';
-import { sortCompletedNewestFirst } from '../../lib/completedOrdering';
+import { recentCompletedDeliveries } from '../../lib/completedOrdering';
 import { statusColors } from '../../data/statusColors';
 import { assignmentDisplayStatusConfig, canCompleteAssignment, getAssignmentDisplayStatus, getAssignmentDocumentProgress, getDocumentAgingState, type AssignmentDisplayStatus } from '../../lib/assignmentWorkflow';
 import { DISPATCH_STATUS_OPTIONS, matchesDispatchStatus, type DispatchStatus } from '../../lib/dispatchStatusFilter';
@@ -68,7 +68,7 @@ function Highlight({ text, query }: { text: string; query: string }) {
   );
 }
 import {
-  DEMO_ADMIN_EMAIL, parseStoredTimestamp,
+  DEMO_ADMIN_EMAIL,
   type Assignment, type CompletedTask, type LocalDriver, type LocalTruck,
   type DocStatus, type AdminActivityEntry, type AdminActivityInput, type AssignmentDoc, type AppNotification, type StatusPhoto,
 } from '../../data/assignmentTypes';
@@ -2090,8 +2090,10 @@ export default function DriversManagement({
   /* Not dispatchable: on another delivery, marked Unavailable (sick, leave…), or a truck Under maintenance */
   const availableDrivers  = drivers.filter((d) => !assignedDriverIds.has(d.id) && !d.unavailable);
   const availableTrucks   = trucks.filter((t)  => t.status === 'Available' && !t.unavailable);
+  const recentCompleted = recentCompletedDeliveries(completed);
   const continuationSnapshot = { completed, active: assignments, cancelled, drivers, trucks };
-  const eligiblePrevious = completed.filter((item) => continuationCandidate(item, continuationSnapshot));
+  const eligiblePrevious = recentCompleted.map(({ assignment }) => assignment)
+    .filter((item) => continuationCandidate(item, continuationSnapshot));
   const previousAssignment = eligiblePrevious.find((item) => item.id === previousAssignmentId);
   const lockedDriver = previousAssignment && drivers.find((item) => item.id === previousAssignment.driverId);
   const lockedTruck = previousAssignment && trucks.find((item) => item.id === previousAssignment.truckId);
@@ -2239,7 +2241,8 @@ export default function DriversManagement({
       if (dispatchMode === 'continuing') {
         const latest = await loadAdminData();
         const source = latest.completed.find((item) => item.id === previousAssignmentId);
-        if (!source || !continuationCandidate(source, {
+        if (!source || !recentCompletedDeliveries(latest.completed).some(({ assignment }) => assignment.id === source.id)
+            || !continuationCandidate(source, {
           completed: latest.completed, active: latest.assignments, cancelled: latest.cancelled,
           drivers: latest.drivers, trucks: latest.trucks,
         }) || source.driverId !== taskDriverId || source.truckId !== taskTruckId) {
@@ -2508,16 +2511,7 @@ export default function DriversManagement({
     setMissingTarget(false);
     onNotificationTargetHandled?.();
   };
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const todayKey = dateToIso(today);
-  const yesterdayKey = dateToIso(yesterday);
-  const recentCompleted = sortCompletedNewestFirst(completed).flatMap((assignment) => {
-    const date = parseStoredTimestamp(assignment.completedAt);
-    if (!date || (dateToIso(date) !== todayKey && dateToIso(date) !== yesterdayKey)) return [];
-    return [{ assignment, date }];
-  });
+  const todayKey = dateToIso(new Date());
   const visibleCompleted = recentCompleted.slice(0, RECENT_COMPLETED_LIMIT);
   const openCompletedDelivery = (assignmentId: string) => {
     setCompletedOpen(false);
@@ -2983,6 +2977,7 @@ export default function DriversManagement({
                     setLocationDetailsOpen(false);
                     setPickupRegionAutoSuggested(false); setPickupRegionHint('');
                     setTaskDriverId(''); setTaskTruckId(''); setTaskErrors({});
+                    if (mode === 'continuing') onRetryAvailability?.();
                   }}
                   className={`min-h-10 rounded-md px-2 text-xs font-semibold sm:text-sm ${dispatchMode === mode ? 'bg-white text-green-700 shadow-sm' : 'text-slate-600 hover:bg-white/70'}`}>
                   {mode === 'new' ? 'New Dispatch' : 'Continuing Dispatch'}
@@ -2997,11 +2992,11 @@ export default function DriversManagement({
                     {choosingPrevious || !previousAssignment ? <DispatchResourceSelect
                       label="Previous Completed Assignment" value={previousAssignment?.id ?? ''}
                       onChange={selectPreviousAssignment}
-                      options={eligiblePrevious.map((item) => ({ id: item.id, label: `${item.id} · ${item.driverName} · ${item.truckPlate} · ${item.destinationArea || getDeliveryLocation(item)}` }))}
+                      options={eligiblePrevious.map((item) => ({ id: item.id, label: `${item.id} · ${item.driverName} · ${item.truckPlate} · ${item.completedAt} · ${item.destinationArea || getDeliveryLocation(item)}` }))}
                       placeholder="Select completed ASN…" searchPlaceholder="Search ASN, driver or truck..."
-                      emptyLabel="No eligible completed assignments" noResultsLabel="No matching completed assignments"
+                      emptyLabel="No eligible recent completed deliveries available." noResultsLabel="No matching recent completed deliveries"
                       disabled={availabilityLoading || availabilityError} hasError={!!taskErrors.previous} />
-                      : <button type="button" onClick={() => setChoosingPrevious(true)}
+                      : <button type="button" onClick={() => { setChoosingPrevious(true); onRetryAvailability?.(); }}
                         className="min-h-10 rounded-lg border border-border px-3 text-sm font-medium text-green-700 hover:bg-slate-50">Change Previous Assignment</button>}
                     {taskErrors.previous && <p role="alert" className="mt-1 text-xs text-red-500">{taskErrors.previous}</p>}
                   </div>

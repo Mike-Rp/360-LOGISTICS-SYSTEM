@@ -144,3 +144,13 @@ test('previous assignment card keeps photo evidence behind an accessible disclos
   assert.match(card, /Hide location details/);
   assert.match(component, /const selectPreviousAssignment = \(id: string\) => \{\s*setLocationDetailsOpen\(false\)/);
 });
+
+test('selector and final submission use the same recent scope before existing eligibility checks', () => {
+  const component = readFileSync(join(__dirname, '../components/admin/DriversManagement.tsx'), 'utf8');
+  assert.match(component, /const recentCompleted = recentCompletedDeliveries\(completed\)/);
+  assert.match(component, /recentCompleted\.map\(\(\{ assignment \}\) => assignment\)\s*\.filter\(\(item\) => continuationCandidate\(item, continuationSnapshot\)\)/);
+  assert.match(component, /recentCompletedDeliveries\(latest\.completed\)\.some\(\(\{ assignment \}\) => assignment\.id === source\.id\)/);
+  assert.match(component, /No eligible recent completed deliveries available\./);
+  assert.match(component, /if \(mode === 'continuing'\) onRetryAvailability\?\.\(\)/);
+  assert.match(component, /setChoosingPrevious\(true\); onRetryAvailability\?\.\(\)/);
+});
